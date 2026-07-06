@@ -156,13 +156,20 @@ class RoundRunner(threading.Thread):
             if len(state.buffer) == 0:
                 raise Exception(f"no seconds collected for round {self.start_ts}")
             deadline = time.time() + FINAL_WAIT_SEC
-            while state.final_chainlink is None and time.time() < deadline:
+            while time.time() < deadline:
+                with state.lock:
+                    if state._final_source == "oracle":
+                        break
                 time.sleep(0.05)
             if state.final_chainlink is None:
                 raise Exception(f"chainlink final not captured for round {self.start_ts}")
             lag_final = (state._final_ts_ms - state._final_end_ms) / 1000.0
             final_chainlink = round(state.final_chainlink, 2)
-            log.info("round %s final_chainlink=%.2f (oracle_lag=%.2fs)", self.start_ts, final_chainlink, lag_final)
+            if state._final_source == "oracle":
+                log.info("round %s final_chainlink=%.2f (oracle lag=%.2fs)", self.start_ts, final_chainlink, lag_final)
+            else:
+                log.info("round %s final_chainlink=%.2f (recv fallback, oracle_lag=%.2fs)",
+                    self.start_ts, final_chainlink, lag_final)
             state.chainlink_done.set()
             enrich_gains(state.buffer, state.book_snapshots, state.fee_rate)
             ticks = state.buffer.to_numpy()

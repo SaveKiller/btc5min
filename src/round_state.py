@@ -22,6 +22,7 @@ class RoundState:
         self._ptb_ts_ms: int | None = None
         self._final_end_ms = market_end_ts * 1000
         self._final_ts_ms: int | None = None
+        self._final_source: str | None = None
         self.up_book = OrderBook()
         self.down_book = OrderBook()
         self.buffer = RoundBuffer()
@@ -43,9 +44,15 @@ class RoundState:
             if self._ptb_ts_ms is None or ts_ms < self._ptb_ts_ms:
                 self._ptb_ts_ms = ts_ms
                 self.price_to_beat = value
-            if self._final_ts_ms is None and recv_ms >= self._final_end_ms:
+            if ts_ms >= self._final_end_ms:
                 self._final_ts_ms = ts_ms
                 self.final_chainlink = value
+                self._final_source = "oracle"
+            elif recv_ms >= self._final_end_ms and self._final_source != "oracle":
+                if self._final_ts_ms is None:
+                    self._final_ts_ms = ts_ms
+                    self.final_chainlink = value
+                    self._final_source = "recv"
 
     def chainlink_ready(self) -> bool:
         with self.lock:
