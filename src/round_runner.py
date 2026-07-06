@@ -17,7 +17,7 @@ from src.settlement import build_round_header
 from src.verify import verify_round
 
 log = logging.getLogger("round")
-FINAL_WAIT_SEC = 15.0
+FINAL_WAIT_SEC = 30.0
 _DBG_LOG = Path(__file__).resolve().parent.parent / "debug-9c51e0.log"
 
 
