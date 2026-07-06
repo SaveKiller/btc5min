@@ -2,6 +2,7 @@ import httpx
 
 from src.book import BookSide
 
+# Puntata simbolica per walk sul book (come UI Polymarket "To win" su $100).
 BET_USD = 100.0
 _client = httpx.Client(timeout=10.0)
 
@@ -13,6 +14,8 @@ def majority_side(up_bid: float, up_ask: float, down_bid: float, down_ask: float
 
 
 def market_buy_gain(asks: BookSide, amount_usd: float, fee_rate: float, quote_ask: float | None = None) -> float:
+    """ROI frazionario su amount_usd: (payout / amount_usd) - 1. Payout = share ricevute ($1 ciascuna se vinci).
+    Es. spendi $100, incassi $140 → ritorna 0.40 (40% nel .txt)."""
     if not asks:
         if quote_ask is None or quote_ask < 0.99:
             raise Exception("order book asks empty")
@@ -32,7 +35,8 @@ def market_buy_gain(asks: BookSide, amount_usd: float, fee_rate: float, quote_as
             if c > size: c = size
             total_shares += c
             B = 0.0
-    return total_shares / amount_usd - 1.0
+    payout_usd = total_shares
+    return payout_usd / amount_usd - 1.0
 
 
 def enrich_gains(buffer, book_snapshots: list, fee_rate: float) -> None:

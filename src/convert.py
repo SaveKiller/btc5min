@@ -54,10 +54,14 @@ def format_table_row(sec: str, time: str, quote: str, delta: str, gain_val: str,
     )
 
 
+def format_gain_pct(gain: float) -> str:
+    return f"{gain * 100:.1f}%"
+
+
 def format_column_header() -> str:
     return (
         f"{'sec':>3}  {'time':>5}  {'quote':<9}  "
-        f"{'delta':>5}  {'gain':>11}  {'btc':>14}"
+        f"{'delta':>5}  {'gain%':>11}  {'btc':>14}"
     )
 
 
@@ -68,7 +72,7 @@ def format_separator() -> str:
 def format_data_row(sec: int, up_prob: int, down_prob: int, chainlink: float, ptb: float, gain: float) -> str:
     return format_table_row(
         str(sec), format_mmss(sec), format_quote(up_prob, down_prob),
-        format_delta(chainlink, ptb), f"{gain:.2f}", f"{chainlink:.2f}",
+        format_delta(chainlink, ptb), format_gain_pct(gain), f"{chainlink:.2f}",
     )
 
 

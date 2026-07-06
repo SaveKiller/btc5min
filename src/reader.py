@@ -21,13 +21,14 @@ def print_round(path: str, csv_path: str | None = None) -> None:
     print(f"  last secs_to_expiry: {ticks[-1, 1]:.2f}")
     print(f"  up_ask range: {ticks[:, 3].min():.3f} - {ticks[:, 3].max():.3f}")
     print(f"  down_ask range: {ticks[:, 5].min():.3f} - {ticks[:, 5].max():.3f}")
-    print(f"  majority_gain range: {ticks[:, 7].min():.2f} - {ticks[:, 7].max():.2f}")
+    gmin, gmax = ticks[:, 7].min() * 100, ticks[:, 7].max() * 100
+    print(f"  majority_gain range: {gmin:.1f}% - {gmax:.1f}%")
     print("  first 5 ticks:")
     for row in ticks[:5]:
-        print(f"    sec={row[1]:.1f} up={row[2]:.2f}/{row[3]:.2f} down={row[4]:.2f}/{row[5]:.2f} btc={row[6]:.1f} gain={row[7]:.2f}")
+        print(f"    sec={row[1]:.1f} up={row[2]:.2f}/{row[3]:.2f} down={row[4]:.2f}/{row[5]:.2f} btc={row[6]:.1f} gain={row[7]*100:.1f}%")
     print("  last 5 ticks:")
     for row in ticks[-5:]:
-        print(f"    sec={row[1]:.1f} up={row[2]:.2f}/{row[3]:.2f} down={row[4]:.2f}/{row[5]:.2f} btc={row[6]:.1f} gain={row[7]:.2f}")
+        print(f"    sec={row[1]:.1f} up={row[2]:.2f}/{row[3]:.2f} down={row[4]:.2f}/{row[5]:.2f} btc={row[6]:.1f} gain={row[7]*100:.1f}%")
     if csv_path:
         with open(csv_path, "w", newline="") as f:
             w = csv.writer(f)
