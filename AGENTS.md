@@ -29,4 +29,7 @@ Valutare se può essere utile associare le scommesse ogni 5 minuti con
 equivalenti da 15 min o 1 ora in modo collegato per compensare eventuali
 perdite o in modo da avere un sistema più solido.
 
+## CT LAN Poly
 
+In lan, nella macchina preoxmox, esiste un container debian chiamato
+poly (proxmox id 103, ip 10.1.1.73) che è pensata per stare attiva 24h e salvara i tick di questo progetto. In questa macchina deve essere presente un app "btc5min" dentro opt che parte all'avvio come servizio e scrive nella propria cartella data i file bin e txt dei vari round in modo continuativo.
