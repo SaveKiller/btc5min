@@ -5,7 +5,6 @@ import time
 
 import websocket
 
-from src.debug_ndjson import dbg_ndjson
 from src.round_state import RoundState
 
 log = logging.getLogger("chainlink")
@@ -43,8 +42,6 @@ class ChainlinkFeed:
         self._backoff_sec = 2.0
         self._last_value: float | None = None
         self._last_ts_ms: int | None = None
-        self._last_btc_gap_sec = 0.0
-        self._conn_id = 0
         self.symbol = "btc/usd"
 
     def start(self) -> None:
@@ -66,12 +63,6 @@ class ChainlinkFeed:
             if state not in self._rounds:
                 self._rounds.append(state)
             if self._last_value is not None and self._last_ts_ms is not None:
-                primed_stale = self._last_ts_ms < state._ptb_start_ms
-                dbg_ndjson("feed_chainlink.register", "prime_chainlink", {
-                    "round": state.start_ts, "primed_ts_ms": self._last_ts_ms,
-                    "market_start_ms": state._ptb_start_ms, "value": self._last_value,
-                    "primed_stale": primed_stale,
-                }, "H5.2")
                 state.prime_chainlink(self._last_value, self._last_ts_ms)
 
     def unregister(self, state: RoundState) -> None:
@@ -113,8 +104,6 @@ class ChainlinkFeed:
             self._ws.close()
 
     def _on_open(self, ws) -> None:
-        self._conn_id += 1
-        dbg_ndjson("feed_chainlink._on_open", "ws_open", {"conn_id": self._conn_id}, "H5.1")
         ws.send(json.dumps({
             "action": "subscribe",
             "subscriptions": [{"topic": "crypto_prices_chainlink", "type": "*", "filters": ""}],
@@ -124,35 +113,19 @@ class ChainlinkFeed:
 
     def _ping_loop(self) -> None:
         while not self._ping_stop.is_set() and not self._stop.is_set():
-            if self._last_msg_ts:
-                btc_age = time.time() - self._last_msg_ts
-                if btc_age > STALL_RECONNECT_SEC:
-                    dbg_ndjson("feed_chainlink._ping_loop", "stall_detected", {
-                        "stall_sec": round(btc_age, 1), "last_btc_age_sec": round(btc_age, 1),
-                        "would_reconnect": False,
-                    }, "H5.1")
             if self._ws:
                 try:
                     self._ws.send("ping")
-                except Exception as e:
-                    dbg_ndjson("feed_chainlink._ping_loop", "ping_send_fail", {"error": str(e)}, "H5.4")
+                except Exception:
                     return
             time.sleep(PING_INTERVAL_SEC)
 
     def _on_close(self, ws, close_status_code, close_msg) -> None:
-        last_btc_age = round(time.time() - self._last_msg_ts, 1) if self._last_msg_ts else None
-        dbg_ndjson("feed_chainlink._on_close", "ws_close", {
-            "code": close_status_code, "msg": str(close_msg), "intentional_close": self._intentional_close,
-            "last_btc_age_sec": last_btc_age,
-        }, "H5.1")
+        pass
 
     def _on_error(self, ws, error) -> None:
         if self._intentional_close or self._stop.is_set():
             return
-        last_btc_age = round(time.time() - self._last_msg_ts, 1) if self._last_msg_ts else None
-        dbg_ndjson("feed_chainlink._on_error", "ws_error", {
-            "error": str(error), "last_btc_age_sec": last_btc_age,
-        }, "H5.1")
         log.warning("chainlink ws error: %s", error)
 
     def _on_message(self, ws, raw: str) -> None:
@@ -164,15 +137,7 @@ class ChainlinkFeed:
         payload = msg.get("payload") or {}
         if payload.get("symbol") != self.symbol:
             return
-        now = time.time()
-        gap_sec = round(now - self._last_msg_ts, 2) if self._last_msg_ts else 0.0
-        self._last_btc_gap_sec = gap_sec
-        self._last_msg_ts = now
-        dbg_ndjson("feed_chainlink._on_message", "btc_tick", {
-            "gap_sec": gap_sec, "recv_ms": int(now * 1000),
-        }, "H5.1")
-        if gap_sec > 15:
-            dbg_ndjson("feed_chainlink._on_message", "btc_gap_warn", {"gap_sec": gap_sec}, "H5.1")
+        self._last_msg_ts = time.time()
         with self._lock:
             rounds = list(self._rounds)
         if "data" in payload:
@@ -185,22 +150,7 @@ class ChainlinkFeed:
         recv_ms = int(time.time() * 1000)
         self._last_value = value
         self._last_ts_ms = ts_ms
-        dbg_ndjson("feed_chainlink._dispatch", "btc_oracle", {
-            "oracle_ts_ms": ts_ms, "recv_ms": recv_ms, "value": value,
-        }, "H5.2")
         for state in rounds:
             if state.chainlink_done.is_set():
                 continue
-            had_ptb = state.price_to_beat is not None
-            if ts_ms < state._ptb_start_ms:
-                dbg_ndjson("feed_chainlink._dispatch", "ptb_skip", {
-                    "round": state.start_ts, "oracle_ts_ms": ts_ms,
-                    "market_start_ms": state._ptb_start_ms, "value": value,
-                    "skipped_reason": "ts_ms < market_start",
-                }, "H5.2")
             state.apply_chainlink(value, ts_ms, recv_ms)
-            if not had_ptb and state.price_to_beat is not None:
-                dbg_ndjson("feed_chainlink._dispatch", "ptb_set", {
-                    "round": state.start_ts, "lag_ptb_ms": state._ptb_ts_ms - state._ptb_start_ms,
-                    "value": state.price_to_beat,
-                }, "H5.2")

@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 import threading
@@ -8,7 +9,6 @@ from src.binary_format import round_filename, write_round
 from src.book import empty_book_snapshot
 from src.clob_api import enrich_gains, fetch_fee_rate, majority_side, side_from_chainlink
 from src.convert import write_round_txt
-from src.debug_ndjson import dbg_ndjson
 from src.feed_chainlink import ChainlinkFeed
 from src.feed_clob import ClobThread, snapshot_books, snapshot_chainlink
 from src.market import wait_for_market
@@ -19,10 +19,17 @@ from src.verify import verify_round
 
 log = logging.getLogger("round")
 FINAL_WAIT_SEC = 30.0
+_DBG_LOG = Path(__file__).resolve().parent.parent / "debug-9c51e0.log"
 
 
 def _dbg(location: str, message: str, data: dict, hypothesis_id: str = "P1") -> None:
-    dbg_ndjson(location, message, data, hypothesis_id)
+    # #region agent log
+    with open(_DBG_LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "sessionId": "9c51e0", "hypothesisId": hypothesis_id, "location": location,
+            "message": message, "data": data, "timestamp": int(time.time() * 1000),
+        }, default=str) + "\n")
+    # #endregion
 
 
 def countdown_sec(market_end_ts: int) -> int | None:
@@ -149,13 +156,6 @@ class RoundRunner(threading.Thread):
             state.stop.set()
             sampler.join(timeout=5)
             if state.price_to_beat is None:
-                with state.lock:
-                    _dbg("round_runner._run_round", "ptb fail", {
-                        "start_ts": self.start_ts, "chainlink_price": state.chainlink_price,
-                        "chainlink_ts_ms": state.chainlink_ts_ms, "price_to_beat": state.price_to_beat,
-                        "ptb_start_ms": state._ptb_start_ms, "final_end_ms": state._final_end_ms,
-                        "sampler_ticks": len(state.buffer),
-                    }, "P1")
                 raise Exception(f"chainlink price_to_beat not captured for round {self.start_ts}")
             if self.price_to_beat is None:
                 self.price_to_beat = round(state.price_to_beat, 2)
@@ -168,12 +168,6 @@ class RoundRunner(threading.Thread):
                         break
                 time.sleep(0.05)
             if state.final_chainlink is None:
-                with state.lock:
-                    _dbg("round_runner._run_round", "final fail", {
-                        "start_ts": self.start_ts, "chainlink_ts_ms": state.chainlink_ts_ms,
-                        "final_chainlink": state.final_chainlink, "final_end_ms": state._final_end_ms,
-                        "final_source": state._final_source,
-                    }, "P1")
                 raise Exception(f"chainlink final not captured for round {self.start_ts}")
             lag_final = (state._final_ts_ms - state._final_end_ms) / 1000.0
             final_chainlink = round(state.final_chainlink, 2)
