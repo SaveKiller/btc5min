@@ -19,3 +19,12 @@ def log_sample(start_ts: int, countdown_sec: int, side: str, majority_ask: float
         "round=%s sec=%3d %s %.2f btc=%.2f ptb=%s delta=%s",
         start_ts, countdown_sec, side.upper(), majority_ask, chainlink, ptb_s, delta_s)
     sys.stderr.flush()
+
+
+def log_sample_partial(start_ts: int, countdown_sec: int, side: str,
+        chainlink: float, price_to_beat: float) -> None:
+    delta_s = format_delta(chainlink, price_to_beat)
+    _sample.info(
+        "round=%s sec=%3d %s --- btc=%.2f ptb=%.2f delta=%s",
+        start_ts, countdown_sec, side.upper(), chainlink, price_to_beat, delta_s)
+    sys.stderr.flush()

@@ -7,6 +7,10 @@ BET_USD = 100.0
 _client = httpx.Client(timeout=10.0)
 
 
+def side_from_chainlink(chainlink: float, price_to_beat: float) -> str:
+    return "Up" if chainlink >= price_to_beat else "Down"
+
+
 def majority_side(up_bid: float, up_ask: float, down_bid: float, down_ask: float) -> str:
     up_mid = (up_bid + up_ask) / 2
     down_mid = (down_bid + down_ask) / 2
@@ -42,8 +46,11 @@ def market_buy_gain(asks: BookSide, amount_usd: float, fee_rate: float, quote_as
 def enrich_gains(buffer, book_snapshots: list, fee_rate: float) -> None:
     if len(buffer) != len(book_snapshots):
         raise Exception(f"buffer/snapshots length mismatch: {len(buffer)} vs {len(book_snapshots)}")
+    from src.book import tick_quotes_missing
     for i in range(len(buffer)):
         row = buffer.row(i)
+        if tick_quotes_missing(row):
+            continue
         side = majority_side(row[2], row[3], row[4], row[5])
         snap = book_snapshots[i]
         if side == "Up":

@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 
 from src.binary_format import OUTCOME_NAMES, read_round, read_warnings
+from src.book import tick_quotes_missing
+from src.clob_api import majority_side, side_from_chainlink
 
 
 def sampled_rows(ticks: np.ndarray, price_to_beat: float) -> list[tuple[int, float, float, float, float, float]]:
@@ -39,6 +41,12 @@ def format_delta(chainlink: float, price_to_beat: float) -> str:
     return "0$"
 
 
+def format_quote_partial(side: str) -> str:
+    if side == "Up":
+        return " UP  ---"
+    return "DOWN ---"
+
+
 def format_quote(up_prob: int, down_prob: int) -> str:
     if up_prob == down_prob:
         return f"---- {up_prob:>3}c"
@@ -69,6 +77,13 @@ def format_separator() -> str:
     return "-" * len(format_column_header())
 
 
+def format_data_row_partial(sec: int, side: str, chainlink: float, ptb: float) -> str:
+    return format_table_row(
+        str(sec), format_mmss(sec), format_quote_partial(side),
+        format_delta(chainlink, ptb), "  ---", f"{chainlink:.2f}",
+    )
+
+
 def format_data_row(sec: int, up_prob: int, down_prob: int, chainlink: float, ptb: float, gain: float) -> str:
     return format_table_row(
         str(sec), format_mmss(sec), format_quote(up_prob, down_prob),
@@ -77,15 +92,16 @@ def format_data_row(sec: int, up_prob: int, down_prob: int, chainlink: float, pt
 
 
 def convert_round(path: str) -> str:
-    header, ticks = read_round(path)
-    rows = sampled_rows(ticks, header["price_to_beat"])
+    header, ticks, _ = read_round(path)
+    ptb = header["price_to_beat"]
     lines = ["header:",
         f"  market_start_ts: {header['market_start_ts']} ({format_utc_ts(header['market_start_ts'])})",
         f"  market_end_ts: {header['market_end_ts']} ({format_utc_ts(header['market_end_ts'])})",
-        f"  price_to_beat: {header['price_to_beat']:.2f}",
+        f"  price_to_beat: {ptb:.2f}",
         f"  outcome: {OUTCOME_NAMES[header['outcome']]}",
         f"  final_chainlink: {header['final_chainlink']}",
-        f"  tick_count: {header['tick_count']}"]
+        f"  tick_count: {header['tick_count']}",
+        f"  fee_rate: {header['fee_rate']}"]
     warn_lines = read_warnings(path)
     if warn_lines:
         lines.append("  warnings:")
@@ -97,11 +113,23 @@ def convert_round(path: str) -> str:
         format_column_header(),
         format_separator(),
     ])
-    for sec, up_mid, down_mid, chainlink, ptb, gain in rows:
-        up_prob = round(up_mid * 100)
-        down_prob = round(down_mid * 100)
+    last_side: str | None = None
+    indexed = []
+    for row in ticks:
+        sec = int(math.floor(row[1] + 0.5))
+        indexed.append((sec, row))
+    indexed.sort(key=lambda t: -t[0])
+    for sec, row in indexed:
+        chainlink, gain = row[6], row[7]
+        if tick_quotes_missing(row):
+            side = last_side or side_from_chainlink(chainlink, ptb)
+            lines.append(format_data_row_partial(sec, side, chainlink, ptb))
+            continue
+        up_prob = round((row[2] + row[3]) / 2 * 100)
+        down_prob = round((row[4] + row[5]) / 2 * 100)
         if not (0 <= up_prob <= 100 and 0 <= down_prob <= 100):
             raise Exception(f"C3: prob out of range sec {sec}: {up_prob}/{down_prob}")
+        last_side = majority_side(row[2], row[3], row[4], row[5])
         lines.append(format_data_row(sec, up_prob, down_prob, chainlink, ptb, gain))
     return "\n".join(lines) + "\n"
 

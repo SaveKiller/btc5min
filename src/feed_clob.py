@@ -128,3 +128,12 @@ def snapshot_books(state: RoundState):
         copy.deepcopy(up.bids), copy.deepcopy(up.asks),
         copy.deepcopy(down.bids), copy.deepcopy(down.asks),
         up.best_bid(), up.quote_ask(), down.best_bid(), down.quote_ask()), cl, ptb
+
+
+def snapshot_chainlink(state: RoundState) -> tuple[float, float | None]:
+    with state.lock:
+        cl = state.chainlink_price
+        ptb = state.price_to_beat
+    if cl is None:
+        raise Exception("chainlink price missing at sample")
+    return cl, ptb

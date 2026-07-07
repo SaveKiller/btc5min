@@ -10,6 +10,7 @@ def build_round_header(
     final_chainlink: float,
     market_start_ts: int,
     market_end_ts: int,
+    fee_rate: float,
 ) -> dict:
     if price_to_beat is None:
         raise Exception("gamma priceToBeat missing")
@@ -22,4 +23,5 @@ def build_round_header(
         "price_to_beat": price_to_beat,
         "outcome": OUTCOME_FROM_NAME[outcome],
         "final_chainlink": final_chainlink,
+        "fee_rate": fee_rate,
     }

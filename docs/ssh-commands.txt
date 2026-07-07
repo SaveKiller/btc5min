@@ -1,0 +1,5 @@
+ssh ticksaver systemctl status btc5min
+ssh ticksaver tail -f /opt/btc5min/data/collector.log
+ssh ticksaver cat /opt/btc5min/data/collector.log
+ssh ticksaver ls -la /opt/btc5min/data/
+ssh ticksaver "cd /opt/btc5min && venv/bin/python3 -m src.verify data/"

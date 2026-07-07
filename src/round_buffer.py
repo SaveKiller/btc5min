@@ -1,5 +1,7 @@
 import numpy as np
 
+from src.book import QUOTE_NA
+
 
 class RoundBuffer:
     def __init__(self):
@@ -10,6 +12,9 @@ class RoundBuffer:
         self._rows.append([
             recv_ts_ms, secs_to_expiry, up_bid, up_ask, down_bid, down_ask, chainlink_btc, majority_gain,
         ])
+
+    def append_partial(self, recv_ts_ms: int, secs_to_expiry: float, chainlink_btc: float) -> None:
+        self.append(recv_ts_ms, secs_to_expiry, QUOTE_NA, QUOTE_NA, QUOTE_NA, QUOTE_NA, chainlink_btc, QUOTE_NA)
 
     def set_gain(self, i: int, gain: float) -> None:
         self._rows[i][7] = gain

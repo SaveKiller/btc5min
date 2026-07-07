@@ -6,13 +6,14 @@ import time
 from pathlib import Path
 
 from src.binary_format import round_filename, write_round
-from src.clob_api import enrich_gains, fetch_fee_rate, majority_side
+from src.book import empty_book_snapshot
+from src.clob_api import enrich_gains, fetch_fee_rate, majority_side, side_from_chainlink
 from src.convert import write_round_txt
 from src.feed_chainlink import ChainlinkFeed
-from src.feed_clob import ClobThread, snapshot_books
+from src.feed_clob import ClobThread, snapshot_books, snapshot_chainlink
 from src.market import wait_for_market
 from src.round_state import RoundState
-from src.sample_log import log_sample
+from src.sample_log import log_sample, log_sample_partial
 from src.settlement import build_round_header
 from src.verify import verify_round
 
@@ -44,6 +45,7 @@ class SamplerThread(threading.Thread):
         super().__init__(daemon=True, name=f"sampler-{state.start_ts}")
         self.state = state
         self._first_logged = False
+        self._last_side: str | None = None
 
     def run(self) -> None:
         while not self.state.stop.is_set() and time.time() < self.state.market_end_ts:
@@ -51,38 +53,42 @@ class SamplerThread(threading.Thread):
             if cd is None or cd == self.state.last_countdown_sec:
                 time.sleep(0.05)
                 continue
-            if not self.state.books_ready():
-                # #region agent log
-                if cd <= 30 and cd % 10 == 0:
-                    _dbg("round_runner.SamplerThread", "books not ready", {
-                        "start_ts": self.state.start_ts, "cd": cd,
-                    }, hypothesis_id="P2")
-                # #endregion
-                time.sleep(0.05)
-                continue
             if not self.state.chainlink_ready():
                 time.sleep(0.05)
                 continue
-            snap, chainlink, ptb = snapshot_books(self.state)
-            side = majority_side(snap.up_bid, snap.up_ask, snap.down_bid, snap.down_ask)
-            majority_ask = snap.up_ask if side == "Up" else snap.down_ask
-            self.state.buffer.append(
-                int(time.time() * 1000), self.state.market_end_ts - time.time(),
-                snap.up_bid, snap.up_ask, snap.down_bid, snap.down_ask, chainlink, 0.0)
-            self.state.book_snapshots.append(snap)
-            self.state.last_countdown_sec = cd
-            log_sample(self.state.start_ts, cd, side, majority_ask, chainlink, ptb)
-            if not self._first_logged:
-                self._first_logged = True
-                # #region agent log
-                _dbg("round_runner.SamplerThread", "first sample", {
-                    "start_ts": self.state.start_ts,
-                    "cd": cd,
-                    "secs_to_expiry": self.state.market_end_ts - time.time(),
-                    "lag_after_start": time.time() - self.state.market_start_ts,
-                    "ptb_ready": ptb is not None,
-                })
-                # #endregion
+            if self.state.books_ready():
+                snap, chainlink, ptb = snapshot_books(self.state)
+                side = majority_side(snap.up_bid, snap.up_ask, snap.down_bid, snap.down_ask)
+                self._last_side = side
+                majority_ask = snap.up_ask if side == "Up" else snap.down_ask
+                self.state.buffer.append(
+                    int(time.time() * 1000), self.state.market_end_ts - time.time(),
+                    snap.up_bid, snap.up_ask, snap.down_bid, snap.down_ask, chainlink, 0.0)
+                self.state.book_snapshots.append(snap)
+                self.state.last_countdown_sec = cd
+                log_sample(self.state.start_ts, cd, side, majority_ask, chainlink, ptb)
+                if not self._first_logged:
+                    self._first_logged = True
+                    # #region agent log
+                    _dbg("round_runner.SamplerThread", "first sample", {
+                        "start_ts": self.state.start_ts,
+                        "cd": cd,
+                        "secs_to_expiry": self.state.market_end_ts - time.time(),
+                        "lag_after_start": time.time() - self.state.market_start_ts,
+                        "ptb_ready": ptb is not None,
+                    })
+                    # #endregion
+            else:
+                chainlink, ptb = snapshot_chainlink(self.state)
+                if ptb is None:
+                    time.sleep(0.05)
+                    continue
+                side = self._last_side or side_from_chainlink(chainlink, ptb)
+                self.state.buffer.append_partial(
+                    int(time.time() * 1000), self.state.market_end_ts - time.time(), chainlink)
+                self.state.book_snapshots.append(empty_book_snapshot())
+                self.state.last_countdown_sec = cd
+                log_sample_partial(self.state.start_ts, cd, side, chainlink, ptb)
             time.sleep(0.05)
 
 
@@ -174,9 +180,11 @@ class RoundRunner(threading.Thread):
             enrich_gains(state.buffer, state.book_snapshots, state.fee_rate)
             ticks = state.buffer.to_numpy()
             header = build_round_header(
-                self.price_to_beat, final_chainlink, state.market_start_ts, state.market_end_ts)
+                self.price_to_beat, final_chainlink, state.market_start_ts, state.market_end_ts,
+                state.fee_rate)
+            header["tick_count"] = len(ticks)
             path = self.out_dir / round_filename(self.asset, self.interval, self.start_ts)
-            write_round(str(path), header, ticks)
+            write_round(str(path), header, ticks, state.book_snapshots)
             write_round_txt(str(path))
             errs = verify_round(str(path))
             for e in errs:
