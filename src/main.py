@@ -7,9 +7,9 @@ from pathlib import Path
 
 from src.market import INTERVAL_SECS, current_round_start_ts
 from src.feed_chainlink import ChainlinkFeed
+from src.gamma_patch import GammaPatchWorker
 from src.round_runner import RoundRunner
-
-PREP_AHEAD_SEC = 10
+from src.setup import PREP_AHEAD_SEC
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
 logging.getLogger("websocket").setLevel(logging.CRITICAL)
 log = logging.getLogger("main")
@@ -53,6 +53,7 @@ def main() -> None:
     def shutdown(signum, frame):
         for runner in spawned.values():
             runner.request_stop()
+        GammaPatchWorker.get().stop()
         ChainlinkFeed.get().stop()
         raise SystemExit(0)
 
@@ -61,6 +62,7 @@ def main() -> None:
 
     feed = ChainlinkFeed.get()
     feed.start()
+    GammaPatchWorker.get()
 
     try:
         if args.once:
@@ -74,6 +76,7 @@ def main() -> None:
     except SystemExit:
         pass
     finally:
+        GammaPatchWorker.get().stop()
         feed.stop()
 
 

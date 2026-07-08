@@ -10,7 +10,13 @@ from src.book import tick_quotes_missing
 from src.clob_api import majority_side, side_from_chainlink
 
 
-def sampled_rows(ticks: np.ndarray, price_to_beat: float) -> list[tuple[int, float, float, float, float, float]]:
+def _fmt_price(v: float) -> str:
+    if math.isnan(v):
+        return "nan"
+    return f"{v:.2f}"
+
+
+def sampled_rows(ticks: np.ndarray, ptb_chainlink: float) -> list[tuple[int, float, float, float, float, float]]:
     """Una riga per tick campionato, ordinati per sec decrescente. Nessun forward-fill."""
     if ticks.shape[0] == 0:
         raise Exception("no ticks to convert")
@@ -19,7 +25,7 @@ def sampled_rows(ticks: np.ndarray, price_to_beat: float) -> list[tuple[int, flo
         sec = int(math.floor(row[1] + 0.5))
         up_mid = (row[2] + row[3]) / 2
         down_mid = (row[4] + row[5]) / 2
-        rows.append((sec, up_mid, down_mid, row[6], price_to_beat, row[7]))
+        rows.append((sec, up_mid, down_mid, row[6], ptb_chainlink, row[7]))
     rows.sort(key=lambda r: -r[0])
     return rows
 
@@ -32,8 +38,8 @@ def format_mmss(sec: int) -> str:
     return f"{sec // 60}:{sec % 60:02d}"
 
 
-def format_delta(chainlink: float, price_to_beat: float) -> str:
-    d = round(chainlink - price_to_beat)
+def format_delta(chainlink: float, ptb_chainlink: float) -> str:
+    d = round(chainlink - ptb_chainlink)
     if d > 0:
         return f"+{d}$"
     if d < 0:
@@ -93,13 +99,17 @@ def format_data_row(sec: int, up_prob: int, down_prob: int, chainlink: float, pt
 
 def convert_round(path: str) -> str:
     header, ticks, _ = read_round(path)
-    ptb = header["price_to_beat"]
+    ptb = header["ptb_chainlink"]
     lines = ["header:",
         f"  market_start_ts: {header['market_start_ts']} ({format_utc_ts(header['market_start_ts'])})",
         f"  market_end_ts: {header['market_end_ts']} ({format_utc_ts(header['market_end_ts'])})",
-        f"  price_to_beat: {ptb:.2f}",
+        f"  ptb_price: {_fmt_price(header['ptb_price'])}",
+        f"  ptb_chainlink: {_fmt_price(header['ptb_chainlink'])}",
+        f"  ptb_gamma: {_fmt_price(header['ptb_gamma'])}",
+        f"  final_price: {_fmt_price(header['final_price'])}",
+        f"  final_chainlink: {_fmt_price(header['final_chainlink'])}",
+        f"  final_gamma: {_fmt_price(header['final_gamma'])}",
         f"  outcome: {OUTCOME_NAMES[header['outcome']]}",
-        f"  final_chainlink: {header['final_chainlink']}",
         f"  tick_count: {header['tick_count']}",
         f"  fee_rate: {header['fee_rate']}"]
     warn_lines = read_warnings(path)

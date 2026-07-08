@@ -5,9 +5,12 @@ from datetime import datetime, timezone
 
 import httpx
 
+from src.setup import GAMMA_POLL_SEC
+
 for _name in ("httpx", "httpcore", "h2"):
     logging.getLogger(_name).setLevel(logging.WARNING)
 
+log = logging.getLogger("market")
 GAMMA_URL = "https://gamma-api.polymarket.com/events"
 INTERVAL_SECS = {"5m": 300, "15m": 900, "1h": 3600}
 
@@ -88,3 +91,22 @@ def wait_for_market(asset: str, interval: str, start_ts: int, timeout_sec: float
             last_err = e
             time.sleep(2)
     raise Exception(f"market not available after {timeout_sec}s: {last_err}")
+
+
+def poll_gamma_outcome(
+    asset: str, interval: str, start_ts: int, state, deadline: float, poll_sec: float = GAMMA_POLL_SEC,
+) -> None:
+    """Poll Gamma fino a outcome o deadline. Aggiorna ptb_gamma e gamma_outcome."""
+    while time.time() < deadline:
+        try:
+            m = fetch_market_by_slug(asset, interval, start_ts)
+            if m["price_to_beat"] is not None:
+                state.apply_gamma_ptb(m["price_to_beat"])
+            if m.get("outcome"):
+                state.apply_gamma_outcome(m["outcome"])
+        except Exception as e:
+            log.warning("gamma poll %s: %s", start_ts, e)
+        with state.lock:
+            if state.gamma_outcome is not None:
+                return
+        time.sleep(poll_sec)

@@ -1,7 +1,10 @@
+import logging
 import threading
 
 from src.book import BookSnapshot, OrderBook
 from src.round_buffer import RoundBuffer
+
+log = logging.getLogger("round")
 
 
 class RoundState:
@@ -16,13 +19,13 @@ class RoundState:
         self.fee_rate = fee_rate
         self.chainlink_price: float | None = None
         self.chainlink_ts_ms: int | None = None
-        self.price_to_beat: float | None = None
+        self.ptb_chainlink: float | None = None
         self.final_chainlink: float | None = None
+        self.ptb_gamma: float | None = None
+        self.final_gamma: float | None = None
+        self.gamma_outcome: str | None = None
         self._ptb_start_ms = market_start_ts * 1000
-        self._ptb_ts_ms: int | None = None
         self._final_end_ms = market_end_ts * 1000
-        self._final_ts_ms: int | None = None
-        self._final_source: str | None = None
         self.up_book = OrderBook()
         self.down_book = OrderBook()
         self.buffer = RoundBuffer()
@@ -35,24 +38,77 @@ class RoundState:
         with self.lock:
             self.chainlink_price = value
             self.chainlink_ts_ms = ts_ms
+            if ts_ms <= self._ptb_start_ms:
+                self.ptb_chainlink = value
+            if ts_ms <= self._final_end_ms:
+                self.final_chainlink = value
 
     def apply_chainlink(self, value: float, ts_ms: int, recv_ms: int) -> None:
         with self.lock:
             self.chainlink_price = value
             self.chainlink_ts_ms = ts_ms
-            if ts_ms < self._ptb_start_ms: return
-            if self._ptb_ts_ms is None or ts_ms < self._ptb_ts_ms:
-                self._ptb_ts_ms = ts_ms
-                self.price_to_beat = value
-            if ts_ms >= self._final_end_ms:
-                self._final_ts_ms = ts_ms
+            if ts_ms <= self._ptb_start_ms:
+                self.ptb_chainlink = value
+            if ts_ms <= self._final_end_ms:
                 self.final_chainlink = value
-                self._final_source = "oracle"
-            elif recv_ms >= self._final_end_ms and self._final_source != "oracle":
-                if self._final_ts_ms is None:
-                    self._final_ts_ms = ts_ms
-                    self.final_chainlink = value
-                    self._final_source = "recv"
+
+    def apply_gamma_ptb(self, value: float) -> bool:
+        with self.lock:
+            if self.ptb_gamma is not None:
+                return False
+            self.ptb_gamma = value
+        log.info("round %s ptb_gamma=%.2f", self.start_ts, value)
+        return True
+
+    def apply_gamma_final(self, value: float) -> bool:
+        with self.lock:
+            if self.final_gamma is not None:
+                return False
+            self.final_gamma = value
+        return True
+
+    def apply_gamma_outcome(self, outcome: str) -> bool:
+        with self.lock:
+            if self.gamma_outcome is None:
+                self.gamma_outcome = outcome
+                return True
+            return False
+
+    def display_ptb(self) -> float | None:
+        with self.lock:
+            if self.ptb_gamma is not None:
+                return self.ptb_gamma
+            return self.ptb_chainlink
+
+    def ensure_ptb_chainlink(self) -> bool:
+        with self.lock:
+            if self.ptb_chainlink is not None:
+                return False
+            if self.chainlink_price is None or self.chainlink_ts_ms is None:
+                return False
+            if self.chainlink_ts_ms > self._ptb_start_ms:
+                return False
+            self.ptb_chainlink = self.chainlink_price
+            return True
+
+    def ensure_final_chainlink(self) -> bool:
+        with self.lock:
+            if self.final_chainlink is not None:
+                return False
+            if self.chainlink_price is None or self.chainlink_ts_ms is None:
+                return False
+            if self.chainlink_ts_ms > self._final_end_ms:
+                return False
+            self.final_chainlink = self.chainlink_price
+            return True
+
+    def require_chainlink_prices(self) -> tuple[float, float]:
+        with self.lock:
+            if self.ptb_chainlink is None:
+                raise Exception(f"ptb_chainlink missing for round {self.start_ts}")
+            if self.final_chainlink is None:
+                raise Exception(f"final_chainlink missing for round {self.start_ts}")
+            return self.ptb_chainlink, self.final_chainlink
 
     def chainlink_ready(self) -> bool:
         with self.lock:

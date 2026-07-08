@@ -1,34 +1,37 @@
 ---
 name: PTB provvisorio v4
-overview: PTB/final provvisori da RTDS al boundary, sostituzione via polling Gamma API (10s), timeout 20 min in setup.json, bin v4 con delta RTDS vs settlement Polymarket, round sempre salvati.
+overview: PTB/final provvisori da RTDS al boundary, sostituzione via polling Gamma API (10s), attesa obbligatoria finalPrice Gamma (timeout final_price_wait_sec 20 min), bin v4 con delta RTDS vs settlement Polymarket, round sempre salvati.
 todos:
   - id: setup-json
     content: Creare setup.json e src/setup.py (settlement_wait_sec, gamma_poll_sec, ecc.)
-    status: pending
+    status: completed
   - id: round-state
     content: Provisorio RTDS in round_state; campi gamma/delta; apply_chainlink solo per tick live
-    status: pending
+    status: completed
   - id: gamma-poll
     content: wait_gamma_settlement in market.py + integrazione polling in round_runner
-    status: pending
+    status: completed
   - id: round-runner
     content: No fail ptb/final; poll PTB intra-round e final post-round; warnings
-    status: pending
+    status: completed
   - id: bin-v4
     content: Bump binary_format v4, settlement, verify, convert, reader (flag gamma)
-    status: pending
+    status: completed
   - id: wire-setup
     content: Collegare setup a main.py e feed_chainlink.py
-    status: pending
+    status: completed
   - id: debug-logs
     content: Eventi NDJSON provisional/gamma/delta e settlement_timeout
-    status: pending
+    status: completed
   - id: purge-bin-v3
     content: Cancellare tutti i .bin/.txt v3 esistenti (dev data/ e poly) prima del deploy v4
-    status: pending
+    status: completed
   - id: validate
     content: Test round; confronto .bin vs Gamma; grep fail ptb = 0
-    status: pending
+    status: completed
+  - id: final-price-wait
+    content: final_price_wait_sec in setup; poll blocca fino a finalPrice Gamma (non solo outcome)
+    status: completed
 isProject: false
 ---
 
@@ -38,13 +41,25 @@ isProject: false
 
 Eliminare i fallimenti round per `price_to_beat not captured` / `final not captured` quando il valore RTDS è disponibile ma il timestamp oracle Chainlink non è ancora valido (o resta in stasi notturna).
 
-**Strategia settlement:** allinearsi al sito Polymarket — non aspettare tick Chainlink con `oracle_ts >= boundary`, ma **pollare Gamma API** (`priceToBeat`, `finalPrice`, `outcome`) ogni `gamma_poll_sec` (default 10 s), fino a `settlement_wait_sec` (default 20 min).
+**Strategia settlement:** allinearsi al sito Polymarket — non aspettare tick Chainlink con `oracle_ts >= boundary`, ma **pollare Gamma API** (`priceToBeat`, `finalPrice`, `outcome`) ogni `gamma_poll_sec` (default 10 s).
+
+**Post-chiusura:** il thread del round resta attivo e continua il poll fino a `eventMetadata.finalPrice` (non basta l'outcome da `outcomePrices`). Timeout dedicato `final_price_wait_sec` (default 1200 s = 20 min). Solo allora si scrive il `.bin`.
 
 Salvare nel `.bin`:
 - prezzi **effettivi** usati per outcome (Gamma se disponibile, altrimenti provvisori RTDS)
 - provvisori RTDS e **delta** = `gamma - provisional` per analisi statistica RTDS vs settlement reale
 
-**Policy confermata:** se dopo `settlement_wait_sec` Gamma non risponde, outcome da provvisori RTDS, flag `ptb_gamma`/`final_gamma` = 0, warning in `.warn`.
+**Policy confermata:** se dopo `final_price_wait_sec` Gamma non espone `finalPrice`, final da provvisori RTDS, flag `final_gamma` = 0, warning in `.warn`. Stessa logica per PTB con `ptb_gamma` se `priceToBeat` mancante.
+
+## Perché Gamma espone outcome prima di finalPrice
+
+Polymarket **ha già** il prezzo finale internamente quando risolve Up/Down, ma l'API Gamma pubblica i campi in sequenza:
+
+1. `outcomePrices` → `0.9995/0.0005` poi `1/0` (mercato risolto lato CLOB)
+2. `closed: true`, `umaResolutionStatus: resolved`
+3. `eventMetadata.finalPrice` — spesso **1–3 minuti dopo** l'outcome
+
+Il collector v4 iniziale usciva dal poll all'outcome → `final_gamma=False` sistematico. **Fix (lug 2026):** attendere esplicitamente `finalPrice` fino a `final_price_wait_sec`.
 
 ## Perché Gamma e non Chainlink oracle timestamp
 
@@ -75,12 +90,16 @@ sequenceDiagram
 
     Note over RTDS,RR: market_end
     RTDS->>RS: final_provisional
-    loop fino a settlement_wait_sec
-        RR->>Gamma: fetch finalPrice + outcome
-        Gamma-->>RR: final + closed se pronti
-        RR->>RS: final_gamma, final_delta
+    loop fino a final_price_wait_sec
+        RR->>Gamma: fetch finalPrice + outcome + priceToBeat
+        Gamma-->>RR: outcome spesso prima di finalPrice
+        RR->>RS: aggiorna ptb_gamma / outcome quando disponibili
+        alt finalPrice presente
+            RR->>RS: final_gamma, final_delta
+            RR->>RR: esci poll, scrivi .bin v4
+        end
     end
-    RR->>RR: scrive .bin v4 + .warn se solo RTDS
+    RR->>RR: timeout → .bin con RTDS + .warn
 ```
 
 ## 1. `setup.json` + loader
@@ -90,6 +109,7 @@ Creare [`setup.json`](f:\btc5min\setup.json) alla root progetto (JSON indent 4 s
 ```json
 {
     "settlement_wait_sec": 1200,
+    "final_price_wait_sec": 1200,
     "gamma_poll_sec": 10,
     "prep_ahead_sec": 10,
     "stall_reconnect_sec": 45,
@@ -99,21 +119,22 @@ Creare [`setup.json`](f:\btc5min\setup.json) alla root progetto (JSON indent 4 s
 
 | Chiave | Default | Uso |
 |--------|---------|-----|
-| `settlement_wait_sec` | 1200 (20 min) | Finestra max polling Gamma post-`market_end` (e per PTB se non arrivato prima) |
+| `settlement_wait_sec` | 1200 (20 min) | Riservato / finestra generale settlement (legacy nel piano) |
+| `final_price_wait_sec` | 1200 (20 min) | **Timeout attesa `finalPrice` Gamma** post-`market_end`; il round non scrive il `.bin` prima |
 | `gamma_poll_sec` | 10 | Intervallo tra richieste HTTP Gamma (gentile sui server) |
 | `prep_ahead_sec` | 10 | Spawn round (da `main.py`) |
 | `stall_reconnect_sec` | 45 | Feed Chainlink |
 | `ping_interval_sec` | 5 | Feed Chainlink |
 
 Nuovo modulo [`src/setup.py`](f:\btc5min\src\setup.py):
-- `load_setup()` legge `Path(__file__).parent.parent / "setup.json"` una volta all'avvio
+- legge `Path(__file__).parent.parent / "setup.json"` una volta all'avvio
 - Nessun default in codice (D2): chiave mancante → eccezione esplicita
-- Espone: `SETTLEMENT_WAIT_SEC`, `GAMMA_POLL_SEC`, `PREP_AHEAD_SEC`, `STALL_RECONNECT_SEC`, `PING_INTERVAL_SEC`
+- Espone: `SETTLEMENT_WAIT_SEC`, `FINAL_PRICE_WAIT_SEC`, `GAMMA_POLL_SEC`, `PREP_AHEAD_SEC`, `STALL_RECONNECT_SEC`, `PING_INTERVAL_SEC`
 
 Wire-up:
-- [`src/main.py`](f:\btc5min\src\main.py): `load_setup()` all'import; `PREP_AHEAD_SEC` da setup
+- [`src/main.py`](f:\btc5min\src\main.py): `PREP_AHEAD_SEC` da setup
 - [`src/feed_chainlink.py`](f:\btc5min\src\feed_chainlink.py): `STALL_RECONNECT_SEC`, `PING_INTERVAL_SEC` da setup
-- [`src/round_runner.py`](f:\btc5min\src\round_runner.py): `SETTLEMENT_WAIT_SEC`, `GAMMA_POLL_SEC`
+- [`src/round_runner.py`](f:\btc5min\src\round_runner.py): `FINAL_PRICE_WAIT_SEC`, `GAMMA_POLL_SEC`
 
 ## 2. Provisorio RTDS in `RoundState`
 
@@ -133,7 +154,8 @@ Nuovi campi:
 - **non** usa più `oracle_ts >= boundary` per settlement (rimuovere guard ptb-oracle e logica final oracle/recv come gate obbligatorio)
 
 Metodi aggiuntivi:
-- `apply_gamma_ptb(value)` / `apply_gamma_final(value, outcome)` — chiamati dal round runner dopo poll
+- `apply_gamma_ptb(value)` / `apply_gamma_final(value, outcome)` / `apply_gamma_outcome(outcome)` — chiamati dal round runner dopo poll
+- `ensure_ptb_provisional()` / `ensure_final_provisional()` — fallback se al boundary non arriva un nuovo tick RTDS ma `chainlink_price` è già valorizzato
 - `effective_ptb()` / `effective_final()` — gamma se flag, altrimenti provisional
 
 `chainlink_ready()`: invariato (`chainlink_price is not None`).
@@ -150,15 +172,20 @@ Riutilizzare `fetch_market_by_slug(asset, interval, start_ts)` — già espone:
 Nuova funzione (nome indicativo):
 
 ```python
-def poll_gamma_settlement(asset, interval, start_ts, need_ptb, need_final, deadline) -> dict:
-    # loop: fetch_market_by_slug; sleep GAMMA_POLL_SEC; return quando ptb/final/outcome pronti o timeout
+def poll_gamma_settlement(asset, interval, start_ts, state, deadline) -> dict | None:
+    # loop: fetch_market_by_slug; sleep GAMMA_POLL_SEC
+    # esci solo quando final_gamma_flag (finalPrice in eventMetadata)
+    # oppure deadline = market_end_ts + FINAL_PRICE_WAIT_SEC
 ```
 
 Comportamento:
-- **PTB:** poll da `market_start_ts` in parallelo al sampler (thread leggero o check nel loop round runner ogni 10 s)
-- **Final + outcome:** poll da `market_end_ts` fino a `market_end_ts + SETTLEMENT_WAIT_SEC`
+- **PTB:** poll da `market_start_ts` in parallelo al sampler (check nel loop round runner ogni `gamma_poll_sec` via `_try_gamma_ptb`)
+- **Final:** poll da `market_end_ts` fino a `market_end_ts + FINAL_PRICE_WAIT_SEC`
+- Aggiorna `outcome` e `priceToBeat` se arrivano durante l'attesa, ma **non termina** finché manca `finalPrice`
+- Log: `outcome from gamma, waiting for finalPrice (timeout Ns)` quando outcome noto ma final assente
+- Il poll **non** controlla `state.stop` (il sampler è già fermo; `stop` non deve abbreviare l'attesa)
 - 1 richiesta HTTP ogni `gamma_poll_sec` per round → trascurabile per Gamma
-- Esco appena ho i campi richiesti (tipicamente 1–2 poll = 10–20 s post-chiusura)
+- Tipicamente `finalPrice` arriva 1–3 min dopo la chiusura; il `.bin` viene scritto solo allora
 
 ## 4. `RoundRunner`
 
@@ -170,11 +197,18 @@ File: [`src/round_runner.py`](f:\btc5min\src\round_runner.py)
 
 **Dopo `market_end_ts`:**
 - Sampler fermato
-- Cattura `final_provisional` da ultimo tick RTDS al boundary (se non già fatto in `apply_chainlink`)
-- Poll Gamma per `finalPrice` + `outcome` fino a successo o `settlement_wait_sec`
-- Se PTB non ancora da Gamma, continua poll anche per `priceToBeat` nella stessa finestra
+- `ensure_final_provisional()` + fallback da ultimo `chainlink_price` se necessario
+- Poll Gamma fino a **`finalPrice`** o `final_price_wait_sec`
+- Durante l'attesa: aggiorna PTB/outcome Gamma se arrivano
+- Solo dopo poll (successo o timeout) → `enrich_gains`, `write_round`, `verify_round`
 
-**Non fallire** per ptb/final mancanti se esistono provvisori RTDS.
+**Non fallire** per ptb/final mancanti se esistono provvisori RTDS (eccezione solo se manca anche il provvisorio).
+
+**Log atteso a salvataggio:**
+```
+round N final_chainlink=X ptb=Y (gamma ptb=True final=True)
+```
+`final=True` quando `eventMetadata.finalPrice` catturato; `final_delta` nel header v4 per analisi statistica chiusura round.
 
 **Outcome:**
 1. Preferire `outcome` da Gamma se `closed`/outcomePrices disponibile
@@ -252,20 +286,21 @@ Il WebSocket RTDS resta per:
 
 ## 7. NDJSON debug
 
-Eventi in [`round_runner.py`](f:\btc5min\src\round_runner.py):
+Eventi in [`round_runner.py`](f:\btc5min\src\round_runner.py) / [`feed_chainlink.py`](f:\btc5min\src\feed_chainlink.py):
 - `ptb_provisional_set`, `ptb_gamma_set` (con delta)
-- `final_provisional_set`, `final_gamma_set`
-- `gamma_poll`, `settlement_timeout`
-- `outcome_gamma` vs `outcome_computed` se divergono
+- `final_provisional_set`, `final_gamma_set` (con delta)
+- `gamma_poll`, `final_price_timeout`, `settlement_timeout`
+- `outcome_mismatch` se outcome_gamma ≠ outcome_computed
 
 ## 8. Validazione
 
 0. **Pre-deploy:** `.bin` v3 cancellati (o archiviati fuori da `data/`); `data/` contiene solo v4 dopo i primi round
-1. Run 2–3 round: `.bin` v4 con delta; Gamma di solito entro 10–20 s post-chiusura
-2. Round con solo RTDS (Gamma down o timeout simulato): `.warn`, round `done`, flag=0
+1. Run 2–3 round: `.bin` v4 con `ptb_gamma=1` e **`final_gamma=1`** quando Gamma risponde (attesa 1–3 min post-chiusura normale)
+2. Round con solo RTDS (Gamma down o timeout `final_price_wait_sec`): `.warn`, round `done`, flag=0
 3. `python -m src.verify data/*.bin` — OK
-4. **Cross-check:** confrontare header `.bin` con `fetch_market_by_slug` post-round (ptb, final, outcome devono coincidere quando flag=1)
+4. **Cross-check:** header `.bin` vs `fetch_market_by_slug` — `price_to_beat`, `final_chainlink`, `outcome` coincidono quando flag=1; `final_delta` per studio magnitudine Up/Down
 5. `grep -c 'price_to_beat not captured'` su poly → atteso 0
+6. Log: `gamma ptb=True final=True` nella maggioranza dei round chiusi
 
 ## File toccati (riepilogo)
 
@@ -273,9 +308,9 @@ Eventi in [`round_runner.py`](f:\btc5min\src\round_runner.py):
 |------|----------|
 | `setup.json` | **nuovo** |
 | `src/setup.py` | **nuovo** loader |
-| `src/round_state.py` | provvisorio RTDS; apply_gamma_* |
-| `src/market.py` | `poll_gamma_settlement` |
-| `src/round_runner.py` | polling PTB intra-round + final post-round |
+| `src/round_state.py` | provvisorio RTDS; apply_gamma_*; ensure_* boundary |
+| `src/market.py` | `poll_gamma_settlement` (exit su finalPrice) |
+| `src/round_runner.py` | polling PTB intra-round; attesa finalPrice post-round |
 | `src/binary_format.py` | v4 header, flag gamma |
 | `src/settlement.py` | header esteso, outcome da Gamma |
 | `src/verify.py`, `convert.py`, `reader.py` | v4 + campi gamma/delta |
@@ -289,8 +324,16 @@ Eventi in [`round_runner.py`](f:\btc5min\src\round_runner.py):
 
 ## Rischi
 
-- **Gamma in ritardo 10–30 s:** polling 10 s adeguato; `settlement_wait_sec` 20 min come rete di sicurezza
-- **PTB su Gamma non al secondo 0:** provvisorio RTDS necessario all'avvio; sostituzione appena Gamma risponde
+- **Gamma finalPrice in ritardo 1–3 min:** round thread resta aperto; accettabile per analisi statistica; `final_price_wait_sec` 20 min come rete di sicurezza
+- **Outcome visibile prima di finalPrice in API:** gestito — non uscire dal poll sull'outcome alone
+- **PTB su Gamma non al secondo 0:** provvisorio RTDS + `ensure_ptb_provisional()`; sostituzione appena Gamma risponde
+- **Nessun tick RTDS al boundary:** `ensure_ptb_provisional()` usa ultimo prezzo live in memoria
 - **Dipendenza HTTP settlement:** fallback provvisori + `.warn`; tick order book comunque salvati
-- **Sampler usa ptb provvisorio** nei primi secondi fino al primo poll Gamma: accettato; delta tipicamente piccolo
-- **Header 84 byte / incompatibilità v3:** richiede purge `.bin` esistenti prima del deploy; non mescolare versioni in `data/`
+- **Header 84 byte / incompatibilità v3:** purge `.bin` v3 prima del deploy; non mescolare versioni in `data/`
+
+## Implementato (stato deploy poly, lug 2026)
+
+- v4 deployato su CT poly (`/opt/btc5min`); servizio `btc5min.service` attivo
+- Purge `.bin` v3 eseguito
+- Fix deploy: poll non bloccato da `state.stop`; exit su outcome rimosso; aggiunto `final_price_wait_sec`
+- Round di test salvati con `ptb_gamma=1`; con attesa finalPrice → `final_gamma=1` atteso sui round successivi al fix

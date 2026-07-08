@@ -1,5 +1,24 @@
-ssh ticksaver systemctl status btc5min
+
+# visualizza e scarica files e log
 ssh ticksaver tail -f /opt/btc5min/data/collector.log
 ssh ticksaver cat /opt/btc5min/data/collector.log
 ssh ticksaver ls -la /opt/btc5min/data/
 ssh ticksaver "cd /opt/btc5min && venv/bin/python3 -m src.verify data/"
+
+# avvia e stoppa il servizio
+ssh ticksaver systemctl start btc5min
+ssh ticksaver systemctl stop btc5min
+ssh ticksaver systemctl restart btc5min
+
+# abilita e disabilita il servizio
+ssh ticksaver systemctl status btc5min
+ssh ticksaver systemctl enable btc5min.service
+ssh ticksaver systemctl disable btc5min.service
+
+# deploy v5 (stop → sync codice → pulizia data → start)
+ssh ticksaver systemctl stop btc5min
+ssh ticksaver rm -f /opt/btc5min/data/*
+ssh ticksaver systemctl start btc5min
+
+# sync poly → locale (data + log produzione)
+scp -r ticksaver:/opt/btc5min/data/* f:/btc5min/data/

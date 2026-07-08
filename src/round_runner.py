@@ -4,25 +4,21 @@ import threading
 import time
 from pathlib import Path
 
-from src.binary_format import round_filename, write_round
+from src.binary_format import round_filename, write_round, write_warnings
 from src.book import empty_book_snapshot
 from src.clob_api import enrich_gains, fetch_fee_rate, majority_side, side_from_chainlink
 from src.convert import write_round_txt
-from src.debug_ndjson import dbg_ndjson
 from src.feed_chainlink import ChainlinkFeed
 from src.feed_clob import ClobThread, snapshot_books, snapshot_chainlink
-from src.market import wait_for_market
+from src.gamma_patch import GammaPatchWorker
+from src.market import fetch_market_by_slug, poll_gamma_outcome, wait_for_market
 from src.round_state import RoundState
 from src.sample_log import log_sample, log_sample_partial
-from src.settlement import build_round_header
+from src.settlement import build_round_header, outcome_from_prices
+from src.setup import GAMMA_POLL_SEC, OUTCOME_WAIT_SEC
 from src.verify import verify_round
 
 log = logging.getLogger("round")
-FINAL_WAIT_SEC = 30.0
-
-
-def _dbg(location: str, message: str, data: dict, hypothesis_id: str = "P1") -> None:
-    dbg_ndjson(location, message, data, hypothesis_id)
 
 
 def countdown_sec(market_end_ts: int) -> int | None:
@@ -33,11 +29,21 @@ def countdown_sec(market_end_ts: int) -> int | None:
     return cd
 
 
+def _try_gamma_ptb(asset: str, interval: str, start_ts: int, state: RoundState) -> None:
+    if state.ptb_gamma is not None:
+        return
+    try:
+        m = fetch_market_by_slug(asset, interval, start_ts)
+        if m["price_to_beat"] is not None:
+            state.apply_gamma_ptb(m["price_to_beat"])
+    except Exception as e:
+        log.warning("round %s gamma ptb poll: %s", start_ts, e)
+
+
 class SamplerThread(threading.Thread):
     def __init__(self, state: RoundState):
         super().__init__(daemon=True, name=f"sampler-{state.start_ts}")
         self.state = state
-        self._first_logged = False
         self._last_side: str | None = None
 
     def run(self) -> None:
@@ -49,8 +55,12 @@ class SamplerThread(threading.Thread):
             if not self.state.chainlink_ready():
                 time.sleep(0.05)
                 continue
+            ptb = self.state.display_ptb()
+            if ptb is None:
+                time.sleep(0.05)
+                continue
             if self.state.books_ready():
-                snap, chainlink, ptb = snapshot_books(self.state)
+                snap, chainlink, _ = snapshot_books(self.state)
                 side = majority_side(snap.up_bid, snap.up_ask, snap.down_bid, snap.down_ask)
                 self._last_side = side
                 majority_ask = snap.up_ask if side == "Up" else snap.down_ask
@@ -60,22 +70,8 @@ class SamplerThread(threading.Thread):
                 self.state.book_snapshots.append(snap)
                 self.state.last_countdown_sec = cd
                 log_sample(self.state.start_ts, cd, side, majority_ask, chainlink, ptb)
-                if not self._first_logged:
-                    self._first_logged = True
-                    # #region agent log
-                    _dbg("round_runner.SamplerThread", "first sample", {
-                        "start_ts": self.state.start_ts,
-                        "cd": cd,
-                        "secs_to_expiry": self.state.market_end_ts - time.time(),
-                        "lag_after_start": time.time() - self.state.market_start_ts,
-                        "ptb_ready": ptb is not None,
-                    })
-                    # #endregion
             else:
-                chainlink, ptb = snapshot_chainlink(self.state)
-                if ptb is None:
-                    time.sleep(0.05)
-                    continue
+                chainlink, _ = snapshot_chainlink(self.state)
                 side = self._last_side or side_from_chainlink(chainlink, ptb)
                 self.state.buffer.append_partial(
                     int(time.time() * 1000), self.state.market_end_ts - time.time(), chainlink)
@@ -92,7 +88,6 @@ class RoundRunner(threading.Thread):
         self.interval = interval
         self.out_dir = out_dir
         self.start_ts = start_ts
-        self.price_to_beat: float | None = None
         self._state: RoundState | None = None
 
     def request_stop(self) -> None:
@@ -121,77 +116,53 @@ class RoundRunner(threading.Thread):
         cb = ClobThread(state)
         cb.start()
         ptb_logged = False
+        next_gamma_poll = 0.0
         try:
             while time.time() < state.market_start_ts:
                 time.sleep(0.05)
             lag = time.time() - state.market_start_ts
             log.info("round %s sampling started (lag=%.2fs)", self.start_ts, lag)
-            # #region agent log
-            _dbg("round_runner._run_round", "sampler start", {
-                "start_ts": self.start_ts, "lag_after_start": lag,
-            })
-            # #endregion
             sampler = SamplerThread(state)
             sampler.start()
             while time.time() < state.market_end_ts:
-                if not ptb_logged and state.price_to_beat is not None:
-                    self.price_to_beat = round(state.price_to_beat, 2)
+                now = time.time()
+                if now >= next_gamma_poll:
+                    next_gamma_poll = now + GAMMA_POLL_SEC
+                    _try_gamma_ptb(self.asset, self.interval, self.start_ts, state)
+                if not ptb_logged and state.ptb_chainlink is not None:
                     ptb_logged = True
-                    lag_ptb = (state._ptb_ts_ms - state._ptb_start_ms) / 1000.0
-                    log.info("round %s price_to_beat=%.2f (lag=%.2fs)", self.start_ts, self.price_to_beat, lag_ptb)
-                    # #region agent log
-                    _dbg("round_runner._run_round", "ptb captured", {
-                        "start_ts": self.start_ts, "ptb": self.price_to_beat,
-                        "lag_ptb_sec": lag_ptb, "sampler_ticks": len(state.buffer),
-                    })
-                    # #endregion
+                    log.info("round %s ptb_chainlink=%.2f", self.start_ts, round(state.ptb_chainlink, 2))
                 time.sleep(0.1)
             state.stop.set()
             sampler.join(timeout=5)
-            if state.price_to_beat is None:
-                with state.lock:
-                    _dbg("round_runner._run_round", "ptb fail", {
-                        "start_ts": self.start_ts, "chainlink_price": state.chainlink_price,
-                        "chainlink_ts_ms": state.chainlink_ts_ms, "price_to_beat": state.price_to_beat,
-                        "ptb_start_ms": state._ptb_start_ms, "final_end_ms": state._final_end_ms,
-                        "sampler_ticks": len(state.buffer),
-                    }, "P1")
-                raise Exception(f"chainlink price_to_beat not captured for round {self.start_ts}")
-            if self.price_to_beat is None:
-                self.price_to_beat = round(state.price_to_beat, 2)
+            state.ensure_final_chainlink()
+            state.ensure_ptb_chainlink()
             if len(state.buffer) == 0:
                 raise Exception(f"no seconds collected for round {self.start_ts}")
-            deadline = time.time() + FINAL_WAIT_SEC
-            while time.time() < deadline:
-                with state.lock:
-                    if state._final_source == "oracle":
-                        break
-                time.sleep(0.05)
-            if state.final_chainlink is None:
-                with state.lock:
-                    _dbg("round_runner._run_round", "final fail", {
-                        "start_ts": self.start_ts, "chainlink_ts_ms": state.chainlink_ts_ms,
-                        "final_chainlink": state.final_chainlink, "final_end_ms": state._final_end_ms,
-                        "final_source": state._final_source,
-                    }, "P1")
-                raise Exception(f"chainlink final not captured for round {self.start_ts}")
-            lag_final = (state._final_ts_ms - state._final_end_ms) / 1000.0
-            final_chainlink = round(state.final_chainlink, 2)
-            if state._final_source == "oracle":
-                log.info("round %s final_chainlink=%.2f (oracle lag=%.2fs)", self.start_ts, final_chainlink, lag_final)
-            else:
-                log.info("round %s final_chainlink=%.2f (recv fallback, oracle_lag=%.2fs)",
-                    self.start_ts, final_chainlink, lag_final)
+            deadline = state.market_end_ts + OUTCOME_WAIT_SEC
+            poll_gamma_outcome(self.asset, self.interval, self.start_ts, state, deadline)
+            warnings: list[str] = []
+            if not state.gamma_outcome:
+                warnings.append("outcome from chainlink provisional, not gamma")
+            if state.ptb_gamma is None:
+                warnings.append("ptb_gamma missing at write")
+            ptb_cl, final_cl = state.require_chainlink_prices()
+            if state.gamma_outcome:
+                computed = outcome_from_prices(final_cl, ptb_cl)
+                if computed != state.gamma_outcome:
+                    warnings.append(f"outcome mismatch gamma={state.gamma_outcome} computed={computed}")
+            log.info("round %s final_chainlink=%.2f ptb_chainlink=%.2f outcome=%s",
+                self.start_ts, final_cl, ptb_cl, state.gamma_outcome or "computed")
             state.chainlink_done.set()
             enrich_gains(state.buffer, state.book_snapshots, state.fee_rate)
             ticks = state.buffer.to_numpy()
-            header = build_round_header(
-                self.price_to_beat, final_chainlink, state.market_start_ts, state.market_end_ts,
-                state.fee_rate)
-            header["tick_count"] = len(ticks)
+            header = build_round_header(state.market_start_ts, state.market_end_ts, state.fee_rate, ticks, state)
             path = self.out_dir / round_filename(self.asset, self.interval, self.start_ts)
             write_round(str(path), header, ticks, state.book_snapshots)
+            write_warnings(str(path), warnings)
             write_round_txt(str(path))
+            GammaPatchWorker.get().enqueue(
+                self.asset, self.interval, self.start_ts, str(path), state.market_end_ts)
             errs = verify_round(str(path))
             for e in errs:
                 log.error("round %s verify: %s", self.start_ts, e)

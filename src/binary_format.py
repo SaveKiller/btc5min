@@ -5,10 +5,12 @@ from pathlib import Path
 from src.book import BookSnapshot
 
 MAGIC = b"BTC5"
-VERSION = 3
-HEADER_FMT = "<4sHII d B x d I d 20x"
-RECORD_FMT = "<Q f 6f"
+VERSION = 5
+HEADER_FMT = "<4sHII B x I d d d d d d d"
+OFFSET_PTB_GAMMA = 44
+OFFSET_FINAL_GAMMA = 68
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
+RECORD_FMT = "<Q f 6f"
 RECORD_SIZE = struct.calcsize(RECORD_FMT)
 OUTCOME_NAMES = {0: "unknown", 1: "Up", 2: "Down"}
 OUTCOME_FROM_NAME = {"Up": 1, "Down": 2}
@@ -17,22 +19,40 @@ OUTCOME_FROM_NAME = {"Up": 1, "Down": 2}
 def _pack_header(header: dict) -> bytes:
     return struct.pack(
         HEADER_FMT, MAGIC, VERSION, header["market_start_ts"], header["market_end_ts"],
-        header["price_to_beat"], header["outcome"], header["final_chainlink"],
-        header["tick_count"], header["fee_rate"])
+        header["outcome"], header["tick_count"], header["fee_rate"],
+        header["ptb_price"], header["ptb_chainlink"], header["ptb_gamma"],
+        header["final_price"], header["final_chainlink"], header["final_gamma"])
 
 
 def _unpack_header(raw: bytes) -> dict:
     if len(raw) < HEADER_SIZE:
         raise Exception(f"file too small: {len(raw)} bytes")
-    magic, version, market_start_ts, market_end_ts, price_to_beat, outcome, final_chainlink, tick_count, fee_rate = struct.unpack(
+    (magic, version, market_start_ts, market_end_ts, outcome, tick_count, fee_rate,
+        ptb_price, ptb_chainlink, ptb_gamma, final_price, final_chainlink, final_gamma) = struct.unpack(
         HEADER_FMT, raw[:HEADER_SIZE])
     if version != VERSION:
         raise Exception(f"unsupported version {version}, expected {VERSION}")
     return {
         "magic": magic, "version": version, "market_start_ts": market_start_ts,
-        "market_end_ts": market_end_ts, "price_to_beat": price_to_beat, "outcome": outcome,
-        "final_chainlink": final_chainlink, "tick_count": tick_count, "fee_rate": fee_rate,
+        "market_end_ts": market_end_ts, "outcome": outcome, "tick_count": tick_count,
+        "fee_rate": fee_rate, "ptb_price": ptb_price, "ptb_chainlink": ptb_chainlink,
+        "ptb_gamma": ptb_gamma, "final_price": final_price, "final_chainlink": final_chainlink,
+        "final_gamma": final_gamma,
     }
+
+
+def _patch_header_double(bin_path: str, offset: int, value: float) -> None:
+    with open(bin_path, "r+b") as f:
+        f.seek(offset)
+        f.write(struct.pack("<d", value))
+
+
+def patch_ptb_gamma(bin_path: str, value: float) -> None:
+    _patch_header_double(bin_path, OFFSET_PTB_GAMMA, value)
+
+
+def patch_final_gamma(bin_path: str, value: float) -> None:
+    _patch_header_double(bin_path, OFFSET_FINAL_GAMMA, value)
 
 
 def write_round(path: str, header: dict, ticks: np.ndarray, book_snapshots: list[BookSnapshot]) -> None:

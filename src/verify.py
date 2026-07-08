@@ -1,8 +1,7 @@
+import math
 import re
 import sys
 from pathlib import Path
-
-import math
 
 from src.binary_format import MAGIC, VERSION, read_round
 from src.book import tick_quotes_missing
@@ -63,22 +62,37 @@ def verify_round(path: str) -> list[str]:
         if row[3] < row[2] or row[5] < row[4]:
             errors.append(f"V8: spread invalid tick {i}")
             break
-    if header["price_to_beat"] <= 0:
-        errors.append("V9: price_to_beat missing")
+    if header["ptb_chainlink"] <= 0:
+        errors.append("V9: ptb_chainlink missing")
     if header["outcome"] not in (1, 2):
         errors.append(f"V10: outcome not set: {header['outcome']}")
     if header["final_chainlink"] <= 0:
         errors.append("V11: final_chainlink missing")
     if header.get("fee_rate", 0) <= 0:
         errors.append("V11b: fee_rate missing")
+    if header["final_price"] <= 0:
+        errors.append("V11c: final_price missing")
+    if header["ptb_price"] <= 0:
+        errors.append("V11d: ptb_price missing")
     if tick_count > 0:
         if ticks[0, 1] < 295:
             errors.append(f"V12: first tick secs_to_expiry {ticks[0, 1]} < 295")
         if ticks[-1, 1] > 10:
             errors.append(f"V12: last tick secs_to_expiry {ticks[-1, 1]} > 10")
-    expected_up = 1 if header["final_chainlink"] >= header["price_to_beat"] else 2
-    if header["outcome"] != expected_up:
-        errors.append(f"V13: outcome {header['outcome']} != expected {expected_up}")
+    has_final_gamma = not math.isnan(header["final_gamma"])
+    has_ptb_gamma = not math.isnan(header["ptb_gamma"])
+    if has_final_gamma and has_ptb_gamma:
+        expected_up = 1 if header["final_gamma"] >= header["ptb_gamma"] else 2
+        if header["outcome"] != expected_up:
+            errors.append(f"V13: outcome {header['outcome']} != expected {expected_up} (gamma prices)")
+    elif not has_final_gamma and not has_ptb_gamma:
+        expected_up = 1 if header["final_chainlink"] >= header["ptb_chainlink"] else 2
+        if header["outcome"] != expected_up:
+            errors.append(f"V13: outcome {header['outcome']} != expected {expected_up} (chainlink prices)")
+    if not _quote_close(header["ptb_price"], ticks[0, 6], tol=0.02):
+        errors.append("V19a: ptb_price inconsistent with first tick")
+    if not _quote_close(header["final_price"], ticks[-1, 6], tol=0.02):
+        errors.append("V19b: final_price inconsistent with last tick")
     for i, row in enumerate(ticks):
         if tick_quotes_missing(row):
             continue
@@ -155,7 +169,17 @@ def main() -> None:
             for e in errs:
                 print(f"  {e}")
         else:
-            print(f"OK {path}")
+            try:
+                header, _, _ = read_round(str(path))
+                notes = []
+                if math.isnan(header["ptb_gamma"]):
+                    notes.append("ptb_gamma pending")
+                if math.isnan(header["final_gamma"]):
+                    notes.append("final_gamma pending")
+                suffix = f" ({', '.join(notes)})" if notes else ""
+            except Exception:
+                suffix = ""
+            print(f"OK {path}{suffix}")
 
 
 if __name__ == "__main__":

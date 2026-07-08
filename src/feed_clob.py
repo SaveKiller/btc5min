@@ -121,7 +121,7 @@ def snapshot_books(state: RoundState):
         up = copy.deepcopy(state.up_book)
         down = copy.deepcopy(state.down_book)
         cl = state.chainlink_price
-        ptb = state.price_to_beat
+        ptb = state.ptb_gamma if state.ptb_gamma is not None else state.ptb_chainlink
     if cl is None: raise Exception("chainlink price missing at sample")
     from src.book import BookSnapshot
     return BookSnapshot(
@@ -133,7 +133,7 @@ def snapshot_books(state: RoundState):
 def snapshot_chainlink(state: RoundState) -> tuple[float, float | None]:
     with state.lock:
         cl = state.chainlink_price
-        ptb = state.price_to_beat
+        ptb = state.ptb_gamma if state.ptb_gamma is not None else state.ptb_chainlink
     if cl is None:
         raise Exception("chainlink price missing at sample")
     return cl, ptb

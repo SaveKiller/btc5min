@@ -6,14 +6,24 @@ from pathlib import Path
 from src.binary_format import OUTCOME_NAMES, read_round, read_warnings
 
 
+def _fmt_price(v: float) -> str:
+    if math.isnan(v):
+        return "nan"
+    return f"{v:.2f}"
+
+
 def print_round(path: str, csv_path: str | None = None, book_sec: int | None = None) -> None:
     header, ticks, books = read_round(path)
     print(f"file: {path}")
     print(f"  market_start_ts: {header['market_start_ts']}")
     print(f"  market_end_ts: {header['market_end_ts']}")
-    print(f"  price_to_beat: {header['price_to_beat']:.2f}")
+    print(f"  ptb_price: {_fmt_price(header['ptb_price'])}")
+    print(f"  ptb_chainlink: {_fmt_price(header['ptb_chainlink'])}")
+    print(f"  ptb_gamma: {_fmt_price(header['ptb_gamma'])}")
+    print(f"  final_price: {_fmt_price(header['final_price'])}")
+    print(f"  final_chainlink: {_fmt_price(header['final_chainlink'])}")
+    print(f"  final_gamma: {_fmt_price(header['final_gamma'])}")
     print(f"  outcome: {OUTCOME_NAMES[header['outcome']]}")
-    print(f"  final_chainlink: {header['final_chainlink']}")
     print(f"  tick_count: {header['tick_count']}")
     print(f"  fee_rate: {header['fee_rate']}")
     for w in read_warnings(path):
