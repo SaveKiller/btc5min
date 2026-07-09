@@ -3,7 +3,8 @@ import math
 import sys
 from pathlib import Path
 
-from src.binary_format import OUTCOME_NAMES, read_round, read_warnings
+from src.binary_format import OUTCOME_NAMES, read_round, txt_path_for_bin
+from src.convert import read_txt_warnings
 
 
 def _fmt_price(v: float) -> str:
@@ -26,7 +27,7 @@ def print_round(path: str, csv_path: str | None = None, book_sec: int | None = N
     print(f"  outcome: {OUTCOME_NAMES[header['outcome']]}")
     print(f"  tick_count: {header['tick_count']}")
     print(f"  fee_rate: {header['fee_rate']}")
-    for w in read_warnings(path):
+    for w in read_txt_warnings(str(txt_path_for_bin(path))):
         print(f"  WARNING: {w}")
     n = len(ticks)
     print(f"  first secs_to_expiry: {ticks[0, 1]:.2f}")

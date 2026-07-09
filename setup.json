@@ -3,8 +3,8 @@
     "gamma_patch_wait_sec": 1200,
     "gamma_poll_sec": 10,
     "prep_ahead_sec": 10,
-    "stall_reconnect_sec": 45,
-    "ping_interval_sec": 5,
-    "reconnect_cooldown_sec": 60,
+    "stall_reconnect_sec": 15,
+    "ping_interval_sec": 3,
+    "reconnect_cooldown_sec": 5,
     "rate_limit_backoff_sec": 180
 }

@@ -121,19 +121,22 @@ def snapshot_books(state: RoundState):
         up = copy.deepcopy(state.up_book)
         down = copy.deepcopy(state.down_book)
         cl = state.chainlink_price
+        cl_recv = state.chainlink_recv_ms
         ptb = state.ptb_gamma if state.ptb_gamma is not None else state.ptb_chainlink
-    if cl is None: raise Exception("chainlink price missing at sample")
+    if cl is None or cl_recv is None:
+        raise Exception("chainlink price missing at sample")
     from src.book import BookSnapshot
     return BookSnapshot(
         copy.deepcopy(up.bids), copy.deepcopy(up.asks),
         copy.deepcopy(down.bids), copy.deepcopy(down.asks),
-        up.best_bid(), up.quote_ask(), down.best_bid(), down.quote_ask()), cl, ptb
+        up.best_bid(), up.quote_ask(), down.best_bid(), down.quote_ask()), cl, ptb, cl_recv
 
 
-def snapshot_chainlink(state: RoundState) -> tuple[float, float | None]:
+def snapshot_chainlink(state: RoundState) -> tuple[float, float | None, int]:
     with state.lock:
         cl = state.chainlink_price
+        cl_recv = state.chainlink_recv_ms
         ptb = state.ptb_gamma if state.ptb_gamma is not None else state.ptb_chainlink
-    if cl is None:
+    if cl is None or cl_recv is None:
         raise Exception("chainlink price missing at sample")
-    return cl, ptb
+    return cl, ptb, cl_recv

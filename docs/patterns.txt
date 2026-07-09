@@ -1,0 +1,30 @@
+Ho notato, guardando il procedere dei vari round, che si possono suddividere in varie categorie, a seconda del pattern seguito nelle fasi finali del round, principalmente gli ultimi 2 o 3 minuti. 
+Vorrei descrivere qui i vari pattern riscontrati, per catalogare meglio i comportamenti all'interno del round, e poter prevedere meglio la fine del round riconoscendo il pattern relativo al round stesso in tempo e operando quindi delle scelte appropriate a quel pattern.
+Chiamiamo ogni pattern con un nome parlante che faccia capire il comportamento di quel round.
+Dopo il nome segue la descrizione del pattern e tutte le informazioni relative che possono far riconoscerlo in tempo e dare informazioni aggiuntive su come potrebbe finire.
+Si può cominciare a studiare il pattern a partire da tre minuti mancanti (quindi da 180 in poi), ma i comportamenti più importanti e le scelte più importanti andranno probabilmente fatte a partire da due minuti mancanti (quindi da 120 in poi), perché la nostra entrata probabilmente verrà eseguita negli ultimi due minuti.
+
+
+1. in-out-early (btc5m_1783580400_0700)
+Si arriva a 75C abbastanza presto (riga 200), poi il prezzo va pesantemente nella direzione maggioritaria e entro poche decine di secondi (riga 170) arriva a 95C in cui si può chiudere facilmente facendo un ottimo 20c. 
+Strategie: 
+A) si deve entrare in modo anticipato, cioè già a 200 si dovrebbe entrare vedendo la quota 75C,
+uscendo poi presto dopo 15c o 20c, si fa molto gain in pochi secondi.
+
+
+2. mismatch-quote-delta (btc5m_1783557900_0045 e btc5m_1783558500_0055)
+In entrambi questi due round si ha un disallineamento tra quota delta. 
+Cioè la quota maggioritaria è in una direzione, e il delta nell'altra direzione. 
+Questo pattern si verifica quando il mercato pensa e quota una inversione imminente prima della fine del round. Questi sono due casi che riscontrano lo stesso mismatch, 
+ma hanno risultati diversi: nel primo caso (0045), l'inversione c'è veramente. 
+Nel secondo caso (0055), l'inversione non avviene. 
+Strategie:
+A) Se si è già dentro, prima del mismatch, si può usare il mismatch per uscire con poco guadagno o poca perdita, in modo prudenziale, evitando il risultato del round (positivo o negativo)
+B) Se si è fuori, prima del mismatch, si può entrare nella direzione della quota maggioritaria, quindi contro il delta, e sperare nell'inversione.
+
+
+3. gap-chainlink (btc5m_1783559700_0115)
+Intorno al 220 c'è una disconnessione del feed dei prezzi chainlink, quindi il prezzo bitcoin rimane fisso, il delta rimane fisso, mentre le quote variano normalmente. Il meccanismo di riconoscimento dello stall entra in funzione e risolve in circa 20 secondi. In quel lasso di tempo si può solo basarci sulle quote, quindi nel caso ci si trovi dentro, si può pensare 
+di uscire anticipatamente per via del problema con i prezzi.
+
+

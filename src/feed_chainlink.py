@@ -49,6 +49,7 @@ class ChainlinkFeed:
         self._next_connect_after = 0.0
         self._last_value: float | None = None
         self._last_ts_ms: int | None = None
+        self._last_recv_ms: int | None = None
         self._conn_id = 0
         self.symbol = "btc/usd"
 
@@ -70,8 +71,8 @@ class ChainlinkFeed:
         with self._lock:
             if state not in self._rounds:
                 self._rounds.append(state)
-            if self._last_value is not None and self._last_ts_ms is not None:
-                state.prime_chainlink(self._last_value, self._last_ts_ms)
+            if self._last_value is not None and self._last_ts_ms is not None and self._last_recv_ms is not None:
+                state.prime_chainlink(self._last_value, self._last_ts_ms, self._last_recv_ms)
 
     def unregister(self, state: RoundState) -> None:
         with self._lock:
@@ -194,6 +195,7 @@ class ChainlinkFeed:
         recv_ms = int(time.time() * 1000)
         self._last_value = value
         self._last_ts_ms = ts_ms
+        self._last_recv_ms = recv_ms
         for state in rounds:
             if state.chainlink_done.is_set():
                 continue

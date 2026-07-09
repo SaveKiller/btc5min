@@ -19,6 +19,7 @@ class RoundState:
         self.fee_rate = fee_rate
         self.chainlink_price: float | None = None
         self.chainlink_ts_ms: int | None = None
+        self.chainlink_recv_ms: int | None = None
         self.ptb_chainlink: float | None = None
         self.final_chainlink: float | None = None
         self.ptb_gamma: float | None = None
@@ -34,10 +35,11 @@ class RoundState:
         self.stop = threading.Event()
         self.chainlink_done = threading.Event()
 
-    def prime_chainlink(self, value: float, ts_ms: int) -> None:
+    def prime_chainlink(self, value: float, ts_ms: int, recv_ms: int) -> None:
         with self.lock:
             self.chainlink_price = value
             self.chainlink_ts_ms = ts_ms
+            self.chainlink_recv_ms = recv_ms
             if ts_ms <= self._ptb_start_ms:
                 self.ptb_chainlink = value
             if ts_ms <= self._final_end_ms:
@@ -47,6 +49,7 @@ class RoundState:
         with self.lock:
             self.chainlink_price = value
             self.chainlink_ts_ms = ts_ms
+            self.chainlink_recv_ms = recv_ms
             if ts_ms <= self._ptb_start_ms:
                 self.ptb_chainlink = value
             if ts_ms <= self._final_end_ms:
@@ -112,7 +115,7 @@ class RoundState:
 
     def chainlink_ready(self) -> bool:
         with self.lock:
-            return self.chainlink_price is not None
+            return self.chainlink_price is not None and self.chainlink_recv_ms is not None
 
     def books_ready(self) -> bool:
         try:

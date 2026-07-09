@@ -1,16 +1,18 @@
 import struct
+from datetime import datetime, timezone
+
 import numpy as np
 from pathlib import Path
 
 from src.book import BookSnapshot
 
 MAGIC = b"BTC5"
-VERSION = 5
+VERSION = 6
 HEADER_FMT = "<4sHII B x I d d d d d d d"
 OFFSET_PTB_GAMMA = 44
 OFFSET_FINAL_GAMMA = 68
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
-RECORD_FMT = "<Q f 6f"
+RECORD_FMT = "<Q f 6f Q"
 RECORD_SIZE = struct.calcsize(RECORD_FMT)
 OUTCOME_NAMES = {0: "unknown", 1: "Up", 2: "Down"}
 OUTCOME_FROM_NAME = {"Up": 1, "Down": 2}
@@ -56,8 +58,8 @@ def patch_final_gamma(bin_path: str, value: float) -> None:
 
 
 def write_round(path: str, header: dict, ticks: np.ndarray, book_snapshots: list[BookSnapshot]) -> None:
-    if ticks.ndim != 2 or ticks.shape[1] != 8:
-        raise Exception(f"ticks must be shape (N, 8), got {ticks.shape}")
+    if ticks.ndim != 2 or ticks.shape[1] != 9:
+        raise Exception(f"ticks must be shape (N, 9), got {ticks.shape}")
     tick_count = ticks.shape[0]
     if tick_count != len(book_snapshots):
         raise Exception(f"ticks/book_snapshots length mismatch: {tick_count} vs {len(book_snapshots)}")
@@ -67,7 +69,7 @@ def write_round(path: str, header: dict, ticks: np.ndarray, book_snapshots: list
         f.write(_pack_header(header))
         for i, row in enumerate(ticks):
             f.write(struct.pack(RECORD_FMT, int(row[0]), float(row[1]), float(row[2]), float(row[3]),
-                float(row[4]), float(row[5]), float(row[6]), float(row[7])))
+                float(row[4]), float(row[5]), float(row[6]), float(row[7]), int(row[8])))
             f.write(book_snapshots[i].to_bytes())
 
 
@@ -75,15 +77,16 @@ def read_round(path: str) -> tuple[dict, np.ndarray, list[BookSnapshot]]:
     raw = Path(path).read_bytes()
     header = _unpack_header(raw)
     tick_count = header["tick_count"]
-    ticks = np.zeros((tick_count, 8), dtype=np.float64)
+    ticks = np.zeros((tick_count, 9), dtype=np.float64)
     book_snapshots: list[BookSnapshot] = []
     offset = HEADER_SIZE
     for i in range(tick_count):
         if offset + RECORD_SIZE > len(raw):
             raise Exception(f"truncated at tick {i} record")
-        recv_ts_ms, secs_to_expiry, up_bid, up_ask, down_bid, down_ask, chainlink_btc, gain = struct.unpack(
-            RECORD_FMT, raw[offset:offset + RECORD_SIZE])
-        ticks[i] = [recv_ts_ms, secs_to_expiry, up_bid, up_ask, down_bid, down_ask, chainlink_btc, gain]
+        (recv_ts_ms, secs_to_expiry, up_bid, up_ask, down_bid, down_ask, chainlink_btc, gain,
+            chainlink_recv_ms) = struct.unpack(RECORD_FMT, raw[offset:offset + RECORD_SIZE])
+        ticks[i] = [recv_ts_ms, secs_to_expiry, up_bid, up_ask, down_bid, down_ask, chainlink_btc, gain,
+            chainlink_recv_ms]
         offset += RECORD_SIZE
         snap, offset = BookSnapshot.from_bytes(raw, offset)
         book_snapshots.append(snap)
@@ -92,24 +95,23 @@ def read_round(path: str) -> tuple[dict, np.ndarray, list[BookSnapshot]]:
     return header, ticks, book_snapshots
 
 
-def round_filename(asset: str, interval: str, market_start_ts: int) -> str:
-    return f"{asset}{interval}_{market_start_ts}.bin"
+def _round_day_hhmm(market_start_ts: int) -> tuple[str, str]:
+    dt = datetime.fromtimestamp(market_start_ts, tz=timezone.utc)
+    return dt.strftime("%Y-%m-%d"), dt.strftime("%H%M")
 
 
-def warn_path(bin_path: str) -> str:
-    return str(Path(bin_path).with_suffix(".warn"))
+def round_basename(asset: str, interval: str, market_start_ts: int) -> str:
+    _, hhmm = _round_day_hhmm(market_start_ts)
+    return f"{asset}{interval}_{market_start_ts}_{hhmm}"
 
 
-def write_warnings(bin_path: str, warnings: list[str]) -> None:
-    path = Path(warn_path(bin_path))
-    if warnings:
-        path.write_text("\n".join(warnings) + "\n", encoding="utf-8")
-    elif path.exists():
-        path.unlink()
+def round_bin_path(out_dir: Path, asset: str, interval: str, market_start_ts: int) -> Path:
+    day, _ = _round_day_hhmm(market_start_ts)
+    d = out_dir / day / "bin"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{round_basename(asset, interval, market_start_ts)}.bin"
 
 
-def read_warnings(bin_path: str) -> list[str]:
-    path = Path(warn_path(bin_path))
-    if not path.exists():
-        return []
-    return [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+def txt_path_for_bin(bin_path: str) -> Path:
+    p = Path(bin_path)
+    return p.parent.parent / "txt" / p.with_suffix(".txt").name

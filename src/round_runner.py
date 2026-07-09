@@ -4,7 +4,7 @@ import threading
 import time
 from pathlib import Path
 
-from src.binary_format import round_filename, write_round, write_warnings
+from src.binary_format import round_bin_path, write_round
 from src.book import empty_book_snapshot
 from src.clob_api import enrich_gains, fetch_fee_rate, majority_side, side_from_chainlink
 from src.convert import write_round_txt
@@ -60,21 +60,21 @@ class SamplerThread(threading.Thread):
                 time.sleep(0.05)
                 continue
             if self.state.books_ready():
-                snap, chainlink, _ = snapshot_books(self.state)
+                snap, chainlink, _, cl_recv = snapshot_books(self.state)
                 side = majority_side(snap.up_bid, snap.up_ask, snap.down_bid, snap.down_ask)
                 self._last_side = side
                 majority_ask = snap.up_ask if side == "Up" else snap.down_ask
                 self.state.buffer.append(
                     int(time.time() * 1000), self.state.market_end_ts - time.time(),
-                    snap.up_bid, snap.up_ask, snap.down_bid, snap.down_ask, chainlink, 0.0)
+                    snap.up_bid, snap.up_ask, snap.down_bid, snap.down_ask, chainlink, 0.0, cl_recv)
                 self.state.book_snapshots.append(snap)
                 self.state.last_countdown_sec = cd
                 log_sample(self.state.start_ts, cd, side, majority_ask, chainlink, ptb)
             else:
-                chainlink, _ = snapshot_chainlink(self.state)
+                chainlink, _, cl_recv = snapshot_chainlink(self.state)
                 side = self._last_side or side_from_chainlink(chainlink, ptb)
                 self.state.buffer.append_partial(
-                    int(time.time() * 1000), self.state.market_end_ts - time.time(), chainlink)
+                    int(time.time() * 1000), self.state.market_end_ts - time.time(), chainlink, cl_recv)
                 self.state.book_snapshots.append(empty_book_snapshot())
                 self.state.last_countdown_sec = cd
                 log_sample_partial(self.state.start_ts, cd, side, chainlink, ptb)
@@ -157,17 +157,16 @@ class RoundRunner(threading.Thread):
             enrich_gains(state.buffer, state.book_snapshots, state.fee_rate)
             ticks = state.buffer.to_numpy()
             header = build_round_header(state.market_start_ts, state.market_end_ts, state.fee_rate, ticks, state)
-            path = self.out_dir / round_filename(self.asset, self.interval, self.start_ts)
-            write_round(str(path), header, ticks, state.book_snapshots)
-            write_warnings(str(path), warnings)
-            write_round_txt(str(path))
+            bin_path = round_bin_path(self.out_dir, self.asset, self.interval, self.start_ts)
+            write_round(str(bin_path), header, ticks, state.book_snapshots)
+            write_round_txt(str(bin_path), warnings)
             GammaPatchWorker.get().enqueue(
-                self.asset, self.interval, self.start_ts, str(path), state.market_end_ts)
-            errs = verify_round(str(path))
+                self.asset, self.interval, self.start_ts, str(bin_path), state.market_end_ts)
+            errs = verify_round(str(bin_path))
             for e in errs:
                 log.error("round %s verify: %s", self.start_ts, e)
             log.info("round %s done %s seconds outcome=%s file=%s", self.start_ts, len(ticks),
-                "Up" if header["outcome"] == 1 else "Down", path.name)
+                "Up" if header["outcome"] == 1 else "Down", bin_path.name)
         finally:
             state.stop.set()
             state.chainlink_done.set()

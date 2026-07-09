@@ -39,7 +39,7 @@ def verify_round(path: str) -> list[str]:
         errors.append(f"V2: bad version {header['version']}")
     if tick_count <= 0:
         errors.append("V3: tick_count must be > 0")
-    m = re.search(r"_(\d+)\.bin$", p.name)
+    m = re.search(r"_(\d+)_\d{4}\.bin$", p.name)
     if not m:
         errors.append(f"V4: cannot parse start_ts from filename {p.name}")
     elif int(m.group(1)) != header["market_start_ts"]:
@@ -159,7 +159,7 @@ def main() -> None:
     if len(sys.argv) < 2:
         raise Exception("usage: python -m src.verify <file.bin|directory>")
     target = Path(sys.argv[1])
-    paths = sorted(target.glob("*.bin")) if target.is_dir() else [target]
+    paths = sorted(target.rglob("*.bin")) if target.is_dir() else [target]
     if not paths:
         raise Exception(f"no .bin files in {target}")
     for path in paths:

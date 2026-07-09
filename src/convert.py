@@ -5,9 +5,10 @@ from pathlib import Path
 
 import numpy as np
 
-from src.binary_format import OUTCOME_NAMES, read_round, read_warnings
+from src.binary_format import OUTCOME_NAMES, read_round, txt_path_for_bin
 from src.book import tick_quotes_missing
 from src.clob_api import majority_side, side_from_chainlink
+from src.setup import STALL_RECONNECT_SEC
 
 
 def _fmt_price(v: float) -> str:
@@ -38,6 +39,10 @@ def format_mmss(sec: int) -> str:
     return f"{sec // 60}:{sec % 60:02d}"
 
 
+def chainlink_stale(sample_recv_ms: float, chainlink_recv_ms: float) -> bool:
+    return (sample_recv_ms - chainlink_recv_ms) > STALL_RECONNECT_SEC * 1000
+
+
 def format_delta(chainlink: float, ptb_chainlink: float) -> str:
     d = round(chainlink - ptb_chainlink)
     if d > 0:
@@ -45,6 +50,12 @@ def format_delta(chainlink: float, ptb_chainlink: float) -> str:
     if d < 0:
         return f"{d}$"
     return "0$"
+
+
+def format_delta_cell(chainlink: float, ptb_chainlink: float, stale: bool) -> str:
+    if stale:
+        return "  ---"
+    return format_delta(chainlink, ptb_chainlink)
 
 
 def format_quote_partial(side: str) -> str:
@@ -83,23 +94,43 @@ def format_separator() -> str:
     return "-" * len(format_column_header())
 
 
-def format_data_row_partial(sec: int, side: str, chainlink: float, ptb: float) -> str:
+def format_data_row_partial(sec: int, side: str, chainlink: float, ptb: float, stale: bool) -> str:
     return format_table_row(
         str(sec), format_mmss(sec), format_quote_partial(side),
-        format_delta(chainlink, ptb), "  ---", f"{chainlink:.2f}",
+        format_delta_cell(chainlink, ptb, stale), "  ---", f"{chainlink:.2f}",
     )
 
 
-def format_data_row(sec: int, up_prob: int, down_prob: int, chainlink: float, ptb: float, gain: float) -> str:
+def format_data_row(sec: int, up_prob: int, down_prob: int, chainlink: float, ptb: float, gain: float,
+        stale: bool) -> str:
     return format_table_row(
         str(sec), format_mmss(sec), format_quote(up_prob, down_prob),
-        format_delta(chainlink, ptb), format_gain_pct(gain), f"{chainlink:.2f}",
+        format_delta_cell(chainlink, ptb, stale), format_gain_pct(gain), f"{chainlink:.2f}",
     )
 
 
-def convert_round(path: str) -> str:
+def read_txt_warnings(txt_path: str) -> list[str]:
+    p = Path(txt_path)
+    if not p.exists():
+        return []
+    warnings: list[str] = []
+    in_warnings = False
+    for line in p.read_text(encoding="utf-8").splitlines():
+        if line == "  warnings:":
+            in_warnings = True
+            continue
+        if in_warnings:
+            if line.startswith("    - "):
+                warnings.append(line[6:])
+            else:
+                break
+    return warnings
+
+
+def convert_round(path: str, warnings: list[str]) -> str:
     header, ticks, _ = read_round(path)
     ptb = header["ptb_chainlink"]
+    stale_ticks = sum(1 for row in ticks if chainlink_stale(row[0], row[8]))
     lines = ["header:",
         f"  market_start_ts: {header['market_start_ts']} ({format_utc_ts(header['market_start_ts'])})",
         f"  market_end_ts: {header['market_end_ts']} ({format_utc_ts(header['market_end_ts'])})",
@@ -111,11 +142,12 @@ def convert_round(path: str) -> str:
         f"  final_gamma: {_fmt_price(header['final_gamma'])}",
         f"  outcome: {OUTCOME_NAMES[header['outcome']]}",
         f"  tick_count: {header['tick_count']}",
-        f"  fee_rate: {header['fee_rate']}"]
-    warn_lines = read_warnings(path)
-    if warn_lines:
+        f"  fee_rate: {header['fee_rate']}",
+        f"  stale_sec: {STALL_RECONNECT_SEC}",
+        f"  stale_ticks: {stale_ticks}"]
+    if warnings:
         lines.append("  warnings:")
-        for w in warn_lines:
+        for w in warnings:
             lines.append(f"    - {w}")
     lines.extend([
         "",
@@ -131,21 +163,24 @@ def convert_round(path: str) -> str:
     indexed.sort(key=lambda t: -t[0])
     for sec, row in indexed:
         chainlink, gain = row[6], row[7]
+        stale = chainlink_stale(row[0], row[8])
         if tick_quotes_missing(row):
             side = last_side or side_from_chainlink(chainlink, ptb)
-            lines.append(format_data_row_partial(sec, side, chainlink, ptb))
+            lines.append(format_data_row_partial(sec, side, chainlink, ptb, stale))
             continue
         up_prob = round((row[2] + row[3]) / 2 * 100)
         down_prob = round((row[4] + row[5]) / 2 * 100)
         if not (0 <= up_prob <= 100 and 0 <= down_prob <= 100):
             raise Exception(f"C3: prob out of range sec {sec}: {up_prob}/{down_prob}")
         last_side = majority_side(row[2], row[3], row[4], row[5])
-        lines.append(format_data_row(sec, up_prob, down_prob, chainlink, ptb, gain))
+        lines.append(format_data_row(sec, up_prob, down_prob, chainlink, ptb, gain, stale))
     return "\n".join(lines) + "\n"
 
 
-def write_round_txt(bin_path: str) -> None:
-    Path(bin_path).with_suffix(".txt").write_text(convert_round(bin_path), encoding="utf-8")
+def write_round_txt(bin_path: str, warnings: list[str]) -> None:
+    txt_path = txt_path_for_bin(bin_path)
+    txt_path.parent.mkdir(parents=True, exist_ok=True)
+    txt_path.write_text(convert_round(bin_path, warnings), encoding="utf-8")
 
 
 def main() -> None:
@@ -156,11 +191,16 @@ def main() -> None:
     if "-o" in sys.argv:
         out_path = sys.argv[sys.argv.index("-o") + 1]
     if target.is_dir():
-        for bin_path in sorted(target.glob("*.bin")):
-            write_round_txt(str(bin_path))
-            print(f"written {bin_path.with_suffix('.txt')}")
+        for bin_path in sorted(target.rglob("*.bin")):
+            bp = str(bin_path)
+            txt = txt_path_for_bin(bp)
+            write_round_txt(bp, read_txt_warnings(str(txt)))
+            print(f"written {txt}")
     else:
-        text = convert_round(str(target))
+        bp = str(target)
+        txt = txt_path_for_bin(bp)
+        warnings = read_txt_warnings(str(txt))
+        text = convert_round(bp, warnings)
         if out_path:
             Path(out_path).write_text(text, encoding="utf-8")
             print(f"written {out_path}")

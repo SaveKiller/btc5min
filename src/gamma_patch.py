@@ -3,8 +3,8 @@ import math
 import threading
 import time
 
-from src.binary_format import patch_final_gamma, patch_ptb_gamma, read_round
-from src.convert import write_round_txt
+from src.binary_format import patch_final_gamma, patch_ptb_gamma, read_round, txt_path_for_bin
+from src.convert import read_txt_warnings, write_round_txt
 from src.market import fetch_market_by_slug
 from src.setup import GAMMA_PATCH_WAIT_SEC, GAMMA_POLL_SEC
 
@@ -88,7 +88,8 @@ class GammaPatchWorker:
             log.info("round %s final_gamma patched %.2f", job["start_ts"], m["final_chainlink"])
             patched = True
         if patched:
-            write_round_txt(job["bin_path"])
+            txt = str(txt_path_for_bin(job["bin_path"]))
+            write_round_txt(job["bin_path"], read_txt_warnings(txt))
         if not need_final or m["final_chainlink"] is not None:
             if not need_ptb or m["price_to_beat"] is not None:
                 return True
