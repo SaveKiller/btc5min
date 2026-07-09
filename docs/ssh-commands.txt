@@ -20,6 +20,6 @@ ssh ticksaver systemctl stop btc5min
 ssh ticksaver rm -f /opt/btc5min/data/*
 ssh ticksaver systemctl start btc5min
 
-# sync poly → locale (cartelle yyyy-mm-dd/bin+txt + log produzione)
-scp -r ticksaver:/opt/btc5min/data/????-??-?? f:/btc5min/data/
-scp ticksaver:/opt/btc5min/data/collector.log f:/btc5min/data/collector-poly.log
+# sync poly → locale (solo cartelle yyyy-mm-dd, solo file mancanti, -p preserva timestamp)
+# preferire sync.bat; manuale esempio singolo file:
+scp -p ticksaver:/opt/btc5min/data/2026-07-09/bin/btc5m_123.bin f:/btc5min/data/2026-07-09/bin/
