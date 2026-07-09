@@ -117,13 +117,15 @@ Sezione `header:` con metadati del round + contatori utili per il sanity check:
 
 - `stale_sec`: soglia da `setup.json` → `stall_reconnect_sec` (default 15).
 - `stale_ticks`: quanti tick hanno Chainlink “stale” (vedi colonna `delta`).
+- `vol_windows_sec`, `vol_min_changes`, `vol_unit`: parametri indici volatilità `VW` (vedi colonna `vol`).
 - `warnings`: es. outcome provvisorio, `ptb_gamma` mancante, mismatch outcome gamma vs chainlink.
 
 Sezione `data:` — righe ordinate per `sec` **decrescente** (300 → 1):
 
 ```
-sec  time  quote      delta  gain%           btc
-300  5:00  UP   52c    +12$  gain=  8.5%  btc=  97234.50
+sec  time  quote      delta  gain%           btc          vol
+300  5:00  UP   52c    +12$  gain=  8.5%  btc=  97234.50  V30=---
+240  4:00  DOWN  61c   -28$  gain= 62.3%  btc=  97206.10  V30=18  V45=22
 ```
 
 
@@ -135,6 +137,10 @@ sec  time  quote      delta  gain%           btc
 | **delta** | `round(chainlink_btc - ptb_chainlink)` in USD, con segno (`+12$`, `-5$`, `0$`). Se Chainlink stale: `---` (campione più vecchio di `stall_reconnect_sec` rispetto a `chainlink_recv_ms`)                                                                                       |
 | **gain%** | `majority_gain × 100`, una cifra decimale. `---` se partial. Vedi formula sotto                                                                                                                                                                                                |
 | **btc**   | `chainlink_btc` a 2 decimali                                                                                                                                                                                                                                                   |
+| **vol**   | Token `VW=N` per ogni `W` in `setup.json` → `volatility_windows_sec` (es. `V30=18`, `V45=22`). Volatilità realizzata trailing in USD, intero arrotondato (`V30=0` se BTC fermo). `VW=---` solo se dati insufficienti o Chainlink stale sulla riga. Non è previsione forward. |
+
+
+**Indici VW (volatilità intra-round):** calcolati in `convert` su `chainlink_btc`, solo tick già osservati nel round (trailing/live-safe). Per ogni secondo `sec` e finestra `W`: tick con `sec' ∈ [sec−W+1, sec]`; `Δ = btc_j − btc_{j−1}` tra coppie consecutive nella finestra; `VW = round(std(Δ) × √(n_pairs))`. Configurazione in `setup.json`: `volatility_windows_sec` (array, es. `[30, 45]`), `volatility_min_changes` (minimo variazioni nella finestra). Unità USD documentata in header (`vol_unit: usd_trailing`). Confronto utile con `|delta|`: se `|delta| < VW` il movimento vs PTB è ancora nel rumore recente.
 
 
 **Lato maggioritario** (per quote e gain): confronto dei mid `((up_bid+up_ask)/2)` vs `((down_bid+down_ask)/2)`; vince Up se `up_mid >= down_mid`.
