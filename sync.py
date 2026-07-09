@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Sync poly → locale: solo file mancanti, una sessione SSH, timestamp dal tar."""
 import io
+import os
 import re
 import subprocess
 import sys
@@ -22,15 +23,12 @@ def build_manifest() -> str:
         for day in sorted(DATA.iterdir()):
             if not day.is_dir() or not DAY_RE.match(day.name):
                 continue
-            for sub in ("bin", "txt"):
-                subdir = day / sub
-                if not subdir.is_dir():
-                    continue
-                for f in subdir.iterdir():
-                    if f.is_file():
-                        paths.add(f"{day.name}/{sub}/{f.name}")
-        if (DATA / "collector-poly.log").is_file():
-            paths.add("collector-poly.log")
+            bin_dir = day / "bin"
+            if not bin_dir.is_dir():
+                continue
+            for f in bin_dir.iterdir():
+                if f.is_file() and f.suffix == ".bin":
+                    paths.add(f"{day.name}/bin/{f.name}")
     return "\n".join(sorted(paths)) + ("\n" if paths else "")
 
 
@@ -54,22 +52,24 @@ def read_stdout(proc: subprocess.Popen) -> bytes:
 
 def extract_tar(data: bytes) -> None:
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
-        members = tar.getmembers()
+        members = [m for m in tar.getmembers() if m.name.endswith(".bin")]
         n = len(members)
-        print(f"Estrazione {n} file in data/ ...", flush=True)
+        print(f"Estrazione {n} file .bin in data/ ...", flush=True)
         for i, member in enumerate(members, 1):
             tar.extract(member, DATA, filter="data")
+            dest = DATA / member.name
+            os.utime(dest, (member.mtime, member.mtime))
             if i == 1 or i == n or i % 20 == 0:
                 print(f"  {i}/{n} {member.name}", flush=True)
 
 
 def main() -> None:
-    print(f"Sync {HOST}:/opt/btc5min/data -> data/ (solo file mancanti)", flush=True)
+    print(f"Sync {HOST}:/opt/btc5min/data -> data/ (solo .bin mancanti)", flush=True)
 
     print("Scansione file locali ...", flush=True)
     manifest = build_manifest()
     local_count = len([ln for ln in manifest.splitlines() if ln.strip()])
-    print(f"Locale: {local_count} file gia presenti", flush=True)
+    print(f"Locale: {local_count} bin gia presenti", flush=True)
 
     DATA.mkdir(exist_ok=True)
     print("Connessione a poly, trasferimento ...", flush=True)

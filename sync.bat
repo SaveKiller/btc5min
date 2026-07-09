@@ -12,6 +12,10 @@ if exist ".venv\Scripts\python.exe" (
 "%PY%" -u sync.py
 if errorlevel 1 goto :err
 echo.
+echo [%TIME%] Conversione bin -^> txt ...
+"%PY%" -m src.convert --sync
+if errorlevel 1 goto :err
+echo.
 pause
 exit /b 0
 

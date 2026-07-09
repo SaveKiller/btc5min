@@ -9,6 +9,7 @@ import numpy as np
 from src.binary_format import OUTCOME_NAMES, read_round, txt_path_for_bin
 from src.book import tick_quotes_missing
 from src.clob_api import majority_side, side_from_chainlink
+from src.settlement import outcome_from_prices
 from src.setup import STALL_RECONNECT_SEC, VOLATILITY_MIN_CHANGES, VOLATILITY_WINDOWS_SEC
 
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -226,6 +227,19 @@ def convert_round(path: str, warnings: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def warnings_from_header(header: dict) -> list[str]:
+    computed = outcome_from_prices(header["final_chainlink"], header["ptb_chainlink"])
+    outcome_name = OUTCOME_NAMES[header["outcome"]]
+    warnings: list[str] = []
+    if math.isnan(header["final_gamma"]):
+        warnings.append("outcome from chainlink provisional, not gamma")
+    if math.isnan(header["ptb_gamma"]):
+        warnings.append("ptb_gamma missing at write")
+    if not math.isnan(header["final_gamma"]) and outcome_name != computed:
+        warnings.append(f"outcome mismatch gamma={outcome_name} computed={computed}")
+    return warnings
+
+
 def write_round_txt(bin_path: str, warnings: list[str]) -> None:
     txt_path = txt_path_for_bin(bin_path)
     txt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -257,7 +271,28 @@ def convert_all_round_bins(data_dir: Path) -> None:
         print(f"written {txt}")
 
 
+def convert_sync_bins(data_dir: Path) -> None:
+    bin_paths = iter_round_bin_paths(data_dir)
+    converted = 0
+    for bin_path in bin_paths:
+        bp = str(bin_path)
+        txt = txt_path_for_bin(bp)
+        if txt.exists() and txt.stat().st_mtime >= bin_path.stat().st_mtime:
+            continue
+        header, _, _ = read_round(bp)
+        write_round_txt(bp, warnings_from_header(header))
+        print(f"written {txt}")
+        converted += 1
+    if converted == 0:
+        print("Nessun bin da convertire.")
+    else:
+        print(f"Convertiti {converted} file.")
+
+
 def main() -> None:
+    if len(sys.argv) == 2 and sys.argv[1] == "--sync":
+        convert_sync_bins(_DATA_DIR)
+        return
     if len(sys.argv) < 2:
         convert_all_round_bins(_DATA_DIR)
         return

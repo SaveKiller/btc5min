@@ -3,8 +3,7 @@ import math
 import threading
 import time
 
-from src.binary_format import patch_final_gamma, patch_ptb_gamma, read_round, txt_path_for_bin
-from src.convert import read_txt_warnings, write_round_txt
+from src.binary_format import patch_final_gamma, patch_ptb_gamma, read_round
 from src.market import fetch_market_by_slug
 from src.setup import GAMMA_PATCH_WAIT_SEC, GAMMA_POLL_SEC
 
@@ -78,18 +77,12 @@ class GammaPatchWorker:
         except Exception as e:
             log.warning("round %s gamma patch poll: %s", job["start_ts"], e)
             return False
-        patched = False
         if need_ptb and m["price_to_beat"] is not None:
             patch_ptb_gamma(job["bin_path"], round(m["price_to_beat"], 2))
             log.info("round %s ptb_gamma patched %.2f", job["start_ts"], m["price_to_beat"])
-            patched = True
         if need_final and m["final_chainlink"] is not None:
             patch_final_gamma(job["bin_path"], round(m["final_chainlink"], 2))
             log.info("round %s final_gamma patched %.2f", job["start_ts"], m["final_chainlink"])
-            patched = True
-        if patched:
-            txt = str(txt_path_for_bin(job["bin_path"]))
-            write_round_txt(job["bin_path"], read_txt_warnings(txt))
         if not need_final or m["final_chainlink"] is not None:
             if not need_ptb or m["price_to_beat"] is not None:
                 return True

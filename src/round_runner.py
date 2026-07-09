@@ -7,14 +7,13 @@ from pathlib import Path
 from src.binary_format import round_bin_path, write_round
 from src.book import empty_book_snapshot
 from src.clob_api import enrich_gains, fetch_fee_rate, majority_side, side_from_chainlink
-from src.convert import write_round_txt
 from src.feed_chainlink import ChainlinkFeed
 from src.feed_clob import ClobThread, snapshot_books, snapshot_chainlink
 from src.gamma_patch import GammaPatchWorker
 from src.market import fetch_market_by_slug, poll_gamma_outcome, wait_for_market
 from src.round_state import RoundState
 from src.sample_log import log_sample, log_sample_partial
-from src.settlement import build_round_header, outcome_from_prices
+from src.settlement import build_round_header
 from src.setup import GAMMA_POLL_SEC, OUTCOME_WAIT_SEC
 from src.verify import verify_round
 
@@ -141,16 +140,7 @@ class RoundRunner(threading.Thread):
                 raise Exception(f"no seconds collected for round {self.start_ts}")
             deadline = state.market_end_ts + OUTCOME_WAIT_SEC
             poll_gamma_outcome(self.asset, self.interval, self.start_ts, state, deadline)
-            warnings: list[str] = []
-            if not state.gamma_outcome:
-                warnings.append("outcome from chainlink provisional, not gamma")
-            if state.ptb_gamma is None:
-                warnings.append("ptb_gamma missing at write")
             ptb_cl, final_cl = state.require_chainlink_prices()
-            if state.gamma_outcome:
-                computed = outcome_from_prices(final_cl, ptb_cl)
-                if computed != state.gamma_outcome:
-                    warnings.append(f"outcome mismatch gamma={state.gamma_outcome} computed={computed}")
             log.info("round %s final_chainlink=%.2f ptb_chainlink=%.2f outcome=%s",
                 self.start_ts, final_cl, ptb_cl, state.gamma_outcome or "computed")
             state.chainlink_done.set()
@@ -159,7 +149,6 @@ class RoundRunner(threading.Thread):
             header = build_round_header(state.market_start_ts, state.market_end_ts, state.fee_rate, ticks, state)
             bin_path = round_bin_path(self.out_dir, self.asset, self.interval, self.start_ts)
             write_round(str(bin_path), header, ticks, state.book_snapshots)
-            write_round_txt(str(bin_path), warnings)
             GammaPatchWorker.get().enqueue(
                 self.asset, self.interval, self.start_ts, str(bin_path), state.market_end_ts)
             errs = verify_round(str(bin_path))
