@@ -59,8 +59,8 @@ def compute_trailing_vol(ticks: np.ndarray, window_sec: int, min_changes: int) -
     out = np.full(n, np.nan)
     for i in range(n):
         sec_i = secs[i]
-        lo = sec_i - window_sec + 1
-        idxs = [j for j in range(n) if lo <= secs[j] <= sec_i]
+        hi = sec_i + window_sec - 1
+        idxs = [j for j in range(n) if sec_i <= secs[j] <= hi]
         if len(idxs) < 2: continue
         if chainlink_stale(ticks[i, 0], ticks[i, 8]): continue
         w_btcs = [float(btcs[j]) for j in idxs]

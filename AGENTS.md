@@ -140,7 +140,7 @@ sec  time  quote      delta  gain%           btc          vol
 | **vol**   | Token `VW=N` per ogni `W` in `setup.json` → `volatility_windows_sec` (es. `V30=18`, `V45=22`). Volatilità realizzata trailing in USD, intero arrotondato (`V30=0` se BTC fermo). `VW=---` solo se dati insufficienti o Chainlink stale sulla riga. Non è previsione forward. |
 
 
-**Indici VW (volatilità intra-round):** calcolati in `convert` su `chainlink_btc`, solo tick già osservati nel round (trailing/live-safe). Per ogni secondo `sec` e finestra `W`: tick con `sec' ∈ [sec−W+1, sec]`; `Δ = btc_j − btc_{j−1}` tra coppie consecutive nella finestra; `VW = round(std(Δ) × √(n_pairs))`. Configurazione in `setup.json`: `volatility_windows_sec` (array, es. `[30, 45]`), `volatility_min_changes` (minimo variazioni nella finestra). Unità USD documentata in header (`vol_unit: usd_trailing`). Confronto utile con `|delta|`: se `|delta| < VW` il movimento vs PTB è ancora nel rumore recente.
+**Indici VW (volatilità intra-round):** calcolati in `convert` su `chainlink_btc`, solo tick già osservati nel round (trailing/live-safe). Per ogni secondo `sec` e finestra `W`: tick con `sec' ∈ [sec, sec+W−1]` (asse countdown: presente + passato, mai futuro); `Δ = btc_j − btc_{j−1}` tra coppie consecutive nella finestra; `VW = round(std(Δ) × √(n_pairs))`. Configurazione in `setup.json`: `volatility_windows_sec` (array, es. `[30, 45]`), `volatility_min_changes` (minimo variazioni nella finestra). Unità USD documentata in header (`vol_unit: usd_trailing`). Confronto utile con `|delta|`: se `|delta| < VW` il movimento vs PTB è ancora nel rumore recente.
 
 
 **Lato maggioritario** (per quote e gain): confronto dei mid `((up_bid+up_ask)/2)` vs `((down_bid+down_ask)/2)`; vince Up se `up_mid >= down_mid`.
