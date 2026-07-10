@@ -1,4 +1,5 @@
 import math
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -262,10 +263,18 @@ def warnings_from_header(header: dict) -> list[str]:
     return warnings
 
 
+def align_txt_mtime_to_bin(bin_path: Path, txt_path: Path) -> None:
+    """Il .txt locale deve riflettere il mtime del .bin (scrittura server o sync tar)."""
+    bin_mtime = bin_path.stat().st_mtime
+    os.utime(txt_path, (bin_mtime, bin_mtime))
+
+
 def write_round_txt(bin_path: str, warnings: list[str]) -> None:
+    bp = Path(bin_path)
     txt_path = txt_path_for_bin(bin_path)
     txt_path.parent.mkdir(parents=True, exist_ok=True)
     txt_path.write_text(convert_round(bin_path, warnings), encoding="utf-8")
+    align_txt_mtime_to_bin(bp, txt_path)
 
 
 def iter_round_bin_paths(data_dir: Path) -> list[Path]:
@@ -300,6 +309,8 @@ def convert_sync_bins(data_dir: Path) -> None:
         bp = str(bin_path)
         txt = txt_path_for_bin(bp)
         if txt.exists() and txt.stat().st_mtime >= bin_path.stat().st_mtime:
+            if txt.stat().st_mtime != bin_path.stat().st_mtime:
+                align_txt_mtime_to_bin(bin_path, txt)
             continue
         header, _, _ = read_round(bp)
         write_round_txt(bp, warnings_from_header(header))
