@@ -1,7 +1,7 @@
 import logging
 import sys
 
-from src.convert import format_delta
+from src.txt_format import format_delta
 
 _sample = logging.getLogger("sample")
 _sample.propagate = False

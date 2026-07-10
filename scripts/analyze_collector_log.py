@@ -155,7 +155,9 @@ def analyze_txt_files(risky_ts: list[int]) -> None:
           break
     rows = []
     for line in text.splitlines():
-      m = re.search(r"btc=\s*([\d.]+)", line)
+      m = re.search(r"[\d.\-]+%\s+(\d+)\$", line)
+      if not m:
+        m = re.search(r"---\s+(\d+)\$", line)
       if m and line[:3].strip().isdigit():
         sec = int(line.split()[0])
         partial = " --- " in line or "DOWN ---" in line or " UP  ---" in line
@@ -178,7 +180,7 @@ def analyze_txt_files(risky_ts: list[int]) -> None:
     for line in text.splitlines():
       if line.strip().startswith("stale_ticks:"):
         stale_ticks = line.split(":", 1)[1].strip()
-    delta_stale = sum(1 for line in text.splitlines() if "  ---" in line and "gain=" in line)
+    delta_stale = sum(1 for line in text.splitlines() if "  ---" in line and "%" in line and "gain%" not in line)
     print(f"\n{ts}: ticks={len(rows)} partial_quote={sum(1 for r in rows if r[2])} "
           f"delta_stale={delta_stale} stale_ticks={stale_ticks} warnings={warns}")
     for lo, hi, price, n in flats[:3]:

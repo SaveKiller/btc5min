@@ -4,7 +4,8 @@ import unittest
 import numpy as np
 
 from src.binary_format import read_round
-from src.risk import compute_risk_state, format_eligible_cell, format_risk_tokens, prob_to_r
+from src.risk import compute_risk_state, prob_to_r
+from src.txt_format import format_risk_tokens
 from src.setup import RISK_PROBABILITY_BUCKETS, RISK_PRIMARY_VOL_WINDOW_SEC
 from src.vol_stats import compute_vol_stats_by_window, tick_sec
 
@@ -63,21 +64,16 @@ class RiskTests(unittest.TestCase):
         self.assertIsNone(risk.Rq)
         self.assertEqual(risk.rq_reason, "tie")
 
-    def test_format_eligible_cell(self):
-        self.assertEqual(format_eligible_cell("no"), "no")
-        self.assertEqual(format_eligible_cell("yes"), "")
-
     def test_format_risk_tokens_spacing(self):
         path = "data/2026-07-09/bin/btc5m_1783558200_0050.bin"
         header, ticks, _ = read_round(path)
         risk = compute_risk_state(ticks, header["ptb_chainlink"])[100]
         tokens = format_risk_tokens(risk)
-        self.assertIn("  Rd=", tokens)
-        if risk.eligible == "yes":
-            self.assertNotIn(" no", tokens)
+        self.assertIn("   Rd ", tokens)
+        self.assertNotIn("=", tokens)
         row = _make_tick(120.0, float("nan"), float("nan"), float("nan"), float("nan"), 62000.0)
         partial = compute_risk_state(np.array([row]), 61900.0)[0]
-        self.assertIn(" no", format_risk_tokens(partial))
+        self.assertIn("Rd -", format_risk_tokens(partial))
 
     def test_vol_window_past_only(self):
         path = "data/2026-07-09/bin/btc5m_1783558200_0050.bin"

@@ -25,22 +25,6 @@ def prob_to_r(p: float) -> int:
     return 9
 
 
-def format_r_token(name: str, value: int | None) -> str:
-    if value is None:
-        return f"{name}=-"
-    return f"{name}={value}"
-
-
-RQ_COL_W = 4
-RD_COL_W = 4
-RD_GAP = 2
-ELIGIBLE_COL_W = 3
-
-
-def risk_column_width() -> int:
-    return RQ_COL_W + RD_GAP + RD_COL_W + 1 + ELIGIBLE_COL_W
-
-
 @dataclass
 class TickRisk:
     Pq0: float
@@ -158,14 +142,3 @@ def compute_risk_state(ticks: np.ndarray, ptb_chainlink: float) -> list[TickRisk
             side=side, up_mid=up_mid, down_mid=down_mid, z_primary=z_primary))
     return out
 
-
-def format_eligible_cell(eligible: str) -> str:
-    return "no" if eligible == "no" else ""
-
-
-def format_risk_tokens(risk: TickRisk) -> str:
-    rq = format_r_token("Rq", risk.Rq)
-    rd = format_r_token("Rd", risk.Rd)
-    elig = format_eligible_cell(risk.eligible)
-    gap = " " * RD_GAP
-    return f"{rq:>{RQ_COL_W}}{gap}{rd:>{RD_COL_W}} {elig:>{ELIGIBLE_COL_W}}"
