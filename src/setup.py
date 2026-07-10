@@ -33,3 +33,28 @@ VOLATILITY_WINDOWS_SEC = sorted(_windows)
 VOLATILITY_MIN_CHANGES = int(_req("volatility_min_changes"))
 if VOLATILITY_MIN_CHANGES <= 0:
     raise Exception("volatility_min_changes must be > 0")
+
+RISK_MODEL_VERSION = int(_req("risk_model_version"))
+RISK_TARGET = str(_req("risk_target"))
+RISK_LABEL_SOURCE = str(_req("risk_label_source"))
+RISK_PTB_SOURCE = str(_req("risk_ptb_source"))
+RISK_PRIMARY_VOL_WINDOW_SEC = int(_req("risk_primary_vol_window_sec"))
+if RISK_PRIMARY_VOL_WINDOW_SEC not in VOLATILITY_WINDOWS_SEC:
+    raise Exception("risk_primary_vol_window_sec must be in volatility_windows_sec")
+RISK_MIN_VOL_COVERAGE_RATIO = float(_req("risk_min_vol_coverage_ratio"))
+if not (0.0 < RISK_MIN_VOL_COVERAGE_RATIO <= 1.0):
+    raise Exception("risk_min_vol_coverage_ratio must be in (0, 1]")
+RISK_TIE_BAND = float(_req("risk_tie_band"))
+if RISK_TIE_BAND <= 0:
+    raise Exception("risk_tie_band must be > 0")
+_raw_buckets = _req("risk_probability_buckets")
+if not isinstance(_raw_buckets, list) or len(_raw_buckets) != 8:
+    raise Exception("risk_probability_buckets must be a list of 8 ascending thresholds")
+RISK_PROBABILITY_BUCKETS = [float(x) for x in _raw_buckets]
+for i in range(1, len(RISK_PROBABILITY_BUCKETS)):
+    if RISK_PROBABILITY_BUCKETS[i] <= RISK_PROBABILITY_BUCKETS[i - 1]:
+        raise Exception("risk_probability_buckets must be strictly ascending")
+RISK_FLIP_HYSTERESIS_C = int(_req("risk_flip_hysteresis_c"))
+RISK_FLIP_PERSIST_SEC = int(_req("risk_flip_persist_sec"))
+if RISK_FLIP_HYSTERESIS_C <= 0 or RISK_FLIP_PERSIST_SEC <= 0:
+    raise Exception("risk_flip_hysteresis_c and risk_flip_persist_sec must be > 0")

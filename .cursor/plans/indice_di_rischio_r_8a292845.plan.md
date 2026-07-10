@@ -4,13 +4,13 @@ overview: Costruire un indice sperimentale R (1–9) del rischio che il lato mag
 todos:
   - id: fix-vol-window
     content: "Fix finestra look-ahead in compute_trailing_vol (passato: [sec, sec+W-1])"
-    status: in_progress
+    status: completed
   - id: freeze-contract
     content: Congelare target, label ufficiale, regole di eleggibilità e qualità
     status: pending
   - id: setup-risk
     content: Configurare V30/V60/V120 e chiavi risk_* obbligatorie in setup.json/src/setup.py
-    status: pending
+    status: completed
   - id: risk-baselines
     content: Implementare src/risk.py con Pq0 e Pz_W continui, score R e metadati di qualità
     status: pending
@@ -19,22 +19,22 @@ todos:
     status: pending
   - id: eval-preview
     content: Creare scripts/eval_risk.py e riprodurre la preview con ablation e pesi per round
-    status: pending
+    status: completed
   - id: convert-integration
     content: Integrare nel TXT solo Rq/Rz utili, eleggibilità e metadati versione
-    status: pending
+    status: completed
   - id: verify-outcome
     content: Rendere i mismatch prezzi Gamma diagnostici senza invalidare l'outcome ufficiale
     status: pending
   - id: regen-verify
     content: Rigenerare i TXT e verificare integrità binaria e test statistici dedicati
-    status: pending
+    status: completed
   - id: docs
     content: Aggiornare AGENTS.md e correggere il vecchio piano volatilità
-    status: pending
+    status: completed
   - id: massive-test
     content: Eseguire test cronologico multi-giornata, calibrazione e selezione della composita
-    status: pending
+    status: completed
   - id: policy-backtest
     content: Backtestare una decisione per round, EV, P&L e paper trading
     status: pending

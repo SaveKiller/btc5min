@@ -118,14 +118,15 @@ Sezione `header:` con metadati del round + contatori utili per il sanity check:
 - `stale_sec`: soglia da `setup.json` → `stall_reconnect_sec` (default 15).
 - `stale_ticks`: quanti tick hanno Chainlink “stale” (vedi colonna `delta`).
 - `vol_windows_sec`, `vol_min_changes`, `vol_unit`: parametri indici volatilità `VW` (vedi colonna `vol`).
+- `risk_model_version`, `risk_status`, `risk_target`, `risk_label_source`, `risk_ptb_source`, `risk_primary_vol_window_sec`, `risk_min_vol_coverage_ratio`, `risk_probability_buckets`, `risk_variants`: metadati indice di rischio R (vedi colonna `risk`).
 - `warnings`: es. outcome provvisorio, `ptb_gamma` mancante, mismatch outcome gamma vs chainlink.
 
 Sezione `data:` — righe ordinate per `sec` **decrescente** (300 → 1):
 
 ```
-sec  time  quote      delta  gain%           btc          vol
-300  5:00  UP   52c    +12$  gain=  8.5%  btc=  97234.50  V30=---
-240  4:00  DOWN  61c   -28$  gain= 62.3%  btc=  97206.10  V30=18  V45=22
+sec  time  quote      delta  gain%           btc          vol                         risk
+300  5:00  UP   52c    +12$  gain=  8.5%  btc=  97234.50  V30=---  V60=---  V120=---  Rq=5  Rz=-  no
+240  4:00  DOWN  61c   -28$  gain= 62.3%  btc=  97206.10  V30=18  V60=22  V120=31  Rq=5  Rz=4
 ```
 
 
@@ -137,7 +138,11 @@ sec  time  quote      delta  gain%           btc          vol
 | **delta** | `round(chainlink_btc - ptb_chainlink)` in USD, con segno (`+12$`, `-5$`, `0$`). Se Chainlink stale: `---` (campione più vecchio di `stall_reconnect_sec` rispetto a `chainlink_recv_ms`)                                                                                       |
 | **gain%** | `majority_gain × 100`, una cifra decimale. `---` se partial. Vedi formula sotto                                                                                                                                                                                                |
 | **btc**   | `chainlink_btc` a 2 decimali                                                                                                                                                                                                                                                   |
-| **vol**   | Token `VW=N` per ogni `W` in `setup.json` → `volatility_windows_sec` (es. `V30=18`, `V45=22`). Volatilità realizzata trailing in USD, intero arrotondato (`V30=0` se BTC fermo). `VW=---` solo se dati insufficienti o Chainlink stale sulla riga. Non è previsione forward. |
+| **vol**   | Token `VW=N` per ogni `W` in `setup.json` → `volatility_windows_sec` (es. `V30=18`, `V60=22`). Volatilità realizzata trailing in USD, intero arrotondato (`V30=0` se BTC fermo). `VW=---` se dati insufficienti o Chainlink stale sulla riga. Non è previsione forward. |
+| **risk**  | `Rq=N` rischio da mercato (`Pq0 = 1 − quota normalizzata del lato maggioritario` → bucket 1–9). `Rz=N` rischio fisico (`Pz = Φ(−z)` con `z = delta_signed / (sigma_W × √secs_to_expiry)`, finestra primaria W60). `-` se non calcolabile. Colonna `eligible`: `no` se ingresso non eseguibile (Rq o Rz mancanti, tie, partial); vuota se eseguibile. Stato `experimental_uncalibrated` finché non c'è calibrazione holdout. |
+
+
+**Indice R (rischio perdita a settlement):** target = outcome ufficiale header ≠ lato maggioritario scelto. Calcolo live-safe in `src/risk.py`, solo dati passati. Bucket preliminari da `risk_probability_buckets` in `setup.json`. Valutazione: `python scripts/eval_risk.py [data_dir]` → report in `data/reports/risk_eval_<timestamp>.json`. Test: `python -m unittest tests.test_risk`.
 
 
 **Indici VW (volatilità intra-round):** calcolati in `convert` su `chainlink_btc`, solo tick già osservati nel round (trailing/live-safe). Per ogni secondo `sec` e finestra `W`: tick con `sec' ∈ [sec, sec+W−1]` (asse countdown: presente + passato, mai futuro); `Δ = btc_j − btc_{j−1}` tra coppie consecutive nella finestra; `VW = round(std(Δ) × √(n_pairs))`. Configurazione in `setup.json`: `volatility_windows_sec` (array, es. `[30, 45]`), `volatility_min_changes` (minimo variazioni nella finestra). Unità USD documentata in header (`vol_unit: usd_trailing`). Confronto utile con `|delta|`: se `|delta| < VW` il movimento vs PTB è ancora nel rumore recente.
@@ -160,7 +165,9 @@ sec  time  quote      delta  gain%           btc          vol
 | -------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `python -m src.reader <file.bin>`      | Riepilogo header, range quote/gain, primi/ultimi tick; `--csv`, `--book-sec N` per dump book |
 | `python -m src.convert <file.bin|dir>` | Rigenera `.txt` da `.bin`                                                                    |
-| `python -m src.verify <file.bin|dir>`  | Controlli integrità (V1–V19: durata 300s, sec decrescenti, spread, outcome, gain, book)      |
+| `python -m src.verify <file.bin|dir>`  | Controlli integrità (V1–V19). V13 su mismatch prezzi gamma/chainlink è **diagnostico** (NOTE), non invalida l'outcome ufficiale dell'header. |
+| `python scripts/eval_risk.py [data_dir]` | Preview metriche R (Brier, AUC, reliability) su round locali; non statisticamente significativa su una sola giornata. |
+| `python -m unittest tests.test_risk`   | Test anti-leakage, batch/live e casi limite indice R. |
 
 
 Per analisi programmatica preferire `read_round()` in `src/binary_format.py` → `(header, ticks ndarray N×9, list[BookSnapshot])`.

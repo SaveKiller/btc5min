@@ -23,15 +23,16 @@ def _quote_close(a: float, b: float, tol: float = 1e-6) -> bool:
     return abs(a - b) <= tol
 
 
-def verify_round(path: str) -> list[str]:
+def verify_round(path: str) -> tuple[list[str], list[str]]:
     errors = []
+    diagnostics = []
     p = Path(path)
     if not p.exists():
-        return [f"V1: file not found: {path}"]
+        return [f"V1: file not found: {path}"], []
     try:
         header, ticks, books = read_round(path)
     except Exception as e:
-        return [f"V1: read failed: {e}"]
+        return [f"V1: read failed: {e}"], []
     tick_count = header["tick_count"]
     if header["magic"] != MAGIC:
         errors.append(f"V2: bad magic {header['magic']}")
@@ -84,11 +85,13 @@ def verify_round(path: str) -> list[str]:
     if has_final_gamma and has_ptb_gamma:
         expected_up = 1 if header["final_gamma"] >= header["ptb_gamma"] else 2
         if header["outcome"] != expected_up:
-            errors.append(f"V13: outcome {header['outcome']} != expected {expected_up} (gamma prices)")
+            diagnostics.append(
+                f"V13: outcome {header['outcome']} != gamma-price expected {expected_up} (diagnostic only)")
     elif not has_final_gamma and not has_ptb_gamma:
         expected_up = 1 if header["final_chainlink"] >= header["ptb_chainlink"] else 2
         if header["outcome"] != expected_up:
-            errors.append(f"V13: outcome {header['outcome']} != expected {expected_up} (chainlink prices)")
+            diagnostics.append(
+                f"V13: outcome {header['outcome']} != chainlink-price expected {expected_up} (diagnostic only)")
     if not _quote_close(header["ptb_price"], ticks[0, 6], tol=0.02):
         errors.append("V19a: ptb_price inconsistent with first tick")
     if not _quote_close(header["final_price"], ticks[-1, 6], tol=0.02):
@@ -152,7 +155,7 @@ def verify_round(path: str) -> list[str]:
             checked += 1
             if checked >= 2:
                 break
-    return errors
+    return errors, diagnostics
 
 
 def main() -> None:
@@ -163,7 +166,7 @@ def main() -> None:
     if not paths:
         raise Exception(f"no .bin files in {target}")
     for path in paths:
-        errs = verify_round(str(path))
+        errs, diags = verify_round(str(path))
         if errs:
             print(f"FAIL {path}")
             for e in errs:
@@ -180,6 +183,8 @@ def main() -> None:
             except Exception:
                 suffix = ""
             print(f"OK {path}{suffix}")
+        for d in diags:
+            print(f"  NOTE {d}")
 
 
 if __name__ == "__main__":

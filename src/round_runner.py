@@ -151,9 +151,11 @@ class RoundRunner(threading.Thread):
             write_round(str(bin_path), header, ticks, state.book_snapshots)
             GammaPatchWorker.get().enqueue(
                 self.asset, self.interval, self.start_ts, str(bin_path), state.market_end_ts)
-            errs = verify_round(str(bin_path))
+            errs, diags = verify_round(str(bin_path))
             for e in errs:
                 log.error("round %s verify: %s", self.start_ts, e)
+            for d in diags:
+                log.warning("round %s verify: %s", self.start_ts, d)
             log.info("round %s done %s seconds outcome=%s file=%s", self.start_ts, len(ticks),
                 "Up" if header["outcome"] == 1 else "Down", bin_path.name)
         finally:
