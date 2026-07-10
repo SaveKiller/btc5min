@@ -125,8 +125,8 @@ Sezione `data:` — righe ordinate per `sec` **decrescente** (300 → 1):
 
 ```
 sec  time  quote      delta  gain%           btc          vol                         risk
-300  5:00  UP   52c    +12$  gain=  8.5%  btc=  97234.50  V30=---  V60=---  V120=---  Rq=5  Rz=-  no
-240  4:00  DOWN  61c   -28$  gain= 62.3%  btc=  97206.10  V30=18  V60=22  V120=31  Rq=5  Rz=4
+300  5:00  UP   52c    +12$  gain=  8.5%  btc=  97234.50  V30=---  V60=---  V120=---  Rq=5  Rd=-  no
+240  4:00  DOWN  61c   -28$  gain= 62.3%  btc=  97206.10  V30=18  V60=22  V120=31  Rq=5  Rd=4
 ```
 
 
@@ -139,7 +139,7 @@ sec  time  quote      delta  gain%           btc          vol                   
 | **gain%** | `majority_gain × 100`, una cifra decimale. `---` se partial. Vedi formula sotto                                                                                                                                                                                                |
 | **btc**   | `chainlink_btc` a 2 decimali                                                                                                                                                                                                                                                   |
 | **vol**   | Token `VW=N` per ogni `W` in `setup.json` → `volatility_windows_sec` (es. `V30=18`, `V60=22`). Volatilità realizzata trailing in USD, intero arrotondato (`V30=0` se BTC fermo). `VW=---` se dati insufficienti o Chainlink stale sulla riga. Non è previsione forward. |
-| **risk**  | `Rq=N` rischio da mercato (`Pq0 = 1 − quota normalizzata del lato maggioritario` → bucket 1–9). `Rz=N` rischio fisico (`Pz = Φ(−z)` con `z = delta_signed / (sigma_W × √secs_to_expiry)`, finestra primaria W60). `-` se non calcolabile. Colonna `eligible`: `no` se ingresso non eseguibile (Rq o Rz mancanti, tie, partial); vuota se eseguibile. Stato `experimental_uncalibrated` finché non c'è calibrazione holdout. |
+| **risk**  | `Rq=N` rischio da mercato (`Pq0 = 1 − quota normalizzata del lato maggioritario` → bucket 1–9). `Rd=N` rischio fisico (`Pz = Φ(−z)` con `z = delta_signed / (sigma_W × √secs_to_expiry)`, finestra primaria W60). `-` se non calcolabile. Colonna `eligible`: `no` se ingresso non eseguibile (Rq o Rd mancanti, tie, partial); vuota se eseguibile. Stato `experimental_uncalibrated` finché non c'è calibrazione holdout. |
 
 
 **Indice R (rischio perdita a settlement):** target = outcome ufficiale header ≠ lato maggioritario scelto. Calcolo live-safe in `src/risk.py`, solo dati passati. Bucket preliminari da `risk_probability_buckets` in `setup.json`. Valutazione: `python scripts/eval_risk.py [data_dir]` → report in `data/reports/risk_eval_<timestamp>.json`. Test: `python -m unittest tests.test_risk`.

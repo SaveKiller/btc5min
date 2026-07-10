@@ -311,7 +311,7 @@ La correlazione dei delta finali è molto alta, ma non dimostra automaticamente 
 - il ritardo relativo dei feed sia costante;
 - le probabilità calcolate nei secondi finali siano perfettamente trasferibili.
 
-I round Lighter possono quindi fornire una forte prior per la componente fisica di `Rz`, ma non possono riprodurre direttamente l'attuale `Rz`: manca infatti il lato maggioritario scelto dalle quote Polymarket. Si può stimare `P(UP)` e trasformarla nel rischio del lato selezionato soltanto quando, nel round reale, quel lato è noto. La calibrazione finale deve comunque avvenire sui round Chainlink reali.
+I round Lighter possono quindi fornire una forte prior per la componente fisica di `Rd`, ma non possono riprodurre direttamente l'attuale `Rd`: manca infatti il lato maggioritario scelto dalle quote Polymarket. Si può stimare `P(UP)` e trasformarla nel rischio del lato selezionato soltanto quando, nel round reale, quel lato è noto. La calibrazione finale deve comunque avvenire sui round Chainlink reali.
 
 ### 6.3 Utilizzo non valido
 
@@ -474,7 +474,7 @@ Baseline minime:
 
 - sempre UP / sempre DOWN;
 - segno del delta corrente;
-- modello normale già implicito in `Rz`;
+- modello normale già implicito in `Rd`;
 - probabilità per bucket di `sec`, `delta/V60` e H;
 - modello addestrato su Lighter e valutato su veri round Chainlink.
 

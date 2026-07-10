@@ -35,7 +35,7 @@ class RiskTests(unittest.TestCase):
         for i in range(ticks.shape[0]):
             if tick_sec(ticks[i]) >= 180:
                 self.assertEqual(base[i].Rq, after[i].Rq)
-                self.assertEqual(base[i].Rz, after[i].Rz)
+                self.assertEqual(base[i].Rd, after[i].Rd)
 
     def test_batch_matches_incremental(self):
         path = "data/2026-07-09/bin/btc5m_1783558200_0050.bin"
@@ -46,7 +46,7 @@ class RiskTests(unittest.TestCase):
             partial = compute_risk_state(ticks[:n], ptb)
             for i in range(n):
                 self.assertEqual(batch[i].Rq, partial[i].Rq)
-                self.assertEqual(batch[i].Rz, partial[i].Rz)
+                self.assertEqual(batch[i].Rd, partial[i].Rd)
 
     def test_partial_tick(self):
         row = _make_tick(120.0, float("nan"), float("nan"), float("nan"), float("nan"), 62000.0)
@@ -72,7 +72,7 @@ class RiskTests(unittest.TestCase):
         header, ticks, _ = read_round(path)
         risk = compute_risk_state(ticks, header["ptb_chainlink"])[100]
         tokens = format_risk_tokens(risk)
-        self.assertIn("  Rz=", tokens)
+        self.assertIn("  Rd=", tokens)
         if risk.eligible == "yes":
             self.assertNotIn(" no", tokens)
         row = _make_tick(120.0, float("nan"), float("nan"), float("nan"), float("nan"), 62000.0)

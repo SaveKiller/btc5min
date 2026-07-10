@@ -85,7 +85,7 @@ Tempo di scansione completa su 77 CSV (solo delta/outcome): **~6,5 min** su disc
 | **Confronto \|delta\| vs VW** | Pattern “movimento vs rumore recente” — core del progetto |
 | **Fascia H** | Già derivata da Lighter; round sintetici la riusano, non la validano di nuovo |
 | **Stagionalità / regime orario** | Distribuzione RV300 per ora/giorno, transizioni tra fasce H |
-| **Rischio fisico Rz (senza Rq)** | `Pz = Φ(−z)` con sigma da vol Lighter e delta Lighter — **modello fisico**, non di mercato |
+| **Rischio fisico Rd (senza Rq)** | `Pz = Φ(−z)` con sigma da vol Lighter e delta Lighter — **modello fisico**, non di mercato |
 | **Momentum / mean-reversion del prezzo** | Dinamiche di breve periodo sul mid |
 
 ### 4.2 Parzialmente affidabile (con filtri)
@@ -215,7 +215,7 @@ Il modulo `src/lighter_ticks.py` copre già:
 
 - Statistiche condizionate all’outcome (es. P(UP \| H3, \|delta_120\| > X))
 - Conteggi di “reversal” negli ultimi 60 s (solo su mid, non su quote)
-- Calibrazione preliminare di Rz
+- Calibrazione preliminare di Rd
 
 ### Tier C — Solo round Polymarket reali
 

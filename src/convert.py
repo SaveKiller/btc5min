@@ -11,7 +11,7 @@ from src.binary_format import OUTCOME_NAMES, read_round, txt_path_for_bin
 from src.book import tick_quotes_missing
 from src.clob_api import majority_side, side_from_chainlink
 from src.risk import (
-    compute_risk_state, ELIGIBLE_COL_W, format_risk_tokens, RQ_COL_W, RZ_COL_W, RZ_GAP, risk_column_width,
+    compute_risk_state, ELIGIBLE_COL_W, format_risk_tokens, RQ_COL_W, RD_COL_W, RD_GAP, risk_column_width,
 )
 from src.settlement import outcome_from_prices
 from src.setup import (
@@ -139,7 +139,7 @@ def format_gain_pct(gain: float) -> str:
 
 def format_column_header() -> str:
     vol_hdr = format_vol_header()
-    risk_hdr = f"{'Rq':>{RQ_COL_W}}{' ' * RZ_GAP}{'Rz':>{RZ_COL_W}} {'eligible':>{ELIGIBLE_COL_W}}"
+    risk_hdr = f"{'Rq':>{RQ_COL_W}}{' ' * RD_GAP}{'Rd':>{RD_COL_W}} {'eligible':>{ELIGIBLE_COL_W}}"
     return (
         f"{'sec':>3}  {'time':>5}  {'quote':<9}  "
         f"{'delta':>5}  {'gain%':>11}  {'btc':>14}  {vol_hdr}  {risk_hdr}"
@@ -215,7 +215,7 @@ def convert_round(path: str, warnings: list[str]) -> str:
         f"  risk_primary_vol_window_sec: {RISK_PRIMARY_VOL_WINDOW_SEC}",
         f"  risk_min_vol_coverage_ratio: {RISK_MIN_VOL_COVERAGE_RATIO}",
         f"  risk_probability_buckets: {RISK_PROBABILITY_BUCKETS}",
-        f"  risk_variants: [Rq, Rz]"]
+        f"  risk_variants: [Rq, Rd]"]
     if warnings:
         lines.append("  warnings:")
         for w in warnings:

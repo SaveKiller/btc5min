@@ -5,13 +5,13 @@ Data della revisione: 10 luglio 2026
 
 ## Giudizio sintetico
 
-Il piano ha una buona struttura da POC: separa un segnale fisico (`Rz`) da uno di mercato (`Rq`), mantiene il calcolo live-safe, lascia invariato il `.bin` e rimanda correttamente la calibrazione a un archivio più grande.
+Il piano ha una buona struttura da POC: separa un segnale fisico (`Rd`) da uno di mercato (`Rq`), mantiene il calcolo live-safe, lascia invariato il `.bin` e rimanda correttamente la calibrazione a un archivio più grande.
 
 Non lo implementerei però nello stato attuale come se producesse già un indice probabilistico affidabile. Ci sono quattro problemi sostanziali:
 
 1. la variabile da prevedere non è definita in modo univoco: «la quota cambia maggioranza» e «la puntata perde al settlement» sono eventi diversi;
 2. `Rq` e `Rc` perdono la semantica di probabilità perché applicano correzioni e `max` dopo la trasformazione in bucket 1–9;
-3. la preferenza dichiarata per `Rc = max(Rz, Rq)` non è ancora giustificata e la preview indipendente svolta in questa revisione dà anzi un primo segnale contrario;
+3. la preferenza dichiarata per `Rc = max(Rd, Rq)` non è ancora giustificata e la preview indipendente svolta in questa revisione dà anzi un primo segnale contrario;
 4. `V60` è trattato come scelta già fissata, mentre la finestra deve essere confrontata con periodi più brevi e più lunghi, soprattutto per il valore incrementale che porta rispetto alla quota di mercato.
 
 Il giudizio complessivo è quindi: **piano promettente e utile come base, ma da correggere prima dell'implementazione**. Implementarlo così com'è produrrebbe un numero molto preciso nell'aspetto, ma non ancora rigorosamente interpretabile.
@@ -114,7 +114,7 @@ Raccomandazione:
 
 ### 3. Non dichiarare ancora Rc come variante preferita
 
-`max(Rz, Rq)` è comprensibile come allarme prudenziale, ma non come combinazione probabilistica:
+`max(Rd, Rq)` è comprensibile come allarme prudenziale, ma non come combinazione probabilistica:
 
 - amplifica il rumore della componente peggiore;
 - non tiene conto della forte correlazione tra quota, delta e volatilità;
@@ -126,7 +126,7 @@ Nella preview svolta per questa revisione, il semplice `max(Pq0, Pz90)` ha un Br
 
 Raccomandazione:
 
-- mantenere `Rz` e `Rq` separati nella fase corrente;
+- mantenere `Rd` e `Rq` separati nella fase corrente;
 - chiamare l'eventuale `Rmax` «score prudenziale», non probabilità;
 - costruire `Rc` solo col database grande, ad esempio con una regressione logistica piccola e regolarizzata, seguita da calibrazione:
 
@@ -140,7 +140,7 @@ logit(Pc) =
   + β5 mismatch
 ```
 
-Il confronto decisivo non è «Rc è migliore di Rz», ma «aggiungere le feature fisiche migliora davvero il baseline di mercato su giornate mai viste?».
+Il confronto decisivo non è «Rc è migliore di Rd», ma «aggiungere le feature fisiche migliora davvero il baseline di mercato su giornate mai viste?».
 
 ### 4. Correggere la costruzione di Rq
 
@@ -173,7 +173,7 @@ Raccomandazione:
 
 - separare `risk_value` da `entry_eligible`;
 - emettere `R=-` quando il target non è definito o l'ingresso non è eseguibile;
-- se utile, mostrare `Rz` sui partial solo come diagnostica fisica, ma non usarlo come fallback di `Rc` per autorizzare una puntata;
+- se utile, mostrare `Rd` sui partial solo come diagnostica fisica, ma non usarlo come fallback di `Rc` per autorizzare una puntata;
 - salvare un motivo sintetico: `partial`, `tie`, `stale`, `insufficient_history`;
 - definire una soglia minima di copertura della finestra e non soltanto `volatility_min_changes: 5`.
 
@@ -219,7 +219,7 @@ sigma_W = VW / sqrt(n_variazioni)
 
 Un rapporto grezzo `V30/V120` sarebbe fuorviante: in un regime perfettamente stazionario vale già circa `sqrt(30/120) = 0,5`. Il rapporto informativo è `sigma_30/sigma_120`.
 
-Per `Rz` va inoltre usato il valore float interno, non il `VW` intero arrotondato nel TXT:
+Per `Rd` va inoltre usato il valore float interno, non il `VW` intero arrotondato nel TXT:
 
 ```text
 sigma_remaining = sigma_W × sqrt(secondi_mancanti)
@@ -321,7 +321,7 @@ vol_acceleration = log(sigma_30 / sigma_120)
 z_30, z_60, z_120
 ```
 
-La scelta finale deve premiare la finestra o combinazione che migliora **out-of-sample il modello basato sulla quota**, non quella che ottiene il miglior risultato stand-alone su Rz.
+La scelta finale deve premiare la finestra o combinazione che migliora **out-of-sample il modello basato sulla quota**, non quella che ottiene il miglior risultato stand-alone su Rd.
 
 ### Migliorare la qualità della volatilità
 
@@ -345,9 +345,9 @@ Il vecchio piano volatilità promette anche `VW=---` dopo almeno quattro BTC ide
 
 ## Revisione proposta delle tre varianti
 
-### Rz — mantenere come baseline fisica
+### Rd — mantenere come baseline fisica
 
-Mantenere `Rz`, ma:
+Mantenere `Rd`, ma:
 
 - chiamare l'output continuo `Pz_W`;
 - calcolarlo per più W nello script di valutazione;
@@ -498,7 +498,7 @@ Raccomandazione:
 
 ### Contratto del modulo da correggere
 
-La firma proposta `compute_risk_indices(ticks, vols)` non contiene il PTB necessario a Rz e non lascia spazio alle feature del book. Un contratto più esplicito dovrebbe ricevere almeno `ptb_used`, tick e volatilità; i book possono restare opzionali finché non entrano in Rq.
+La firma proposta `compute_risk_indices(ticks, vols)` non contiene il PTB necessario a Rd e non lascia spazio alle feature del book. Un contratto più esplicito dovrebbe ricevere almeno `ptb_used`, tick e volatilità; i book possono restare opzionali finché non entrano in Rq.
 
 Il calcolo live non deve ricevere `outcome`, `final_price` o `final_gamma`: questi campi appartengono soltanto allo script di valutazione. Questa separazione strutturale riduce il rischio di leakage accidentale.
 
@@ -557,7 +557,7 @@ Il successo non è avere un R monotono sui dati usati per costruirlo. È ottener
 Terrei l'architettura generale e le due sorgenti informative, ma cambierei la priorità:
 
 1. `Pq0/Rq` come benchmark da battere;
-2. `Rz` come diagnostica fisica multi-finestra;
+2. `Rd` come diagnostica fisica multi-finestra;
 3. `Rc` come esperimento da costruire e validare, non come vincitore già scelto.
 
 Per la volatilità manterrei V60, affiancandole V30 e V120 nel POC. I dati attuali non dimostrano un periodo migliore; mostrano invece che le finestre lunghe sono leggermente più stabili e che la possibile informazione utile è soprattutto nel confronto fast/slow. La decisione finale sul periodo deve attendere dati multi-giornata e deve basarsi sul miglioramento incrementale oltre la quota di mercato.

@@ -32,13 +32,13 @@ def format_r_token(name: str, value: int | None) -> str:
 
 
 RQ_COL_W = 4
-RZ_COL_W = 4
-RZ_GAP = 2
+RD_COL_W = 4
+RD_GAP = 2
 ELIGIBLE_COL_W = 3
 
 
 def risk_column_width() -> int:
-    return RQ_COL_W + RZ_GAP + RZ_COL_W + 1 + ELIGIBLE_COL_W
+    return RQ_COL_W + RD_GAP + RD_COL_W + 1 + ELIGIBLE_COL_W
 
 
 @dataclass
@@ -47,10 +47,10 @@ class TickRisk:
     Rq: int | None
     rq_reason: str | None
     Pz_by_window: dict[int, float]
-    Rz_by_window: dict[int, int | None]
-    rz_reason_by_window: dict[int, str | None]
-    Rz: int | None
-    rz_reason: str | None
+    Rd_by_window: dict[int, int | None]
+    rd_reason_by_window: dict[int, str | None]
+    Rd: int | None
+    rd_reason: str | None
     eligible: str
     side: str | None
     up_mid: float
@@ -113,48 +113,48 @@ def compute_risk_state(ticks: np.ndarray, ptb_chainlink: float) -> list[TickRisk
                 Pq0 = _compute_pq0(up_mid, down_mid, side)
                 Rq = prob_to_r(Pq0)
         Pz_by_window: dict[int, float] = {}
-        Rz_by_window: dict[int, int | None] = {}
-        rz_reason_by_window: dict[int, str | None] = {}
+        Rd_by_window: dict[int, int | None] = {}
+        rd_reason_by_window: dict[int, str | None] = {}
         z_primary = float("nan")
         for w in VOLATILITY_WINDOWS_SEC:
             stats = vol_stats[w]
-            rz_reason: str | None = None
+            rd_reason: str | None = None
             Pz = float("nan")
-            Rz: int | None = None
+            Rd: int | None = None
             if partial:
-                rz_reason = "partial"
+                rd_reason = "partial"
             elif stale_row:
-                rz_reason = "stale"
+                rd_reason = "stale"
             elif not stats["valid"][i]:
                 if stats["stale_in_window"][i]:
-                    rz_reason = "stale"
+                    rd_reason = "stale"
                 elif stats["coverage"][i] < RISK_MIN_VOL_COVERAGE_RATIO:
-                    rz_reason = "insufficient_history"
+                    rd_reason = "insufficient_history"
                 elif stats["sigma_w"][i] <= _SIGMA_EPS:
-                    rz_reason = "zero_vol"
+                    rd_reason = "zero_vol"
                 else:
-                    rz_reason = "insufficient_history"
+                    rd_reason = "insufficient_history"
             elif side is None:
-                rz_reason = "partial"
+                rd_reason = "partial"
             else:
                 delta_signed = _delta_signed(chainlink, ptb_chainlink, side)
                 sigma_w = float(stats["sigma_w"][i])
                 Pz = _compute_pz(delta_signed, sigma_w, secs_to_expiry)
-                Rz = prob_to_r(Pz)
+                Rd = prob_to_r(Pz)
                 if w == RISK_PRIMARY_VOL_WINDOW_SEC:
                     z_primary = delta_signed / (sigma_w * math.sqrt(secs_to_expiry))
             Pz_by_window[w] = Pz
-            Rz_by_window[w] = Rz
-            rz_reason_by_window[w] = rz_reason
-        Rz_primary = Rz_by_window[RISK_PRIMARY_VOL_WINDOW_SEC]
-        rz_reason = rz_reason_by_window[RISK_PRIMARY_VOL_WINDOW_SEC]
-        if partial or rq_reason == "tie" or Rq is None or Rz_primary is None:
+            Rd_by_window[w] = Rd
+            rd_reason_by_window[w] = rd_reason
+        Rd_primary = Rd_by_window[RISK_PRIMARY_VOL_WINDOW_SEC]
+        rd_reason = rd_reason_by_window[RISK_PRIMARY_VOL_WINDOW_SEC]
+        if partial or rq_reason == "tie" or Rq is None or Rd_primary is None:
             eligible = "no"
         else:
             eligible = "yes"
         out.append(TickRisk(
-            Pq0=Pq0, Rq=Rq, rq_reason=rq_reason, Pz_by_window=Pz_by_window, Rz_by_window=Rz_by_window,
-            rz_reason_by_window=rz_reason_by_window, Rz=Rz_primary, rz_reason=rz_reason, eligible=eligible,
+            Pq0=Pq0, Rq=Rq, rq_reason=rq_reason, Pz_by_window=Pz_by_window, Rd_by_window=Rd_by_window,
+            rd_reason_by_window=rd_reason_by_window, Rd=Rd_primary, rd_reason=rd_reason, eligible=eligible,
             side=side, up_mid=up_mid, down_mid=down_mid, z_primary=z_primary))
     return out
 
@@ -165,7 +165,7 @@ def format_eligible_cell(eligible: str) -> str:
 
 def format_risk_tokens(risk: TickRisk) -> str:
     rq = format_r_token("Rq", risk.Rq)
-    rz = format_r_token("Rz", risk.Rz)
+    rd = format_r_token("Rd", risk.Rd)
     elig = format_eligible_cell(risk.eligible)
-    gap = " " * RZ_GAP
-    return f"{rq:>{RQ_COL_W}}{gap}{rz:>{RZ_COL_W}} {elig:>{ELIGIBLE_COL_W}}"
+    gap = " " * RD_GAP
+    return f"{rq:>{RQ_COL_W}}{gap}{rd:>{RD_COL_W}} {elig:>{ELIGIBLE_COL_W}}"
