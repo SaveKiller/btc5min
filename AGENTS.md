@@ -184,9 +184,34 @@ Per analisi programmatica preferire `read_round()` in `src/binary_format.py` →
 - Round **completo** atteso: `tick_count == 300`, primo tick `sec ≥ 295`, ultimo `sec ≤ 10`, nessun errore `verify`.
 - Campi `*_gamma` nel header possono arrivare in ritardo via `GammaPatchWorker`; finché `NaN`, affidarsi a Chainlink per outcome e PTB live.
 
+---
 
+### Round sintetici Lighter (feed `.txt` ausiliario)
 
-## CT LAN Poly
+Dataset separato dai round Polymarket reali. Percorso intraround da mid top-of-book Lighter; label e audit da Gamma quando disponibile.
+
+**Output:** `H:\ticks\lighter-rounds5m\<settimana_ISO>\btc5m_<market_start_ts>_<HHMM>.txt`  
+**Input:** `H:\ticks\lighter-fullrawticks\btc\<settimana_ISO>\raw-btc-YYYY-MM-DD.csv`  
+**Cache Gamma:** `H:\ticks\lighter-rounds5m\_gamma_cache.jsonl` — fetch serializzato via `src/lighter_gamma.py` (lock globale + spacing 250 ms tra richieste HTTP, anche con pool parallelo).
+
+| Comando | Uso |
+| ------- | --- |
+| `python scripts/build_lighter_rounds.py test-day <csv> <out_dir>` | Build di un solo giorno (controllo qualità) |
+| `python scripts/build_lighter_rounds.py all <input_root> <out_dir> <workers>` | Build completo; `<workers>` = processi paralleli (1 = sequenziale, una giornata CSV per worker) |
+| `build_lighter_rounds.bat [workers]` | Batch Windows (default 8 worker); **salta** i `.txt` già presenti in output |
+
+Header: `source: lighter_synthetic`; campi audit `outcome_lighter`, `outcome_agreement: TRUE` / `FALSE`, `delta_lighter`, `delta_chainlink`, `move_error`. Colonna `outcome` = Gamma ufficiale se presente, altrimenti proxy Lighter. `ptb_chainlink` / `final_chainlink` / colonna `btc` = valori Lighter.
+
+Tabella `data:` **senza** `gain%` e **senza** `Rq`; solo `Rd`. Colonna `quote` = lato da delta Lighter (`UP` / `DOWN` padded). Stale Lighter: `sample_age_ms > 1000` → `delta: ---`.
+
+Filtro build: griglia causale completa (301 confini); round 23:55 UTC esclusi (confine finale oltre il giorno CSV). Non usare `convert` / `verify` su questi file.
+
+Filtrare round discordanti: `grep -l "outcome_agreement: FALSE" H:\ticks\lighter-rounds5m\**\*.txt`
+
+Build incrementale: se `btc5m_<start_ts>_<HHMM>.txt` esiste già in output, il round viene saltato (`present` nel log). Giornata interamente presente → nessuna lettura CSV. `skipped` = griglia causale incompleta.
+
+---
+
 
 In lan, nella macchina preoxmox, esiste un container debian chiamato
 poly (proxmox id 103, ip 10.1.1.73) che è pensata per stare attiva 24h e salvara i tick di questo progetto. In questa macchina deve essere presente un app "btc5min" dentro opt che parte all'avvio come servizio e scrive nella propria cartella data i file bin e txt dei vari round in modo continuativo.
