@@ -6,10 +6,33 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.setup import TICKS_ROOT
+from src.delta_win import parse_delta_txt, parse_intraday_h, parse_quote_side, parse_vol_txt
+from src.setup import DELTA_WIN_CHECKPOINTS, TICKS_ROOT, VOLATILITY_WINDOWS_SEC
 
 _LIGHTER_ROUNDS_DIR = "lighter-rounds5m"
 _START_TS_RE = re.compile(r"btc5m_(\d+)_")
+
+
+def _parse_data_row_line(line: str) -> dict:
+    parts = line.split()
+    if len(parts) < 14:
+        raise Exception(f"unparsable data row: {line}")
+    rd_i = parts.index("Rd")
+    sec = int(parts[0])
+    delta = parse_delta_txt(parts[3])
+    vols: dict[int, int | None] = {}
+    i = 5
+    while i < rd_i:
+        if not parts[i].startswith("V"):
+            break
+        w = int(parts[i][1:])
+        vols[w] = parse_vol_txt(f"{parts[i]} {parts[i + 1]}")
+        i += 2
+    delta_win = parts[rd_i + 2] if len(parts) > rd_i + 2 else None
+    return {
+        "sec": sec, "side": parse_quote_side(parts[2]), "delta": delta, "vols": vols,
+        "delta_stale": delta is None, "delta_win": delta_win,
+    }
 
 
 def li_rounds_root(root: Path | None = None) -> Path:
@@ -48,6 +71,100 @@ def read_lighter_header(path: Path) -> dict:
             fields[key] = value
     fields["warnings"] = warnings
     return fields
+
+
+def read_lighter_data_rows(path: Path) -> list[dict]:
+    rows: list[dict] = []
+    in_data = False
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if line == "data:":
+                in_data = True
+                continue
+            if not in_data or not line or line.startswith("sec") or set(line) == {"-"}:
+                continue
+            rows.append(_parse_data_row_line(line))
+    return rows
+
+def _stale_in_vol_window(rows_by_sec: dict[int, dict], sec: int, window: int) -> bool:
+    for s in range(sec, sec + window):
+        row = rows_by_sec.get(s)
+        if row is None:
+            raise Exception(f"missing sec {s} in round rows")
+        if row["delta_stale"]:
+            return True
+    return False
+
+
+def li_checkpoint_samples(path: Path, checkpoints: tuple[int, ...] = DELTA_WIN_CHECKPOINTS) -> list[dict]:
+    hdr = read_lighter_header(path)
+    if hdr.get("source") != "lighter_synthetic":
+        raise Exception(f"{path}: source is not lighter_synthetic")
+    if hdr.get("outcome_agreement") == "nan":
+        return []
+    start_ts = _start_ts_from_name(path)
+    outcome = hdr["outcome"]
+    intraday_h = parse_intraday_h(hdr, start_ts)
+    week = path.parent.name
+    data_rows = read_lighter_data_rows(path)
+    by_sec = {r["sec"]: r for r in data_rows}
+    out: list[dict] = []
+    for sec in checkpoints:
+        row = by_sec.get(sec)
+        if row is None:
+            raise Exception(f"{path}: missing checkpoint sec={sec}")
+        if _stale_in_vol_window(by_sec, sec, max(VOLATILITY_WINDOWS_SEC)):
+            continue
+        if row["delta"] is None:
+            continue
+        for w in VOLATILITY_WINDOWS_SEC:
+            if row["vols"].get(w) is None:
+                break
+        else:
+            y_win = 1 if row["side"] == outcome else 0
+            out.append({
+                "path": str(path), "start_ts": start_ts, "week": week, "sec": sec,
+                "abs_delta": abs(row["delta"]), "vols": {w: row["vols"][w] for w in VOLATILITY_WINDOWS_SEC},
+                "intraday_h": intraday_h, "side": row["side"], "outcome": outcome, "y_win": y_win,
+                "outcome_agreement": hdr.get("outcome_agreement"),
+            })
+    return out
+
+
+def li_collect_delta_win_dataset(root: Path | None = None) -> list[dict]:
+    samples: list[dict] = []
+    weeks = sorted({p.parent.name for p in iter_lighter_round_txt(root)})
+    week_rank = {w: i for i, w in enumerate(weeks)}
+    for path in iter_lighter_round_txt(root):
+        for rec in li_checkpoint_samples(path):
+            rec["week_idx"] = week_rank[rec["week"]]
+            samples.append(rec)
+    return samples
+
+
+def li_delta_win_audit(root: Path | None = None) -> dict:
+    paths = iter_lighter_round_txt(root)
+    weeks = Counter()
+    agreement = Counter()
+    missing_cp = Counter()
+    eligible = 0
+    by_sec = Counter()
+    for path in paths:
+        weeks[path.parent.name] += 1
+        hdr = read_lighter_header(path)
+        agreement[hdr.get("outcome_agreement", "?")] += 1
+        recs = li_checkpoint_samples(path)
+        eligible += len(recs)
+        for sec in DELTA_WIN_CHECKPOINTS:
+            if not any(r["sec"] == sec for r in recs):
+                missing_cp[sec] += 1
+        by_sec.update(r["sec"] for r in recs)
+    return {
+        "round_count": len(paths), "weeks": dict(weeks), "outcome_agreement": dict(agreement),
+        "eligible_checkpoint_rows": eligible, "missing_checkpoint_rounds": dict(missing_cp),
+        "rows_by_sec": dict(by_sec),
+    }
 
 
 def _start_ts_from_name(path: Path) -> int:

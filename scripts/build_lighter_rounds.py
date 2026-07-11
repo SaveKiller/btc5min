@@ -11,6 +11,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from src.binary_format import OUTCOME_FROM_NAME
+from src.delta_win import load_delta_win_artifact
 from src.lighter_gamma import (
     GAMMA_CACHE_NAME,
     GammaBroker,
@@ -25,6 +26,14 @@ from src.lighter_txt_format import render_lighter_round_txt
 from src.settlement import outcome_from_prices
 
 NAN = float("nan")
+_build_artifact: dict | None = None
+
+
+def _artifact() -> dict:
+    global _build_artifact
+    if _build_artifact is None:
+        _build_artifact = load_delta_win_artifact()
+    return _build_artifact
 
 
 def _hhmm_utc(start_ts: int) -> str:
@@ -123,7 +132,7 @@ def build_day_csv(csv_path: Path, out_dir: Path) -> dict:
         gamma = fetch_gamma(t)
         header, warnings = _build_header(t, samples, gamma)
         ticks = build_ticks_array(samples)
-        txt = render_lighter_round_txt(header, ticks, warnings)
+        txt = render_lighter_round_txt(header, ticks, warnings, _artifact())
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(txt, encoding="utf-8")
         stats["written"] += 1

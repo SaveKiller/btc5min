@@ -1,0 +1,107 @@
+{
+    "model_version": 1,
+    "method": "prevalence",
+    "status": "synthetic_calibrated",
+    "target": "delta_side_wins_gamma_outcome",
+    "label_source": "gamma_official_excluding_agreement_nan",
+    "checkpoints": [
+        180,
+        150,
+        120,
+        90,
+        60,
+        30
+    ],
+    "hour_bands_hash": "c15ecb446616fc41",
+    "vol_windows_sec": [
+        30,
+        60,
+        90,
+        120
+    ],
+    "training_sample_count": 131189,
+    "training_start_ts_min": 1775433900,
+    "training_start_ts_max": 1782085800,
+    "models_by_sec": {
+        "180": {
+            "type": "prevalence",
+            "p": 0.7122486288848263
+        },
+        "150": {
+            "type": "prevalence",
+            "p": 0.7463184853196744
+        },
+        "120": {
+            "type": "prevalence",
+            "p": 0.7724446882428232
+        },
+        "90": {
+            "type": "prevalence",
+            "p": 0.8064043915827996
+        },
+        "60": {
+            "type": "prevalence",
+            "p": 0.8341952313395268
+        },
+        "30": {
+            "type": "prevalence",
+            "p": 0.8766013909224012
+        }
+    },
+    "holdout": {
+        "train_weeks": [
+            "2615",
+            "2616",
+            "2617",
+            "2618",
+            "2619",
+            "2620",
+            "2621",
+            "2622",
+            "2623"
+        ],
+        "holdout_weeks": [
+            "2624",
+            "2625"
+        ],
+        "chosen_method": "prevalence",
+        "chosen_brier": 0.15743606562802845,
+        "method_comparison": [
+            {
+                "method": "prevalence",
+                "brier": 0.15743606562802845,
+                "log_loss": 0.4920292982710514,
+                "week_brier_mean": 0.15743188949738746,
+                "week_brier_std": 0.0029418966567630804
+            },
+            {
+                "method": "brownian_v60",
+                "brier": 0.1418461648747321,
+                "log_loss": 0.47310134615926713,
+                "week_brier_mean": 0.1581519889859884,
+                "week_brier_std": 0.023025146965054685
+            },
+            {
+                "method": "lookup_v60",
+                "brier": 0.14203102430008982,
+                "log_loss": 0.44344831787803873,
+                "week_brier_mean": 0.15535824737619233,
+                "week_brier_std": 0.018355346378290383
+            },
+            {
+                "method": "logistic_isotonic",
+                "brier": 0.13821197991281667,
+                "log_loss": 0.425396744914383,
+                "week_brier_mean": 0.1549006640607737,
+                "week_brier_std": 0.022074752514102337
+            },
+            {
+                "method": "rf_isotonic",
+                "brier": 0.13958510005837985,
+                "log_loss": 0.43021737268204713,
+                "week_brier_mean": 0.15523361998237517,
+                "week_brier_std": 0.02051813977989732
+            }
+        ]
+    }
+}

@@ -205,14 +205,17 @@ Radice dati tick in `setup.json` → `ticks_root` (default `H:\ticks\`).
 | `python -m src.listats [summary]`                                                                                  | Sommario tabellare del dataset Lighter (vedi sotto)                                             |
 | `build_lighter_rounds.bat [workers]`                                                                               | Batch Windows (default 8 worker); **salta** i `.txt` già presenti in output                     |
 | `python scripts/backfill_lighter_intraday.py [rounds_root] [workers] [--dry-run]`                                  | Aggiunge `intraday: Hk` agli header storici (idempotente; non tocca `data:`)                    |
+| `python scripts/backfill_lighter_delta_win.py [rounds_root] [workers] [--dry-run]`                                 | Aggiunge header modello + colonna `delta_win` ai checkpoint (idempotente)                     |
+| `python scripts/study_delta_win.py`                                                                                | Studio modelli su Lighter → `models/delta_win_v1.json`                                          |
+| `python scripts/eval_delta_win_real.py [data_dir]`                                                                 | Valutazione esterna su round Chainlink (label Gamma)                                            |
 | `backfill_lighter_intraday.bat [workers]`                                                                          | Batch Windows backfill header `intraday` su `H:\ticks\lighter-rounds5m`                         |
 
 
 **Statistiche (**`src/listats.py`**).** Modulo dedicato all’analisi del dataset Lighter: funzioni con prefisso `li_` (es. `li_summary`, `li_rounds_root`, `read_lighter_header`). Legge gli header dei `.txt` sotto `<ticks_root>/lighter-rounds5m/`; estendere qui nuove metriche derivate dallo studio dei round sintetici. CLI: `python -m src.listats` o `python -m src.listats summary` — output a sezioni tabellari. Prima statistica implementata: `li_summary` (conteggio round, intervallo temporale, distribuzione outcome gamma/lighter, `outcome_agreement`, completezza tick, gap `ptb_gamma`/`final_gamma`, `move_error` medio e move_error medio, round per settimana ISO).
 
-Header: `source: lighter_synthetic`; `intraday: Hk` (fascia oraria da `hour_bands.json` / `hour_band(market_start_ts)`); campi audit `outcome_lighter`, `outcome_agreement: TRUE` / `FALSE`, `delta_lighter`, `delta_chainlink`, `move_error`. Colonna `outcome` = Gamma ufficiale se presente, altrimenti proxy Lighter. `ptb_chainlink` / `final_chainlink` / colonna `btc` = valori Lighter.
+Header: `source: lighter_synthetic`; `intraday: Hk` (fascia oraria da `hour_bands.json` / `hour_band(market_start_ts)`); campi audit `outcome_lighter`, `outcome_agreement: TRUE` / `FALSE`, `delta_lighter`, `delta_chainlink`, `move_error`. Colonna `outcome` = Gamma ufficiale se presente, altrimenti proxy Lighter. `ptb_chainlink` / `final_chainlink` / colonna `btc` = valori Lighter. Header `delta_win_*`: versione modello, hash `hour_bands`, target, checkpoint, periodo training, stato `synthetic_calibrated` (vedi `docs/indicator_delta_win.md`).
 
-Tabella `data:` **senza** `gain%` e **senza** `Rq`; solo `Rd`. Colonna `quote` = lato da delta Lighter (`UP` / `DOWN` padded). Stale Lighter: `sample_age_ms > 1000` → `delta: ---`.
+Tabella `data:` **senza** `gain%` e **senza** `Rq`; colonne `Rd` e `delta_win`. Colonna `quote` = lato da delta Lighter (`UP` / `DOWN` padded). Colonna `delta_win` = percentuale stimata (una cifra decimale) **solo** ai checkpoint `180,150,120,90,60,30`; altrove `---`. Stale Lighter: `sample_age_ms > 1000` → `delta: ---`.
 
 Filtro build: griglia causale completa (301 confini); round 23:55 UTC esclusi (confine finale oltre il giorno CSV). Non usare `convert` / `verify` su questi file.
 

@@ -60,3 +60,10 @@ RISK_FLIP_HYSTERESIS_C = int(_req("risk_flip_hysteresis_c"))
 RISK_FLIP_PERSIST_SEC = int(_req("risk_flip_persist_sec"))
 if RISK_FLIP_HYSTERESIS_C <= 0 or RISK_FLIP_PERSIST_SEC <= 0:
     raise Exception("risk_flip_hysteresis_c and risk_flip_persist_sec must be > 0")
+
+DELTA_WIN_MODEL_VERSION = int(_req("delta_win_model_version"))
+_raw_dw_cp = _req("delta_win_checkpoints")
+if not isinstance(_raw_dw_cp, list) or len(_raw_dw_cp) == 0:
+    raise Exception("delta_win_checkpoints must be a non-empty list")
+DELTA_WIN_CHECKPOINTS = tuple(int(x) for x in _raw_dw_cp)
+DELTA_WIN_MODEL_PATH = str(_req("delta_win_model_path"))
