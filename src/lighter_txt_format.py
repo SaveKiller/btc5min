@@ -6,10 +6,7 @@ import numpy as np
 
 from src.binary_format import OUTCOME_NAMES
 from src.clob_api import side_from_chainlink
-from src.delta_win import (
-    delta_win_column_width, delta_win_header_lines, format_delta_win_cell,
-    load_delta_win_artifact, predict_delta_win,
-)
+from src.delta_win import delta_win_block_width, delta_win_data_header, delta_win_header_lines, delta_win_row_part, load_delta_win_artifact
 from src.lighter_risk import compute_lighter_rd
 from src.lighter_sampling import STALE_MS, lighter_stale
 from src.setup import (
@@ -23,7 +20,6 @@ from src.txt_format import (
 from src.vol_stats import compute_vol_stats_by_window, tick_sec as _tick_sec
 
 RD_COL_W = 4
-DW_COL_W = delta_win_column_width()
 _STALL_SEC = 1.0
 
 
@@ -71,32 +67,36 @@ def _checkpoint_stale_in_vol_window(indexed: dict[int, int], ticks: np.ndarray, 
     return False
 
 
-def _delta_win_cell_live(sec: int, tick_idx: int, ticks: np.ndarray, vols: dict[int, np.ndarray],
+def _delta_win_row_live(sec: int, tick_idx: int, ticks: np.ndarray, vols: dict[int, np.ndarray],
         ptb: float, intraday_h: int, indexed: dict[int, int], artifact: dict) -> str:
-    if sec not in DELTA_WIN_CHECKPOINTS:
-        return "---"
-    if _checkpoint_stale_in_vol_window(indexed, ticks, sec, max(VOLATILITY_WINDOWS_SEC)):
-        return "---"
-    if _lighter_stale_row(ticks[tick_idx, 0], ticks[tick_idx, 8]):
-        return "---"
-    vol_dict: dict[int, int] = {}
-    for w in VOLATILITY_WINDOWS_SEC:
-        v = vols[w][tick_idx]
-        if math.isnan(v):
-            return "---"
-        vol_dict[w] = round(v)
-    abs_delta = abs(round(float(ticks[tick_idx, 6]) - ptb))
-    p = predict_delta_win(sec, abs_delta, vol_dict, intraday_h, artifact)
-    return format_delta_win_cell(p)
+    eligible = sec in DELTA_WIN_CHECKPOINTS
+    if eligible:
+        if _checkpoint_stale_in_vol_window(indexed, ticks, sec, max(VOLATILITY_WINDOWS_SEC)):
+            eligible = False
+        elif _lighter_stale_row(ticks[tick_idx, 0], ticks[tick_idx, 8]):
+            eligible = False
+    vol_dict: dict[int, int] = {w: 0 for w in VOLATILITY_WINDOWS_SEC}
+    abs_delta = 0
+    if eligible:
+        for w in VOLATILITY_WINDOWS_SEC:
+            v = vols[w][tick_idx]
+            if math.isnan(v):
+                eligible = False
+                break
+            vol_dict[w] = round(v)
+        abs_delta = abs(round(float(ticks[tick_idx, 6]) - ptb))
+    return delta_win_row_part(sec, abs_delta, vol_dict, intraday_h, eligible, artifact)
 
 
-def _format_lighter_table_row(sec: str, time: str, quote: str, delta: str, btc_val: str,
-        vol_tokens: str, rd_token: str, delta_win: str) -> str:
+def _format_lighter_table_row(sec: str, time: str, quote: str, delta: str, dw_part: str, btc_val: str,
+        vol_tokens: str, rd_token: str) -> str:
     vol_w = vol_column_width()
+    dw_w = delta_win_block_width()
+    if dw_w:
+        dw_part = f"{dw_part:<{dw_w}}"
     return (
         f"{sec:>3}  {time:>5}  {quote:<9}  "
-        f"{delta:>5}  {btc_val:>8}  {vol_tokens:<{vol_w}}  {rd_token:>{RD_COL_W + 1}}  "
-        f"{delta_win:>{DW_COL_W}}"
+        f"{delta:>5}  {dw_part}  {btc_val:>8}  {vol_tokens:<{vol_w}}  {rd_token:>{RD_COL_W + 1}}"
     )
 
 
@@ -104,7 +104,7 @@ def _lighter_column_header() -> str:
     vol_hdr = format_vol_header()
     return (
         f"{'sec':>3}  {'time':>5}  {'quote':<9}  "
-        f"{'delta':>5}  {'btc':>8}  {vol_hdr}  {'Rd':>{RD_COL_W}}  {'delta_win':>{DW_COL_W}}"
+        f"{'delta':>5}  {delta_win_data_header()}  {'btc':>8}  {vol_hdr}  {'Rd':>{RD_COL_W}}"
     )
 
 
@@ -169,9 +169,9 @@ def render_lighter_round_txt(header: dict, ticks: np.ndarray, warnings: list[str
         stale = _lighter_stale_row(row[0], row[8])
         side = side_from_chainlink(chainlink, ptb)
         vol_tokens = "  ".join(format_vol_token(w, vols[w][tick_idx]) for w in VOLATILITY_WINDOWS_SEC)
-        dw = _delta_win_cell_live(sec, tick_idx, ticks, vols, ptb, header["intraday_h"], indexed, artifact)
+        dw_part = _delta_win_row_live(sec, tick_idx, ticks, vols, ptb, header["intraday_h"], indexed, artifact)
         lines.append(_format_lighter_table_row(
             str(sec), format_mmss(sec), format_quote_side(side),
-            format_delta_cell(chainlink, ptb, stale), format_btc_cell(chainlink),
-            vol_tokens, format_rd_token(rd_vals[tick_idx]), dw))
+            format_delta_cell(chainlink, ptb, stale), dw_part, format_btc_cell(chainlink),
+            vol_tokens, format_rd_token(rd_vals[tick_idx])))
     return "\n".join(lines) + "\n"

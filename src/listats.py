@@ -7,31 +7,58 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.delta_win import parse_delta_txt, parse_intraday_h, parse_quote_side, parse_vol_txt
-from src.setup import DELTA_WIN_CHECKPOINTS, TICKS_ROOT, VOLATILITY_WINDOWS_SEC
+from src.setup import DELTA_WIN_CHECKPOINTS, DELTA_WIN_TXT_COLUMNS, TICKS_ROOT, VOLATILITY_WINDOWS_SEC
 
 _LIGHTER_ROUNDS_DIR = "lighter-rounds5m"
 _START_TS_RE = re.compile(r"btc5m_(\d+)_")
 
 
+def _is_btc_cell(token: str) -> bool:
+    return token.endswith("$") and token[:-1].isdigit()
+
+
+def _parse_delta_win_cells(parts: list[str], start: int, btc_i: int) -> tuple[str | None, str | None, int]:
+    dw_a, dw_b = None, None
+    i = start
+    while i < btc_i:
+        if parts[i] == "---":
+            if "a" in DELTA_WIN_TXT_COLUMNS and dw_a is None:
+                dw_a = "---"
+            elif "b" in DELTA_WIN_TXT_COLUMNS:
+                dw_b = "---"
+            i += 1
+        elif i + 1 < btc_i and parts[i + 1].startswith("["):
+            dw_a = f"{parts[i]} {parts[i + 1]}"
+            i += 2
+        else:
+            if "b" in DELTA_WIN_TXT_COLUMNS and dw_b is None:
+                dw_b = parts[i]
+            elif "a" in DELTA_WIN_TXT_COLUMNS and dw_a is None:
+                dw_a = parts[i]
+            i += 1
+    return dw_a, dw_b, i
+
+
 def _parse_data_row_line(line: str) -> dict:
     parts = line.split()
-    if len(parts) < 14:
+    if len(parts) < 10:
         raise Exception(f"unparsable data row: {line}")
     rd_i = parts.index("Rd")
     sec = int(parts[0])
     delta = parse_delta_txt(parts[3])
+    btc_i = next(i for i in range(4, rd_i) if _is_btc_cell(parts[i]))
+    dw_a, dw_b, _ = _parse_delta_win_cells(parts, 4, btc_i)
     vols: dict[int, int | None] = {}
-    i = 5
+    i = btc_i + 1
     while i < rd_i:
         if not parts[i].startswith("V"):
             break
         w = int(parts[i][1:])
         vols[w] = parse_vol_txt(f"{parts[i]} {parts[i + 1]}")
         i += 2
-    delta_win = parts[rd_i + 2] if len(parts) > rd_i + 2 else None
     return {
         "sec": sec, "side": parse_quote_side(parts[2]), "delta": delta, "vols": vols,
-        "delta_stale": delta is None, "delta_win": delta_win,
+        "delta_stale": delta is None, "delta_win_a": dw_a, "delta_win_b": dw_b,
     }
 
 

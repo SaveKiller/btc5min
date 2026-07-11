@@ -67,3 +67,13 @@ if not isinstance(_raw_dw_cp, list) or len(_raw_dw_cp) == 0:
     raise Exception("delta_win_checkpoints must be a non-empty list")
 DELTA_WIN_CHECKPOINTS = tuple(int(x) for x in _raw_dw_cp)
 DELTA_WIN_MODEL_PATH = str(_req("delta_win_model_path"))
+DELTA_WIN_BAND_MIN_SAMPLES = int(_req("delta_win_band_min_samples"))
+if DELTA_WIN_BAND_MIN_SAMPLES <= 0:
+    raise Exception("delta_win_band_min_samples must be > 0")
+_raw_dw_txt_cols = _req("delta_win_txt_columns")
+if not isinstance(_raw_dw_txt_cols, list) or len(_raw_dw_txt_cols) == 0:
+    raise Exception("delta_win_txt_columns must be a non-empty list")
+DELTA_WIN_TXT_COLUMNS = tuple(str(x) for x in _raw_dw_txt_cols)
+for _col in DELTA_WIN_TXT_COLUMNS:
+    if _col not in ("a", "b"):
+        raise Exception(f"delta_win_txt_columns invalid entry: {_col!r}")

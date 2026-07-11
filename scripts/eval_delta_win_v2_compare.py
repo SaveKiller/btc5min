@@ -1,4 +1,4 @@
-"""Valutazione esterna delta_win sui round reali Chainlink (label Gamma affidabili)."""
+"""Confronto delta_win v2 metodo A vs B su round reali Chainlink (label Gamma)."""
 
 import json
 import math
@@ -16,7 +16,7 @@ import numpy as np
 from src.binary_format import read_round
 from src.clob_api import side_from_chainlink
 from src.convert import iter_round_bin_paths
-from src.delta_win import load_delta_win_artifact, predict_delta_win_b
+from src.delta_win import load_delta_win_artifact, predict_delta_win_a, predict_delta_win_b
 from src.lighter_ticks import hour_band
 from src.settlement import outcome_from_prices
 from src.setup import DELTA_WIN_CHECKPOINTS, VOLATILITY_WINDOWS_SEC
@@ -36,16 +36,6 @@ def log_loss(probs: list[float], labels: list[int]) -> float:
     return -sum(y * math.log(p + eps) + (1 - y) * math.log(1 - p + eps) for p, y in zip(probs, labels)) / len(probs)
 
 
-def wilson_ci(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
-    if n == 0:
-        return float("nan"), float("nan")
-    p = k / n
-    denom = 1 + z * z / n
-    center = (p + z * z / (2 * n)) / denom
-    margin = z * math.sqrt((p * (1 - p) + z * z / (4 * n)) / n) / denom
-    return center - margin, center + margin
-
-
 def _stale_in_vol_window(ticks: np.ndarray, sec_index: dict[int, int], sec: int, window: int) -> bool:
     for s in range(sec, sec + window):
         if s not in sec_index:
@@ -54,6 +44,13 @@ def _stale_in_vol_window(ticks: np.ndarray, sec_index: dict[int, int], sec: int,
         if chainlink_stale_row(ticks[ti, 0], ticks[ti, 8]):
             return True
     return False
+
+
+def _band_label(abs_delta: int, bands: list[dict]) -> str:
+    for b in bands:
+        if b["lo"] <= abs_delta <= b["hi"]:
+            return f"{b['lo']}-{b['hi']}"
+    return f">{bands[-1]['hi']}"
 
 
 def collect_real_samples(bin_paths: list[Path], artifact: dict) -> list[dict]:
@@ -87,33 +84,48 @@ def collect_real_samples(bin_paths: list[Path], artifact: dict) -> list[dict]:
                 abs_delta = abs(round(float(ticks[ti, 6]) - ptb))
                 side = side_from_chainlink(float(ticks[ti, 6]), ptb)
                 y_win = 1 if side == outcome else 0
-                p = predict_delta_win_b(sec, abs_delta, vol_dict, intraday_h, artifact)
+                pa = predict_delta_win_a(sec, abs_delta, artifact)
+                pb = predict_delta_win_b(sec, abs_delta, vol_dict, intraday_h, artifact)
+                bands = artifact["bands_by_sec"][str(sec)]
                 samples.append({
                     "bin": bp.name, "day": day, "start_ts": start_ts, "sec": sec, "intraday_h": intraday_h,
                     "abs_delta": abs_delta, "vols": vol_dict, "side": side, "outcome": outcome, "y_win": y_win,
-                    "p": p,
+                    "p_a": pa, "p_b": pb, "band": _band_label(abs_delta, bands),
                 })
     return samples
 
 
-def _metrics(rows: list[dict]) -> dict:
+def _metrics(rows: list[dict], key: str) -> dict:
     if not rows:
         return {"n": 0}
-    probs = [r["p"] for r in rows]
+    probs = [r[key] for r in rows]
     labels = [r["y_win"] for r in rows]
-    wins = sum(labels)
-    lo, hi = wilson_ci(wins, len(labels))
     return {
-        "n": len(rows), "win_rate": wins / len(rows), "win_rate_ci": [lo, hi],
+        "n": len(rows), "win_rate": sum(labels) / len(labels),
         "brier": brier(probs, labels), "log_loss": log_loss(probs, labels),
     }
 
 
-def _group_metrics(samples: list[dict], key_fn) -> dict:
+def _group_metrics(samples: list[dict], key_fn, pkey: str) -> dict:
     groups: dict[str, list[dict]] = defaultdict(list)
     for s in samples:
         groups[str(key_fn(s))].append(s)
-    return {k: _metrics(v) for k, v in sorted(groups.items())}
+    return {k: _metrics(v, pkey) for k, v in sorted(groups.items())}
+
+
+def _band_observed(samples: list[dict]) -> dict:
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for s in samples:
+        groups[f"sec={s['sec']} band={s['band']}"].append(s)
+    out = {}
+    for k, rows in sorted(groups.items()):
+        labels = [r["y_win"] for r in rows]
+        pa = [r["p_a"] for r in rows]
+        out[k] = {
+            "n": len(rows), "win_rate_observed": sum(labels) / len(labels),
+            "p_a_mean": float(np.mean(pa)),
+        }
+    return out
 
 
 def main() -> None:
@@ -128,25 +140,28 @@ def main() -> None:
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "data_dir": str(data_dir),
-        "artifact_method": "logistic_isotonic",
         "artifact_version": artifact["model_version"],
+        "artifact_methods": artifact["methods"],
         "round_bins_scanned": len(bin_paths),
         "eligible_samples": len(samples),
-        "overall": _metrics(samples),
-        "by_checkpoint": _group_metrics(samples, lambda s: s["sec"]),
-        "by_intraday_h": _group_metrics(samples, lambda s: s["intraday_h"]),
-        "by_day": _group_metrics(samples, lambda s: s["day"]),
-        "feature_shift": {
-            "abs_delta_mean": float(np.mean([s["abs_delta"] for s in samples])),
-            "v60_mean": float(np.mean([s["vols"][60] for s in samples])),
+        "method_a": {
+            "overall": _metrics(samples, "p_a"),
+            "by_checkpoint": _group_metrics(samples, lambda s: s["sec"], "p_a"),
+            "by_intraday_h": _group_metrics(samples, lambda s: s["intraday_h"], "p_a"),
+            "by_band_observed": _band_observed(samples),
+        },
+        "method_b": {
+            "overall": _metrics(samples, "p_b"),
+            "by_checkpoint": _group_metrics(samples, lambda s: s["sec"], "p_b"),
+            "by_intraday_h": _group_metrics(samples, lambda s: s["intraday_h"], "p_b"),
         },
     }
     _REPORTS.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    out = _REPORTS / f"delta_win_real_eval_{ts}.json"
+    out = _REPORTS / f"delta_win_compare_{ts}.json"
     out.write_text(json.dumps(report, indent=4), encoding="utf-8")
     print(f"written {out}")
-    print(f"samples={len(samples)} brier={report['overall']['brier']:.5f}")
+    print(f"samples={len(samples)} A_brier={report['method_a']['overall']['brier']:.5f} B_brier={report['method_b']['overall']['brier']:.5f}")
 
 
 if __name__ == "__main__":

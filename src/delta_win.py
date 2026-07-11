@@ -1,4 +1,4 @@
-"""Probabilità delta_win: vittoria del lato indicato dal segno del delta al checkpoint."""
+"""Probabilità delta_win v2: metodo A (fasce |delta|) e B (logistic_isotonic)."""
 
 import hashlib
 import json
@@ -7,13 +7,17 @@ from pathlib import Path
 
 import numpy as np
 
-from src.risk import norm_cdf
-from src.setup import DELTA_WIN_CHECKPOINTS, DELTA_WIN_MODEL_PATH, VOLATILITY_WINDOWS_SEC
+from src.delta_win_bands import lookup_band, lookup_band_p_win
+from src.setup import DELTA_WIN_CHECKPOINTS, DELTA_WIN_MODEL_PATH, DELTA_WIN_TXT_COLUMNS, VOLATILITY_WINDOWS_SEC
 
 _ROOT = Path(__file__).resolve().parent.parent
 _HOUR_BANDS_PATH = _ROOT / "hour_bands.json"
 _artifact_cache: dict | None = None
-_SIGMA_EPS = 1e-9
+_DW_HI_OPEN = 1_000_000
+_DW_A_COL_W = 15
+_DW_B_COL_W = 5
+_DW_COL_LABEL_A = "DWinA"
+_DW_COL_LABEL_B = "DWinB"
 
 
 def hour_bands_hash() -> str:
@@ -55,23 +59,6 @@ def parse_intraday_h(hdr: dict, start_ts: int) -> int:
     return hour_band(start_ts)
 
 
-def z_score_w(abs_delta: int, vol_w: int, window_sec: int, sec: int) -> float | None:
-    if vol_w <= 0 or sec <= 0:
-        return None
-    sigma_step = vol_w / math.sqrt(window_sec - 1)
-    denom = sigma_step * math.sqrt(sec)
-    if denom <= _SIGMA_EPS:
-        return None
-    return abs_delta / denom
-
-
-def brownian_win_prob(abs_delta: int, vol_w: int, window_sec: int, sec: int) -> float | None:
-    z = z_score_w(abs_delta, vol_w, window_sec, sec)
-    if z is None:
-        return None
-    return norm_cdf(z)
-
-
 def _feature_vector(abs_delta: int, vols: dict[int, int], intraday_h: int) -> np.ndarray:
     feats = [math.log1p(abs_delta)]
     for w in VOLATILITY_WINDOWS_SEC:
@@ -109,12 +96,26 @@ def load_delta_win_artifact(path: Path | None = None) -> dict:
         raise Exception(f"delta_win hour_bands_hash mismatch: {data.get('hour_bands_hash')} vs {hour_bands_hash()}")
     if set(data.get("checkpoints", [])) != set(DELTA_WIN_CHECKPOINTS):
         raise Exception("delta_win checkpoint list mismatch with setup.json")
+    if data.get("model_version") != 2:
+        raise Exception(f"delta_win artifact version must be 2, got {data.get('model_version')}")
+    if "bands_by_sec" not in data or "logistic_by_sec" not in data:
+        raise Exception("delta_win v2 artifact missing bands_by_sec or logistic_by_sec")
     data["_path"] = str(p)
     _artifact_cache = data
     return data
 
 
-def predict_delta_win(sec: int, abs_delta: int, vols: dict[int, int], intraday_h: int,
+def predict_delta_win_a(sec: int, abs_delta: int, artifact: dict | None = None) -> float | None:
+    if sec not in DELTA_WIN_CHECKPOINTS:
+        return None
+    art = artifact if artifact is not None else load_delta_win_artifact()
+    sec_key = str(sec)
+    if sec_key not in art["bands_by_sec"]:
+        raise Exception(f"delta_win bands missing sec={sec}")
+    return lookup_band_p_win(abs_delta, art["bands_by_sec"][sec_key])
+
+
+def predict_delta_win_b(sec: int, abs_delta: int, vols: dict[int, int], intraday_h: int,
         artifact: dict | None = None) -> float | None:
     if sec not in DELTA_WIN_CHECKPOINTS:
         return None
@@ -123,33 +124,94 @@ def predict_delta_win(sec: int, abs_delta: int, vols: dict[int, int], intraday_h
             return None
     art = artifact if artifact is not None else load_delta_win_artifact()
     sec_key = str(sec)
-    if sec_key not in art["models_by_sec"]:
-        raise Exception(f"delta_win model missing sec={sec}")
-    m = art["models_by_sec"][sec_key]
-    if m["type"] == "prevalence":
-        return float(m["p"])
-    if m["type"] == "brownian":
-        return brownian_win_prob(abs_delta, vols[m["vol_window"]], m["vol_window"], sec)
-    if m["type"] == "lookup":
-        z = z_score_w(abs_delta, vols[m["vol_window"]], m["vol_window"], sec)
-        if z is None:
-            return None
-        table = m["table"]
-        for row in table:
-            if z <= row["z_hi"]:
-                return float(row["p"])
-        return float(table[-1]["p"])
-    if m["type"] == "logistic_isotonic":
-        x = float(np.dot(_feature_vector(abs_delta, vols, intraday_h), np.asarray(m["coef"], dtype=np.float64)) + m["intercept"])
-        p_raw = 1.0 / (1.0 + math.exp(-x))
-        return _isotonic_predict(p_raw, m["iso_x"], m["iso_y"])
-    raise Exception(f"unknown delta_win model type: {m['type']}")
+    if sec_key not in art["logistic_by_sec"]:
+        raise Exception(f"delta_win logistic missing sec={sec}")
+    m = art["logistic_by_sec"][sec_key]
+    x = float(np.dot(_feature_vector(abs_delta, vols, intraday_h), np.asarray(m["coef"], dtype=np.float64)) + m["intercept"])
+    p_raw = 1.0 / (1.0 + math.exp(-x))
+    return _isotonic_predict(p_raw, m["iso_x"], m["iso_y"])
 
 
-def format_delta_win_cell(prob: float | None) -> str:
+def _fmt_band_range(lo: int, hi: int) -> str:
+    if hi >= _DW_HI_OPEN:
+        return f"{lo}$+" if lo > 0 else "0$+"
+    if lo == hi == 0:
+        return "0$"
+    return f"{lo}$-{hi}$"
+
+
+def _blank_cell(width: int) -> str:
+    return " " * width
+
+
+def format_delta_win_b_cell(prob: float | None) -> str:
     if prob is None:
         return "---"
-    return f"{prob * 100:.1f}%"
+    return f"{round(prob * 100)}%"
+
+
+def format_delta_win_a_cell(prob: float | None, lo: int, hi: int) -> str:
+    if prob is None:
+        return "---"
+    return f"{round(prob * 100)}% [{_fmt_band_range(lo, hi)}]"
+
+
+def delta_win_a_column_width() -> int:
+    return _DW_A_COL_W
+
+
+def delta_win_b_column_width() -> int:
+    return _DW_B_COL_W
+
+
+def delta_win_columns_enabled() -> tuple[str, ...]:
+    return DELTA_WIN_TXT_COLUMNS
+
+
+def delta_win_block_width() -> int:
+    w = 0
+    if "a" in DELTA_WIN_TXT_COLUMNS:
+        w += _DW_A_COL_W
+    if "b" in DELTA_WIN_TXT_COLUMNS:
+        if w:
+            w += 1
+        w += _DW_B_COL_W
+    return w
+
+
+def delta_win_data_header() -> str:
+    parts = []
+    if "a" in DELTA_WIN_TXT_COLUMNS:
+        parts.append(f"{_DW_COL_LABEL_A:<{_DW_A_COL_W}}")
+    if "b" in DELTA_WIN_TXT_COLUMNS:
+        parts.append(f"{_DW_COL_LABEL_B:>{_DW_B_COL_W}}")
+    return " ".join(parts)
+
+
+def delta_win_row_part(sec: int, abs_delta: int, vols: dict[int, int], intraday_h: int,
+        eligible: bool, artifact: dict) -> str:
+    if not DELTA_WIN_TXT_COLUMNS:
+        return ""
+    at_checkpoint = sec in DELTA_WIN_CHECKPOINTS
+    cells = []
+    for col in DELTA_WIN_TXT_COLUMNS:
+        w = _DW_A_COL_W if col == "a" else _DW_B_COL_W
+        if not at_checkpoint:
+            cells.append(_blank_cell(w))
+        elif col == "a":
+            if not eligible:
+                cells.append(f"{'---':<{w}}")
+            else:
+                band = lookup_band(abs_delta, artifact["bands_by_sec"][str(sec)])
+                cell = format_delta_win_a_cell(float(band["p_win"]), int(band["lo"]), int(band["hi"]))
+                cells.append(f"{cell:<{w}}")
+        elif col == "b":
+            if not eligible:
+                cells.append(f"{'---':>{w}}")
+            else:
+                p = predict_delta_win_b(sec, abs_delta, vols, intraday_h, artifact)
+                cells.append(f"{format_delta_win_b_cell(p):>{w}}")
+    return " ".join(cells)
 
 
 def delta_win_header_lines(artifact: dict) -> list[str]:
@@ -163,12 +225,9 @@ def delta_win_header_lines(artifact: dict) -> list[str]:
         f"  delta_win_training_samples: {artifact['training_sample_count']}",
         f"  delta_win_training_start_ts_min: {artifact['training_start_ts_min']}",
         f"  delta_win_training_start_ts_max: {artifact['training_start_ts_max']}",
-        f"  delta_win_method: {artifact['method']}",
+        f"  delta_win_methods: [band, logistic]",
+        f"  delta_win_txt_columns: {list(DELTA_WIN_TXT_COLUMNS)}",
     ]
-
-
-def delta_win_column_width() -> int:
-    return 6
 
 
 def checkpoint_stale_in_vol_window(rows_by_sec: dict[int, dict], sec: int, window: int) -> bool:
@@ -181,18 +240,22 @@ def checkpoint_stale_in_vol_window(rows_by_sec: dict[int, dict], sec: int, windo
     return False
 
 
-def delta_win_from_row(sec: int, row: dict, rows_by_sec: dict[int, dict], intraday_h: int,
-        artifact: dict) -> str:
+def _row_eligible(sec: int, row: dict, rows_by_sec: dict[int, dict]) -> bool:
     if sec not in DELTA_WIN_CHECKPOINTS:
-        return "---"
+        return False
     if checkpoint_stale_in_vol_window(rows_by_sec, sec, max(VOLATILITY_WINDOWS_SEC)):
-        return "---"
+        return False
     if row["delta"] is None:
-        return "---"
-    vols = row["vols"]
+        return False
     for w in VOLATILITY_WINDOWS_SEC:
-        if vols.get(w) is None:
-            return "---"
-    vol_int = {w: vols[w] for w in VOLATILITY_WINDOWS_SEC}
-    p = predict_delta_win(sec, abs(row["delta"]), vol_int, intraday_h, artifact)
-    return format_delta_win_cell(p)
+        if row["vols"].get(w) is None:
+            return False
+    return True
+
+
+def delta_win_row_from_data(sec: int, row: dict, rows_by_sec: dict[int, dict], intraday_h: int,
+        artifact: dict) -> str:
+    eligible = _row_eligible(sec, row, rows_by_sec)
+    vol_int = {w: row["vols"][w] for w in VOLATILITY_WINDOWS_SEC} if eligible else {w: 0 for w in VOLATILITY_WINDOWS_SEC}
+    abs_delta = abs(row["delta"]) if row["delta"] is not None else 0
+    return delta_win_row_part(sec, abs_delta, vol_int, intraday_h, eligible, artifact)

@@ -7,6 +7,7 @@ from pathlib import Path
 from src.binary_format import round_bin_path, write_round
 from src.book import empty_book_snapshot
 from src.clob_api import enrich_gains, fetch_fee_rate, majority_side, side_from_chainlink
+from src.convert import warnings_from_header, write_round_txt
 from src.feed_chainlink import ChainlinkFeed
 from src.feed_clob import ClobThread, snapshot_books, snapshot_chainlink
 from src.gamma_patch import GammaPatchWorker
@@ -149,6 +150,7 @@ class RoundRunner(threading.Thread):
             header = build_round_header(state.market_start_ts, state.market_end_ts, state.fee_rate, ticks, state)
             bin_path = round_bin_path(self.out_dir, self.asset, self.interval, self.start_ts)
             write_round(str(bin_path), header, ticks, state.book_snapshots)
+            write_round_txt(str(bin_path), warnings_from_header(header))
             GammaPatchWorker.get().enqueue(
                 self.asset, self.interval, self.start_ts, str(bin_path), state.market_end_ts)
             errs, diags = verify_round(str(bin_path))

@@ -1,4 +1,4 @@
-"""Backfill colonna delta_win e header modello sui .txt Lighter (idempotente)."""
+"""Backfill colonne delta_win e header modello v2 sui .txt Lighter (idempotente)."""
 
 import sys
 from multiprocessing import Pool
@@ -8,7 +8,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from src.delta_win import delta_win_column_width, delta_win_from_row, delta_win_header_lines, load_delta_win_artifact, parse_intraday_h
+from src.delta_win import delta_win_header_lines, delta_win_row_from_data, load_delta_win_artifact, parse_intraday_h
 from src.lighter_txt_format import _lighter_column_header
 from src.listats import read_lighter_data_rows, read_lighter_header
 from src.setup import TICKS_ROOT
@@ -17,13 +17,35 @@ _DEFAULT_ROUNDS = Path(TICKS_ROOT) / "lighter-rounds5m"
 _DW_HDR_KEY = "delta_win_model_version"
 
 
-def _has_delta_win(lines: list[str]) -> bool:
+def _data_header_ok(col_hdr: str) -> bool:
+    return col_hdr.strip() == _lighter_column_header().strip()
+
+
+def _has_v2_header(lines: list[str]) -> bool:
     for line in lines:
         if line.startswith(f"  {_DW_HDR_KEY}:"):
-            return True
+            return int(line.split(":", 1)[1].strip()) >= 2
         if line.rstrip("\n") == "data:":
             break
     return False
+
+
+def _is_btc_cell(token: str) -> bool:
+    return token.endswith("$") and token[:-1].isdigit()
+
+
+def _rebuild_lighter_row(stripped: str, sec: int, row: dict, by_sec: dict, intraday_h: int, artifact: dict) -> str:
+    parts = stripped.split()
+    rd_i = parts.index("Rd")
+    btc_i = next(i for i in range(4, rd_i) if _is_btc_cell(parts[i]))
+    prefix = "  ".join(parts[:4])
+    btc = parts[btc_i]
+    vol = "  ".join(parts[btc_i + 1:rd_i])
+    rd = " ".join(parts[rd_i:])
+    dw = delta_win_row_from_data(sec, row, by_sec, intraday_h, artifact)
+    if dw:
+        return f"{prefix}  {dw}  {btc}  {vol}  {rd}"
+    return f"{prefix}  {btc}  {vol}  {rd}"
 
 
 def patch_delta_win(path: Path, artifact: dict, dry_run: bool = False) -> str:
@@ -32,35 +54,36 @@ def patch_delta_win(path: Path, artifact: dict, dry_run: bool = False) -> str:
     if not text.startswith("header:"):
         raise Exception(f"{path}: expected header:")
     data_i = next(i for i, l in enumerate(lines) if l.rstrip("\n") == "data:")
-    col_hdr = lines[data_i + 1]
-    if _has_delta_win(lines) and "delta_win" in col_hdr:
+    col_hdr = lines[data_i + 1].rstrip("\n")
+    if _has_v2_header(lines) and _data_header_ok(col_hdr):
         return "present"
     hdr = read_lighter_header(path)
     start_ts = int(hdr["market_start_ts"].split()[0])
     intraday_h = parse_intraday_h(hdr, start_ts)
     data_rows = read_lighter_data_rows(path)
     by_sec = {r["sec"]: r for r in data_rows}
-    dw_w = delta_win_column_width()
     new_body = []
     for line in lines[data_i + 3:]:
         stripped = line.rstrip("\n")
         parts = stripped.split()
         if len(parts) < 10 or not parts[0].isdigit():
             continue
-        sec = int(stripped.split()[0])
-        dw = delta_win_from_row(sec, by_sec[sec], by_sec, intraday_h, artifact)
-        new_body.append(f"{stripped.rstrip()}  {dw:>{dw_w}}\n")
+        sec = int(parts[0])
+        row = by_sec[sec]
+        new_body.append(_rebuild_lighter_row(stripped, sec, row, by_sec, intraday_h, artifact) + "\n")
     if dry_run:
         return "would_patch"
-    if not _has_delta_win(lines):
-        for i, line in enumerate(lines):
+    cleaned = [l for l in lines if not l.startswith("  delta_win_")]
+    data_i = next(i for i, l in enumerate(cleaned) if l.rstrip("\n") == "data:")
+    if not _has_v2_header(cleaned):
+        for i, line in enumerate(cleaned):
             if line.rstrip("\n") == "  risk_variants: [Rd]":
                 block = [l + "\n" for l in delta_win_header_lines(artifact)]
-                lines[i + 1:i + 1] = block
+                cleaned[i + 1:i + 1] = block
                 data_i += len(block)
                 break
     sep = "-" * len(_lighter_column_header()) + "\n"
-    new_lines = lines[:data_i + 1]
+    new_lines = cleaned[:data_i + 1]
     new_lines.append(_lighter_column_header() + "\n")
     new_lines.append(sep)
     new_lines.extend(new_body)

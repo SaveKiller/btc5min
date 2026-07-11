@@ -20,7 +20,9 @@
     "risk_probability_buckets": [0.01, 0.02, 0.04, 0.07, 0.12, 0.20, 0.30, 0.42],
     "risk_flip_hysteresis_c": 3,
     "risk_flip_persist_sec": 3,
-    "delta_win_model_version": 1,
+    "delta_win_model_version": 2,
     "delta_win_checkpoints": [180, 150, 120, 90, 60, 30],
-    "delta_win_model_path": "models/delta_win_v1.json"
+    "delta_win_model_path": "models/delta_win_v2.json",
+    "delta_win_band_min_samples": 500,
+    "delta_win_txt_columns": ["a", "b"]
 }

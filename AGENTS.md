@@ -119,14 +119,15 @@ Sezione `header:` con metadati del round + contatori utili per il sanity check:
 - `stale_ticks`: quanti tick hanno Chainlink “stale” (vedi colonna `delta`).
 - `vol_windows_sec`, `vol_min_changes`, `vol_unit`: parametri indici volatilità `VW` (vedi colonna `vol`).
 - `risk_model_version`, `risk_status`, `risk_target`, `risk_label_source`, `risk_ptb_source`, `risk_primary_vol_window_sec`, `risk_min_vol_coverage_ratio`, `risk_probability_buckets`, `risk_variants`: metadati indice di rischio R (vedi colonna `risk`).
+- `delta_win_*`: versione modello v2, metodi `[band, logistic]`, hash `hour_bands`, target, checkpoint, periodo training (vedi `docs/indicator_delta_win.md`).
+- `intraday: Hk`: fascia oraria UTC da `hour_bands.json`.
 - `warnings`: es. outcome provvisorio, `ptb_gamma` mancante, mismatch outcome gamma vs chainlink.
 
 Sezione `data:` — righe ordinate per `sec` **decrescente** (300 → 1):
 
 ```
-sec  time  quote      delta     gain%       btc  vol                         risk
-300  5:00  UP   52c    +12$   8.5%  97235$  V30 ---  V60 ---  V120 ---  Rq 5   Rd -
-240  4:00  DOWN  61c   -28$  62.3%  97206$  V30 18  V60 22  V120 31  Rq 5   Rd 4
+sec  time  quote      delta    gain%             DWinA DWinB       btc  vol                         risk
+240  4:00  DOWN  61c   -28$  62.3%  88% [12$-26$]   93%  97206$  V30 18  V60 22  V120 31  Rq 5   Rd 4
 ```
 
 
@@ -136,8 +137,10 @@ sec  time  quote      delta     gain%       btc  vol                         ris
 | **time**  | `sec` in `M:SS`                                                                                                                                                                                                                                                                                                                                                                                                    |
 | **quote** | Se tick completo: probabilità implicita = `round(mid_bid_ask × 100)` in centesimi; mostra il lato con probabilità più alta (`UP 75c`, `DOWN 60c`, oppure `---- 50c` se pari). Se partial: `UP ---` o `DOWN ---` (lato stimato da ultimo tick completo o da `chainlink` vs PTB)                                                                                                                                     |
 | **delta** | `round(chainlink_btc - ptb_chainlink)` in USD, con segno (`+12$`, `-5$`, `0$`). Se Chainlink stale: `---` (campione più vecchio di `stall_reconnect_sec` rispetto a `chainlink_recv_ms`)                                                                                                                                                                                                                           |
-| **gain%** | `majority_gain × 100`, una cifra decimale (`8.5%`). `---` se partial. Vedi formula sotto                                                                                                                                                                                                                                                                                                                           |
-| **btc**   | `chainlink_btc` arrotondato all'intero, seguito da `$` senza spazio (es. `97235$`)                                                                                                                                                                                                                                                                                                                                 |
+| **gain%** | `majority_gain × 100`, una cifra decimale (`8.5%`). `---` se partial. Vedi formula sotto |
+| **DWinA** | Intero % + fascia `[lo$-hi$]`, es. `88% [12$-26$]`; checkpoint `180…30`; colonna opzionale (`delta_win_txt_columns`). |
+| **DWinB** | Intero %, es. `93%`; stessi checkpoint; colonna opzionale. |
+| **btc**   | `chainlink_btc` arrotondato all'intero, seguito da `$` senza spazio (es. `97235$`) |
 | **vol**   | Token `VW N` per ogni `W` in `setup.json` → `volatility_windows_sec` (es. `V30 18`, `V60 22`). Volatilità realizzata trailing in USD, intero arrotondato (`V30 0` se BTC fermo). `VW ---` se dati insufficienti o Chainlink stale sulla riga. Non è previsione forward.                                                                                                                                            |
 | **risk**  | `Rq N` rischio da mercato (`Pq0 = 1 − quota normalizzata del lato maggioritario` → bucket 1–9). `Rd N` rischio fisico (`Pz = Φ(−z)` con `z = delta_signed / (sigma_W × √secs_to_expiry)`, finestra primaria W60). `-` al posto del numero se non calcolabile. Ingresso eseguibile quando entrambi hanno valore numerico (nessuna lineetta). Stato `experimental_uncalibrated` finché non c'è calibrazione holdout. |
 
@@ -205,17 +208,21 @@ Radice dati tick in `setup.json` → `ticks_root` (default `H:\ticks\`).
 | `python -m src.listats [summary]`                                                                                  | Sommario tabellare del dataset Lighter (vedi sotto)                                             |
 | `build_lighter_rounds.bat [workers]`                                                                               | Batch Windows (default 8 worker); **salta** i `.txt` già presenti in output                     |
 | `python scripts/backfill_lighter_intraday.py [rounds_root] [workers] [--dry-run]`                                  | Aggiunge `intraday: Hk` agli header storici (idempotente; non tocca `data:`)                    |
-| `python scripts/backfill_lighter_delta_win.py [rounds_root] [workers] [--dry-run]`                                 | Aggiunge header modello + colonna `delta_win` ai checkpoint (idempotente)                     |
-| `python scripts/study_delta_win.py`                                                                                | Studio modelli su Lighter → `models/delta_win_v1.json`                                          |
-| `python scripts/eval_delta_win_real.py [data_dir]`                                                                 | Valutazione esterna su round Chainlink (label Gamma)                                            |
+| `python scripts/backfill_lighter_delta_win.py [rounds_root] [workers] [--dry-run]`                                 | Aggiunge header modello v2 + colonne `DWinA` / `DWinB` (idempotente)                          |
+| `python scripts/study_delta_win_v2.py`                                                                             | Fit metodo A (fasce) + B (logistic) su Lighter → `models/delta_win_v2.json`                     |
+| `python scripts/eval_delta_win_v2_compare.py [data_dir]`                                                           | Report comparativo A vs B su round Chainlink (label Gamma)                                      |
+| `python scripts/backfill_real_delta_win.py [data_dir] [workers] [--dry-run]`                                       | Rigenera `.txt` reali da `.bin` con colonne `DWinA` / `DWinB` (idempotente)                   |
+| `python scripts/probe_delta_win_bands.py [data_dir]`                                                             | Win rate osservato per fascia \|delta\| sui reali (supporto metodo A)                           |
+| `python scripts/study_delta_win.py`                                                                                | Studio modelli v1 (legacy) → `models/delta_win_v1.json`                                         |
+| `python scripts/eval_delta_win_real.py [data_dir]`                                                               | Valutazione esterna v1 su round Chainlink (legacy)                                              |
 | `backfill_lighter_intraday.bat [workers]`                                                                          | Batch Windows backfill header `intraday` su `H:\ticks\lighter-rounds5m`                         |
 
 
 **Statistiche (**`src/listats.py`**).** Modulo dedicato all’analisi del dataset Lighter: funzioni con prefisso `li_` (es. `li_summary`, `li_rounds_root`, `read_lighter_header`). Legge gli header dei `.txt` sotto `<ticks_root>/lighter-rounds5m/`; estendere qui nuove metriche derivate dallo studio dei round sintetici. CLI: `python -m src.listats` o `python -m src.listats summary` — output a sezioni tabellari. Prima statistica implementata: `li_summary` (conteggio round, intervallo temporale, distribuzione outcome gamma/lighter, `outcome_agreement`, completezza tick, gap `ptb_gamma`/`final_gamma`, `move_error` medio e move_error medio, round per settimana ISO).
 
-Header: `source: lighter_synthetic`; `intraday: Hk` (fascia oraria da `hour_bands.json` / `hour_band(market_start_ts)`); campi audit `outcome_lighter`, `outcome_agreement: TRUE` / `FALSE`, `delta_lighter`, `delta_chainlink`, `move_error`. Colonna `outcome` = Gamma ufficiale se presente, altrimenti proxy Lighter. `ptb_chainlink` / `final_chainlink` / colonna `btc` = valori Lighter. Header `delta_win_*`: versione modello, hash `hour_bands`, target, checkpoint, periodo training, stato `synthetic_calibrated` (vedi `docs/indicator_delta_win.md`).
+Header: `source: lighter_synthetic`; `intraday: Hk` (fascia oraria da `hour_bands.json` / `hour_band(market_start_ts)`); campi audit `outcome_lighter`, `outcome_agreement: TRUE` / `FALSE`, `delta_lighter`, `delta_chainlink`, `move_error`. Colonna `outcome` = Gamma ufficiale se presente, altrimenti proxy Lighter. `ptb_chainlink` / `final_chainlink` / colonna `btc` = valori Lighter. Header `delta_win_*`: versione modello `2`, metodi `[band, logistic]`, hash `hour_bands`, target, checkpoint, periodo training, stato `synthetic_calibrated` (vedi `docs/indicator_delta_win.md`).
 
-Tabella `data:` **senza** `gain%` e **senza** `Rq`; colonne `Rd` e `delta_win`. Colonna `quote` = lato da delta Lighter (`UP` / `DOWN` padded). Colonna `delta_win` = percentuale stimata (una cifra decimale) **solo** ai checkpoint `180,150,120,90,60,30`; altrove `---`. Stale Lighter: `sample_age_ms > 1000` → `delta: ---`.
+Tabella `data:` **senza** `gain%` e **senza** `Rq`; colonne `DWinA`/`DWinB` (se in `delta_win_txt_columns`), poi `btc`, `vol`, `Rd`.
 
 Filtro build: griglia causale completa (301 confini); round 23:55 UTC esclusi (confine finale oltre il giorno CSV). Non usare `convert` / `verify` su questi file.
 
