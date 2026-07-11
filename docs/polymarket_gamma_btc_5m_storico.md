@@ -141,6 +141,10 @@ Dopo la risoluzione, `outcomePrices` in genere contiene `"1"` per il lato vincen
 
 Una singola richiesta a `/markets/keyset` può ottenere fino a 100 round chiusi. Con date range e keyset pagination, poche richieste coprono un'intera giornata di BTC 5m; persisti i risultati localmente e usa un filtro di famiglia/serie stabile quando lo avrai identificato.
 
+## Uso nel progetto btc5min
+
+Per i round sintetici Lighter (`scripts/build_lighter_rounds.py`) si usa **`/events/keyset`** con `series_id=10684` (serie `btc-up-or-down-5m`), non `/markets/keyset`: su un giorno tipo 2026-04-06 il filtro serie richiede ~3 pagine da 500 eventi (~1,8 s) invece di ~90 pagine su tutti i market chiusi nel range. Il range giornaliero usa `end_date_min` / `end_date_max` (non `start_date_*`, che segue la creazione evento e non lo `startTime` del round). Ogni evento espone `eventMetadata.priceToBeat`, `eventMetadata.finalPrice` e `markets[0].outcomePrices` — stessi campi del fetch per-slug `GET /events?slug=btc-updown-5m-{ts}`. La cache locale è `H:\ticks\lighter-rounds5m\_gamma_cache.jsonl` (una riga jsonl per `start_ts`).
+
 ## Fonti
 
 - https://docs.polymarket.com/api-reference/markets/list-markets-keyset-pagination

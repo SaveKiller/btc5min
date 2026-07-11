@@ -11,7 +11,14 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from src.binary_format import OUTCOME_FROM_NAME
-from src.lighter_gamma import GAMMA_SLEEP_SEC, GammaBroker, fetch_gamma, init_worker_broker, install_broker
+from src.lighter_gamma import (
+    GAMMA_CACHE_NAME,
+    GammaBroker,
+    ensure_gamma_day,
+    fetch_gamma,
+    init_worker_broker,
+    install_broker,
+)
 from src.lighter_sampling import WINDOW_SEC, build_ticks_array, load_csv_ticks, sample_round
 from src.lighter_ticks import day_start_ts_from_path
 from src.lighter_txt_format import render_lighter_round_txt
@@ -96,11 +103,12 @@ def build_day_csv(csv_path: Path, out_dir: Path) -> dict:
     week_iso = csv_path.parent.name
     day_start = day_start_ts_from_path(str(csv_path))
     starts = _day_round_starts(day_start)
-    stats = {"attempted": len(starts), "written": 0, "skipped": 0, "present": 0}
+    stats = {"attempted": len(starts), "written": 0, "skipped": 0, "present": 0, "gamma_prefetch": 0}
     pending = [t for t in starts if not _txt_path(out_dir, week_iso, t).is_file()]
     stats["present"] = len(starts) - len(pending)
     if not pending:
         return stats
+    stats["gamma_prefetch"] = ensure_gamma_day(day_start)
     ts, bid, ask = load_csv_ticks(str(csv_path))
     for t in starts:
         dest = _txt_path(out_dir, week_iso, t)
@@ -131,31 +139,32 @@ def _worker_process_day(job: tuple[str, str]) -> tuple[str, dict]:
 def _fmt_stats(stats: dict) -> str:
     return (
         f"written={stats['written']} present={stats['present']} "
-        f"skipped={stats['skipped']} attempted={stats['attempted']}"
+        f"skipped={stats['skipped']} attempted={stats['attempted']} "
+        f"gamma_prefetch={stats['gamma_prefetch']}"
     )
 
 
-def cmd_test_day(csv_path: str, out_dir: str) -> None:
+def cmd_test_day(csv_path: str, out_dir: str, cache_name: str) -> None:
     cp = Path(csv_path)
     od = Path(out_dir)
-    install_broker(GammaBroker.local(od / "_gamma_cache.jsonl", GAMMA_SLEEP_SEC))
+    install_broker(GammaBroker.local(od / cache_name))
     stats = build_day_csv(cp, od)
     print(f"test-day {cp.name}: {_fmt_stats(stats)}", flush=True)
 
 
-def cmd_all(input_root: str, out_dir: str, workers: int) -> None:
+def cmd_all(input_root: str, out_dir: str, workers: int, cache_name: str) -> None:
     root = Path(input_root)
     od = Path(out_dir)
-    cache_path = od / "_gamma_cache.jsonl"
+    cache_path = od / cache_name
     csv_files = sorted(root.rglob("raw-btc-*.csv"))
     if not csv_files:
         raise Exception(f"no raw-btc csv under {root}")
     if workers < 1:
         raise Exception(f"workers must be >= 1, got {workers}")
-    total = {"attempted": 0, "written": 0, "skipped": 0, "present": 0}
+    total = {"attempted": 0, "written": 0, "skipped": 0, "present": 0, "gamma_prefetch": 0}
     jobs = [(str(p), str(od)) for p in csv_files]
     if workers == 1:
-        install_broker(GammaBroker.local(cache_path, GAMMA_SLEEP_SEC))
+        install_broker(GammaBroker.local(cache_path))
         for csv_path in csv_files:
             stats = build_day_csv(csv_path, od)
             for k in total:
@@ -163,9 +172,9 @@ def cmd_all(input_root: str, out_dir: str, workers: int) -> None:
             print(f"{csv_path.parent.name}/{csv_path.name}: {_fmt_stats(stats)}", flush=True)
     else:
         manager = Manager()
-        broker = GammaBroker.shared(manager, cache_path, GAMMA_SLEEP_SEC)
-        initargs = (str(cache_path), GAMMA_SLEEP_SEC, broker.lock, broker.shared_cache, broker.last_fetch_at)
-        print(f"parallel pool: {workers} workers, {len(jobs)} days, gamma fetch serializzato", flush=True)
+        broker = GammaBroker.shared(manager, cache_path)
+        initargs = (str(cache_path), broker.lock, broker.shared_cache)
+        print(f"parallel pool: {workers} workers, {len(jobs)} days, gamma prefetch per giorno", flush=True)
         with Pool(workers, initializer=init_worker_broker, initargs=initargs) as pool:
             for label, stats in pool.imap_unordered(_worker_process_day, jobs):
                 for k in total:
@@ -177,17 +186,18 @@ def cmd_all(input_root: str, out_dir: str, workers: int) -> None:
 def main() -> None:
     if len(sys.argv) < 2:
         raise Exception(
-            "usage: build_lighter_rounds.py test-day <csv> <out_dir> | "
-            "all <input_root> <out_dir> <workers>")
+            "usage: build_lighter_rounds.py test-day <csv> <out_dir> [cache_name] | "
+            "all <input_root> <out_dir> <workers> [cache_name]")
     cmd = sys.argv[1]
+    cache_name = sys.argv[-1] if len(sys.argv) > 2 and sys.argv[-1].endswith(".jsonl") else GAMMA_CACHE_NAME
     if cmd == "test-day":
-        if len(sys.argv) != 4:
-            raise Exception("usage: build_lighter_rounds.py test-day <csv> <out_dir>")
-        cmd_test_day(sys.argv[2], sys.argv[3])
+        if len(sys.argv) not in (4, 5):
+            raise Exception("usage: build_lighter_rounds.py test-day <csv> <out_dir> [cache_name]")
+        cmd_test_day(sys.argv[2], sys.argv[3], cache_name)
     elif cmd == "all":
-        if len(sys.argv) != 5:
-            raise Exception("usage: build_lighter_rounds.py all <input_root> <out_dir> <workers>")
-        cmd_all(sys.argv[2], sys.argv[3], int(sys.argv[4]))
+        if len(sys.argv) not in (5, 6):
+            raise Exception("usage: build_lighter_rounds.py all <input_root> <out_dir> <workers> [cache_name]")
+        cmd_all(sys.argv[2], sys.argv[3], int(sys.argv[4]), cache_name)
     else:
         raise Exception(f"unknown command: {cmd}")
 

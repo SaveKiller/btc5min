@@ -192,12 +192,13 @@ Dataset separato dai round Polymarket reali. Percorso intraround da mid top-of-b
 
 **Output:** `H:\ticks\lighter-rounds5m\<settimana_ISO>\btc5m_<market_start_ts>_<HHMM>.txt`  
 **Input:** `H:\ticks\lighter-fullrawticks\btc\<settimana_ISO>\raw-btc-YYYY-MM-DD.csv`  
-**Cache Gamma:** `H:\ticks\lighter-rounds5m\_gamma_cache.jsonl` — fetch serializzato via `src/lighter_gamma.py` (lock globale + spacing 250 ms tra richieste HTTP, anche con pool parallelo).
+**Cache Gamma:** `H:\ticks\lighter-rounds5m\_gamma_cache.jsonl` — prefetch giornaliero via `src/lighter_gamma.py` (`GET /events/keyset?series_id=10684`, ~3 richieste/giorno); lock solo su scrittura cache con pool parallelo.
 
 | Comando | Uso |
 | ------- | --- |
-| `python scripts/build_lighter_rounds.py test-day <csv> <out_dir>` | Build di un solo giorno (controllo qualità) |
-| `python scripts/build_lighter_rounds.py all <input_root> <out_dir> <workers>` | Build completo; `<workers>` = processi paralleli (1 = sequenziale, una giornata CSV per worker) |
+| `python scripts/build_lighter_rounds.py test-day <csv> <out_dir> [cache_name]` | Build di un solo giorno (controllo qualità) |
+| `python scripts/build_lighter_rounds.py all <input_root> <out_dir> <workers> [cache_name]` | Build completo; `<workers>` = processi paralleli (1 = sequenziale, una giornata CSV per worker) |
+| `python scripts/compare_lighter_gamma_cache.py <baseline_cache> <bulk_cache> <baseline_dir> <bulk_dir> <week_iso>` | Confronto regressione cache + `.txt` |
 | `build_lighter_rounds.bat [workers]` | Batch Windows (default 8 worker); **salta** i `.txt` già presenti in output |
 
 Header: `source: lighter_synthetic`; campi audit `outcome_lighter`, `outcome_agreement: TRUE` / `FALSE`, `delta_lighter`, `delta_chainlink`, `move_error`. Colonna `outcome` = Gamma ufficiale se presente, altrimenti proxy Lighter. `ptb_chainlink` / `final_chainlink` / colonna `btc` = valori Lighter.
