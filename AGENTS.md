@@ -130,23 +130,21 @@ sec  time  quote      delta     gain%       btc  vol                         ris
 ```
 
 
-| Colonna   | Calcolo / significato                                                                                                                                                                                                                                                          |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **sec**   | `floor(secs_to_expiry + 0.5)` — secondi mancanti alla scadenza                                                                                                                                                                                                                 |
-| **time**  | `sec` in `M:SS`                                                                                                                                                                                                                                                                |
-| **quote** | Se tick completo: probabilità implicita = `round(mid_bid_ask × 100)` in centesimi; mostra il lato con probabilità più alta (`UP 75c`, `DOWN 60c`, oppure `---- 50c` se pari). Se partial: `UP ---` o `DOWN ---` (lato stimato da ultimo tick completo o da `chainlink` vs PTB) |
-| **delta** | `round(chainlink_btc - ptb_chainlink)` in USD, con segno (`+12$`, `-5$`, `0$`). Se Chainlink stale: `---` (campione più vecchio di `stall_reconnect_sec` rispetto a `chainlink_recv_ms`)                                                                                       |
-| **gain%** | `majority_gain × 100`, una cifra decimale (`8.5%`). `---` se partial. Vedi formula sotto                                                                                                                                                                                                |
-| **btc**   | `chainlink_btc` arrotondato all'intero, seguito da `$` senza spazio (es. `97235$`)                                                                                                                                                                                                                                                   |
-| **vol**   | Token `VW N` per ogni `W` in `setup.json` → `volatility_windows_sec` (es. `V30 18`, `V60 22`). Volatilità realizzata trailing in USD, intero arrotondato (`V30 0` se BTC fermo). `VW ---` se dati insufficienti o Chainlink stale sulla riga. Non è previsione forward. |
+| Colonna   | Calcolo / significato                                                                                                                                                                                                                                                                                                                                                                                              |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **sec**   | `floor(secs_to_expiry + 0.5)` — secondi mancanti alla scadenza                                                                                                                                                                                                                                                                                                                                                     |
+| **time**  | `sec` in `M:SS`                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **quote** | Se tick completo: probabilità implicita = `round(mid_bid_ask × 100)` in centesimi; mostra il lato con probabilità più alta (`UP 75c`, `DOWN 60c`, oppure `---- 50c` se pari). Se partial: `UP ---` o `DOWN ---` (lato stimato da ultimo tick completo o da `chainlink` vs PTB)                                                                                                                                     |
+| **delta** | `round(chainlink_btc - ptb_chainlink)` in USD, con segno (`+12$`, `-5$`, `0$`). Se Chainlink stale: `---` (campione più vecchio di `stall_reconnect_sec` rispetto a `chainlink_recv_ms`)                                                                                                                                                                                                                           |
+| **gain%** | `majority_gain × 100`, una cifra decimale (`8.5%`). `---` se partial. Vedi formula sotto                                                                                                                                                                                                                                                                                                                           |
+| **btc**   | `chainlink_btc` arrotondato all'intero, seguito da `$` senza spazio (es. `97235$`)                                                                                                                                                                                                                                                                                                                                 |
+| **vol**   | Token `VW N` per ogni `W` in `setup.json` → `volatility_windows_sec` (es. `V30 18`, `V60 22`). Volatilità realizzata trailing in USD, intero arrotondato (`V30 0` se BTC fermo). `VW ---` se dati insufficienti o Chainlink stale sulla riga. Non è previsione forward.                                                                                                                                            |
 | **risk**  | `Rq N` rischio da mercato (`Pq0 = 1 − quota normalizzata del lato maggioritario` → bucket 1–9). `Rd N` rischio fisico (`Pz = Φ(−z)` con `z = delta_signed / (sigma_W × √secs_to_expiry)`, finestra primaria W60). `-` al posto del numero se non calcolabile. Ingresso eseguibile quando entrambi hanno valore numerico (nessuna lineetta). Stato `experimental_uncalibrated` finché non c'è calibrazione holdout. |
 
 
 **Indice R (rischio perdita a settlement):** target = outcome ufficiale header ≠ lato maggioritario scelto. Calcolo live-safe in `src/risk.py`, solo dati passati. Bucket preliminari da `risk_probability_buckets` in `setup.json`. Valutazione: `python scripts/eval_risk.py [data_dir]` → report in `data/reports/risk_eval_<timestamp>.json`. Test: `python -m unittest tests.test_risk`.
 
-
 **Indici VW (volatilità intra-round):** calcolati in `convert` su `chainlink_btc`, solo tick già osservati nel round (trailing/live-safe). Per ogni secondo `sec` e finestra `W`: tick con `sec' ∈ [sec, sec+W−1]` (asse countdown: presente + passato, mai futuro); `Δ = btc_j − btc_{j−1}` tra coppie consecutive nella finestra; `VW = round(std(Δ) × √(n_pairs))`. Configurazione in `setup.json`: `volatility_windows_sec` (array, es. `[30, 45]`), `volatility_min_changes` (minimo variazioni nella finestra). Unità USD documentata in header (`vol_unit: usd_trailing`). Confronto utile con `|delta|`: se `|delta| < VW` il movimento vs PTB è ancora nel rumore recente.
-
 
 **Lato maggioritario** (per quote e gain): confronto dei mid `((up_bid+up_ask)/2)` vs `((down_bid+down_ask)/2)`; vince Up se `up_mid >= down_mid`.
 
@@ -161,13 +159,13 @@ sec  time  quote      delta     gain%       btc  vol                         ris
 ### Strumenti utili
 
 
-| Comando                                | Uso                                                                                          |
-| -------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `python -m src.reader <file.bin>`      | Riepilogo header, range quote/gain, primi/ultimi tick; `--csv`, `--book-sec N` per dump book |
-| `python -m src.convert <file.bin|dir>` | Rigenera `.txt` da `.bin` (formattazione in `src/txt_format.py`)                               |
-| `python -m src.verify <file.bin|dir>`  | Controlli integrità (V1–V19). V13 su mismatch prezzi gamma/chainlink è **diagnostico** (NOTE), non invalida l'outcome ufficiale dell'header. |
+| Comando                                  | Uso                                                                                                                   |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `python -m src.reader <file.bin>`        | Riepilogo header, range quote/gain, primi/ultimi tick; `--csv`, `--book-sec N` per dump book                          |
+| `python -m src.convert <file.bin         | dir>`                                                                                                                 |
+| `python -m src.verify <file.bin          | dir>`                                                                                                                 |
 | `python scripts/eval_risk.py [data_dir]` | Preview metriche R (Brier, AUC, reliability) su round locali; non statisticamente significativa su una sola giornata. |
-| `python -m unittest tests.test_risk`   | Test anti-leakage, batch/live e casi limite indice R. |
+| `python -m unittest tests.test_risk`     | Test anti-leakage, batch/live e casi limite indice R.                                                                 |
 
 
 Per analisi programmatica preferire `read_round()` in `src/binary_format.py` → `(header, ticks ndarray N×9, list[BookSnapshot])`.
@@ -186,33 +184,41 @@ Per analisi programmatica preferire `read_round()` in `src/binary_format.py` →
 
 ---
 
-### Round sintetici Lighter (feed `.txt` ausiliario)
+
+
+## Round sintetici Lighter (feed `.txt` ausiliario)
 
 Dataset separato dai round Polymarket reali. Percorso intraround da mid top-of-book Lighter; label e audit da Gamma quando disponibile.
 
-**Output:** `H:\ticks\lighter-rounds5m\<settimana_ISO>\btc5m_<market_start_ts>_<HHMM>.txt`  
-**Input:** `H:\ticks\lighter-fullrawticks\btc\<settimana_ISO>\raw-btc-YYYY-MM-DD.csv`  
-**Cache Gamma:** `H:\ticks\lighter-rounds5m\_gamma_cache.jsonl` — prefetch giornaliero via `src/lighter_gamma.py` (`GET /events/keyset?series_id=10684`, ~3 richieste/giorno); lock solo su scrittura cache con pool parallelo.
+Radice dati tick in `setup.json` → `ticks_root` (default `H:\ticks\`).
 
-| Comando | Uso |
-| ------- | --- |
-| `python scripts/build_lighter_rounds.py test-day <csv> <out_dir> [cache_name]` | Build di un solo giorno (controllo qualità) |
-| `python scripts/build_lighter_rounds.py all <input_root> <out_dir> <workers> [cache_name]` | Build completo; `<workers>` = processi paralleli (1 = sequenziale, una giornata CSV per worker) |
-| `python scripts/compare_lighter_gamma_cache.py <baseline_cache> <bulk_cache> <baseline_dir> <bulk_dir> <week_iso>` | Confronto regressione cache + `.txt` |
-| `build_lighter_rounds.bat [workers]` | Batch Windows (default 8 worker); **salta** i `.txt` già presenti in output |
+**Output:** `<ticks_root>/lighter-rounds5m/<settimana_ISO>/btc5m_<market_start_ts>_<HHMM>.txt`  
+**Input:** `<ticks_root>/lighter-fullrawticks/btc/<settimana_ISO>/raw-btc-YYYY-MM-DD.csv`  
+**Cache Gamma:** `<ticks_root>/lighter-rounds5m/_gamma_cache.jsonl` — prefetch giornaliero via `src/lighter_gamma.py` (`GET /events/keyset?series_id=10684`, ~3 richieste/giorno); lock solo su scrittura cache con pool parallelo.
 
-Header: `source: lighter_synthetic`; campi audit `outcome_lighter`, `outcome_agreement: TRUE` / `FALSE`, `delta_lighter`, `delta_chainlink`, `move_error`. Colonna `outcome` = Gamma ufficiale se presente, altrimenti proxy Lighter. `ptb_chainlink` / `final_chainlink` / colonna `btc` = valori Lighter.
+
+| Comando                                                                                                            | Uso                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `python scripts/build_lighter_rounds.py test-day <csv> <out_dir> [cache_name]`                                     | Build di un solo giorno (controllo qualità)                                                     |
+| `python scripts/build_lighter_rounds.py all <input_root> <out_dir> <workers> [cache_name]`                         | Build completo; `<workers>` = processi paralleli (1 = sequenziale, una giornata CSV per worker) |
+| `python scripts/compare_lighter_gamma_cache.py <baseline_cache> <bulk_cache> <baseline_dir> <bulk_dir> <week_iso>` | Confronto regressione cache + `.txt`                                                            |
+| `python -m src.listats [summary]`                                                                                  | Sommario tabellare del dataset Lighter (vedi sotto)                                             |
+| `build_lighter_rounds.bat [workers]`                                                                               | Batch Windows (default 8 worker); **salta** i `.txt` già presenti in output                     |
+
+
+**Statistiche (**`src/listats.py`**).** Modulo dedicato all’analisi del dataset Lighter: funzioni con prefisso `li_` (es. `li_summary`, `li_rounds_root`, `read_lighter_header`). Legge gli header dei `.txt` sotto `<ticks_root>/lighter-rounds5m/`; estendere qui nuove metriche derivate dallo studio dei round sintetici. CLI: `python -m src.listats` o `python -m src.listats summary` — output a sezioni tabellari. Prima statistica implementata: `li_summary` (conteggio round, intervallo temporale, distribuzione outcome gamma/lighter, `outcome_agreement`, completezza tick, gap `ptb_gamma`/`final_gamma`, `move_error` medio e move_error medio, round per settimana ISO).
+
+Header: `source: lighter_synthetic`; `intraday: Hk` (fascia oraria da `hour_bands.json` / `hour_band(market_start_ts)`); campi audit `outcome_lighter`, `outcome_agreement: TRUE` / `FALSE`, `delta_lighter`, `delta_chainlink`, `move_error`. Colonna `outcome` = Gamma ufficiale se presente, altrimenti proxy Lighter. `ptb_chainlink` / `final_chainlink` / colonna `btc` = valori Lighter.
 
 Tabella `data:` **senza** `gain%` e **senza** `Rq`; solo `Rd`. Colonna `quote` = lato da delta Lighter (`UP` / `DOWN` padded). Stale Lighter: `sample_age_ms > 1000` → `delta: ---`.
 
 Filtro build: griglia causale completa (301 confini); round 23:55 UTC esclusi (confine finale oltre il giorno CSV). Non usare `convert` / `verify` su questi file.
 
-Filtrare round discordanti: `grep -l "outcome_agreement: FALSE" H:\ticks\lighter-rounds5m\**\*.txt`
+Filtrare round discordanti: `grep -l "outcome_agreement: FALSE" <ticks_root>/lighter-rounds5m/**/*.txt`
 
 Build incrementale: se `btc5m_<start_ts>_<HHMM>.txt` esiste già in output, il round viene saltato (`present` nel log). Giornata interamente presente → nessuna lettura CSV. `skipped` = griglia causale incompleta.
 
 ---
-
 
 In lan, nella macchina preoxmox, esiste un container debian chiamato
 poly (proxmox id 103, ip 10.1.1.73) che è pensata per stare attiva 24h e salvara i tick di questo progetto. In questa macchina deve essere presente un app "btc5min" dentro opt che parte all'avvio come servizio e scrive nella propria cartella data i file bin e txt dei vari round in modo continuativo.

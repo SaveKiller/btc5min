@@ -89,6 +89,7 @@ def render_lighter_round_txt(header: dict, ticks: np.ndarray, warnings: list[str
         f"  source: lighter_synthetic",
         f"  market_start_ts: {header['market_start_ts']} ({format_utc_ts(header['market_start_ts'])})",
         f"  market_end_ts: {header['market_end_ts']} ({format_utc_ts(header['market_end_ts'])})",
+        f"  intraday: H{header['intraday_h']}",
         f"  ptb_price: {_fmt_price(header['ptb_price'])}",
         f"  ptb_chainlink: {_fmt_price(header['ptb_chainlink'])}",
         f"  ptb_gamma: {_fmt_price(header['ptb_gamma'])}",

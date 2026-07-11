@@ -20,7 +20,7 @@ from src.lighter_gamma import (
     install_broker,
 )
 from src.lighter_sampling import WINDOW_SEC, build_ticks_array, load_csv_ticks, sample_round
-from src.lighter_ticks import day_start_ts_from_path
+from src.lighter_ticks import day_start_ts_from_path, hour_band
 from src.lighter_txt_format import render_lighter_round_txt
 from src.settlement import outcome_from_prices
 
@@ -82,6 +82,7 @@ def _build_header(start_ts: int, samples, gamma: dict) -> tuple[dict, list[str]]
     header = {
         "market_start_ts": start_ts,
         "market_end_ts": start_ts + WINDOW_SEC,
+        "intraday_h": hour_band(start_ts),
         "ptb_price": ptb,
         "ptb_chainlink": ptb,
         "ptb_gamma": ptb_gamma,

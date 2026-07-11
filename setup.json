@@ -1,4 +1,5 @@
 {
+    "ticks_root": "H:\\ticks\\",
     "outcome_wait_sec": 120,
     "gamma_patch_wait_sec": 1200,
     "gamma_poll_sec": 10,

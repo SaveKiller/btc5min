@@ -128,4 +128,4 @@ Test: `python -m unittest tests.test_vol_h tests.test_risk`
 
 ## Prossimo passo (fuori scope attuale)
 
-Aggiungere `hour_band: Hk` nell’header `.txt` in `convert_round`.
+Usare `intraday: Hk` nell’header per stratificare analisi e calibrazione (già scritto in build Lighter).

@@ -11,6 +11,8 @@ def _req(key: str):
     return _raw[key]
 
 
+TICKS_ROOT = str(_req("ticks_root"))
+
 OUTCOME_WAIT_SEC = float(_req("outcome_wait_sec"))
 GAMMA_PATCH_WAIT_SEC = float(_req("gamma_patch_wait_sec"))
 GAMMA_POLL_SEC = float(_req("gamma_poll_sec"))
