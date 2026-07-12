@@ -1,5 +1,6 @@
-"""Probabilità delta_win v2: metodo A (fasce |delta|) e B (logistic_isotonic)."""
+"""Probabilità delta_win v2: metodo A (griglia |delta| + finestra ±2) e B (logistic_isotonic)."""
 
+import ast
 import hashlib
 import json
 import math
@@ -7,14 +8,16 @@ from pathlib import Path
 
 import numpy as np
 
-from src.delta_win_bands import lookup_band, lookup_band_p_win
+from src.delta_win_bands import (
+    DELTA_LOOKUP_MAX, DELTA_WINDOW_HALF, clamp_delta, mean_p_window, window_bounds,
+)
 from src.setup import DELTA_WIN_CHECKPOINTS, DELTA_WIN_MODEL_PATH, DELTA_WIN_TXT_COLUMNS, VOLATILITY_WINDOWS_SEC
 
 _ROOT = Path(__file__).resolve().parent.parent
 _HOUR_BANDS_PATH = _ROOT / "hour_bands.json"
 _artifact_cache: dict | None = None
 _DW_HI_OPEN = 1_000_000
-_DW_A_COL_W = 15
+_DW_A_COL_W = 17
 _DW_B_COL_W = 5
 _DW_COL_LABEL_A = "DWinA"
 _DW_COL_LABEL_B = "DWinB"
@@ -95,24 +98,45 @@ def load_delta_win_artifact(path: Path | None = None) -> dict:
     if data.get("hour_bands_hash") != hour_bands_hash():
         raise Exception(f"delta_win hour_bands_hash mismatch: {data.get('hour_bands_hash')} vs {hour_bands_hash()}")
     if set(data.get("checkpoints", [])) != set(DELTA_WIN_CHECKPOINTS):
-        raise Exception("delta_win checkpoint list mismatch with setup.json")
+        raise Exception(
+            f"delta_win checkpoint list mismatch with setup.json: "
+            f"artifact={data.get('checkpoints')} setup={list(DELTA_WIN_CHECKPOINTS)} — run python scripts/study_delta_win_v2.py"
+        )
     if data.get("model_version") != 2:
         raise Exception(f"delta_win artifact version must be 2, got {data.get('model_version')}")
-    if "bands_by_sec" not in data or "logistic_by_sec" not in data:
-        raise Exception("delta_win v2 artifact missing bands_by_sec or logistic_by_sec")
+    if "delta_p_by_sec" not in data or "logistic_by_sec" not in data:
+        raise Exception("delta_win v2 artifact missing delta_p_by_sec or logistic_by_sec")
+    for sec in DELTA_WIN_CHECKPOINTS:
+        sk = str(sec)
+        if sk not in data["delta_p_by_sec"]:
+            raise Exception(f"delta_win delta_p_by_sec missing sec={sec}")
+        table = data["delta_p_by_sec"][sk]
+        for d in range(DELTA_LOOKUP_MAX + 1):
+            if str(d) not in table:
+                raise Exception(f"delta_win delta_p_by_sec[{sec}] missing delta={d}")
     data["_path"] = str(p)
     _artifact_cache = data
     return data
 
 
+def predict_delta_win_a_window(sec: int, abs_delta: int, artifact: dict | None = None) -> tuple[float, int, int]:
+    if sec not in DELTA_WIN_CHECKPOINTS:
+        raise Exception(f"predict_delta_win_a_window called outside checkpoint sec={sec}")
+    art = artifact if artifact is not None else load_delta_win_artifact()
+    sec_key = str(sec)
+    if sec_key not in art["delta_p_by_sec"]:
+        raise Exception(f"delta_win delta_p missing sec={sec}")
+    d = clamp_delta(abs_delta)
+    lo, hi = window_bounds(d)
+    table = art["delta_p_by_sec"][sec_key]
+    return mean_p_window(table, lo, hi), lo, hi
+
+
 def predict_delta_win_a(sec: int, abs_delta: int, artifact: dict | None = None) -> float | None:
     if sec not in DELTA_WIN_CHECKPOINTS:
         return None
-    art = artifact if artifact is not None else load_delta_win_artifact()
-    sec_key = str(sec)
-    if sec_key not in art["bands_by_sec"]:
-        raise Exception(f"delta_win bands missing sec={sec}")
-    return lookup_band_p_win(abs_delta, art["bands_by_sec"][sec_key])
+    p, _, _ = predict_delta_win_a_window(sec, abs_delta, artifact)
+    return p
 
 
 def predict_delta_win_b(sec: int, abs_delta: int, vols: dict[int, int], intraday_h: int,
@@ -202,8 +226,8 @@ def delta_win_row_part(sec: int, abs_delta: int, vols: dict[int, int], intraday_
             if not eligible:
                 cells.append(f"{'---':<{w}}")
             else:
-                band = lookup_band(abs_delta, artifact["bands_by_sec"][str(sec)])
-                cell = format_delta_win_a_cell(float(band["p_win"]), int(band["lo"]), int(band["hi"]))
+                p, lo, hi = predict_delta_win_a_window(sec, abs_delta, artifact)
+                cell = format_delta_win_a_cell(p, lo, hi)
                 cells.append(f"{cell:<{w}}")
         elif col == "b":
             if not eligible:
@@ -212,6 +236,31 @@ def delta_win_row_part(sec: int, abs_delta: int, vols: dict[int, int], intraday_
                 p = predict_delta_win_b(sec, abs_delta, vols, intraday_h, artifact)
                 cells.append(f"{format_delta_win_b_cell(p):>{w}}")
     return " ".join(cells)
+
+
+def delta_win_header_field(lines: list[str], key: str) -> str | None:
+    prefix = f"  {key}:"
+    for line in lines:
+        if line.startswith(prefix):
+            return line.split(":", 1)[1].strip()
+        if line.rstrip("\n") == "data:":
+            break
+    return None
+
+
+def delta_win_txt_matches_artifact(lines: list[str], artifact: dict) -> bool:
+    cp_raw = delta_win_header_field(lines, "delta_win_checkpoints")
+    if cp_raw is None or ast.literal_eval(cp_raw) != list(artifact["checkpoints"]):
+        return False
+    if delta_win_header_field(lines, "delta_win_hour_bands_hash") != artifact["hour_bands_hash"]:
+        return False
+    if int(delta_win_header_field(lines, "delta_win_lookup_max")) != int(artifact["delta_lookup_max"]):
+        return False
+    if int(delta_win_header_field(lines, "delta_win_window_half")) != int(artifact["delta_window_half"]):
+        return False
+    if int(delta_win_header_field(lines, "delta_win_model_version")) != int(artifact["model_version"]):
+        return False
+    return True
 
 
 def delta_win_header_lines(artifact: dict) -> list[str]:
@@ -226,12 +275,15 @@ def delta_win_header_lines(artifact: dict) -> list[str]:
         f"  delta_win_training_start_ts_min: {artifact['training_start_ts_min']}",
         f"  delta_win_training_start_ts_max: {artifact['training_start_ts_max']}",
         f"  delta_win_methods: [band, logistic]",
+        f"  delta_win_lookup_max: {artifact.get('delta_lookup_max', DELTA_LOOKUP_MAX)}",
+        f"  delta_win_window_half: {artifact.get('delta_window_half', DELTA_WINDOW_HALF)}",
         f"  delta_win_txt_columns: {list(DELTA_WIN_TXT_COLUMNS)}",
     ]
 
 
 def checkpoint_stale_in_vol_window(rows_by_sec: dict[int, dict], sec: int, window: int) -> bool:
-    for s in range(sec, sec + window):
+    from src.vol_stats import vol_window_countdown_secs
+    for s in vol_window_countdown_secs(sec, window):
         row = rows_by_sec.get(s)
         if row is None:
             raise Exception(f"missing sec {s} in round rows")

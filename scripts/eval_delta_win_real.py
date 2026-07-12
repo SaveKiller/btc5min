@@ -47,7 +47,8 @@ def wilson_ci(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 def _stale_in_vol_window(ticks: np.ndarray, sec_index: dict[int, int], sec: int, window: int) -> bool:
-    for s in range(sec, sec + window):
+    from src.vol_stats import vol_window_countdown_secs
+    for s in vol_window_countdown_secs(sec, window):
         if s not in sec_index:
             raise Exception(f"missing sec {s}")
         ti = sec_index[s]

@@ -115,7 +115,8 @@ def read_lighter_data_rows(path: Path) -> list[dict]:
     return rows
 
 def _stale_in_vol_window(rows_by_sec: dict[int, dict], sec: int, window: int) -> bool:
-    for s in range(sec, sec + window):
+    from src.vol_stats import vol_window_countdown_secs
+    for s in vol_window_countdown_secs(sec, window):
         row = rows_by_sec.get(s)
         if row is None:
             raise Exception(f"missing sec {s} in round rows")

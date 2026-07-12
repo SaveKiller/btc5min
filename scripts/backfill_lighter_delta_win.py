@@ -8,7 +8,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from src.delta_win import delta_win_header_lines, delta_win_row_from_data, load_delta_win_artifact, parse_intraday_h
+from src.delta_win import delta_win_header_lines, delta_win_row_from_data, delta_win_txt_matches_artifact, load_delta_win_artifact, parse_intraday_h
 from src.lighter_txt_format import _lighter_column_header
 from src.listats import read_lighter_data_rows, read_lighter_header
 from src.setup import TICKS_ROOT
@@ -55,7 +55,7 @@ def patch_delta_win(path: Path, artifact: dict, dry_run: bool = False) -> str:
         raise Exception(f"{path}: expected header:")
     data_i = next(i for i, l in enumerate(lines) if l.rstrip("\n") == "data:")
     col_hdr = lines[data_i + 1].rstrip("\n")
-    if _has_v2_header(lines) and _data_header_ok(col_hdr):
+    if _has_v2_header(lines) and _data_header_ok(col_hdr) and delta_win_txt_matches_artifact(lines, artifact):
         return "present"
     hdr = read_lighter_header(path)
     start_ts = int(hdr["market_start_ts"].split()[0])

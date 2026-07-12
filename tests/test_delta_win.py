@@ -7,8 +7,11 @@ from pathlib import Path
 import numpy as np
 
 from src.delta_win import (
-    delta_win_a_column_width, format_delta_win_a_cell, format_delta_win_b_cell, load_delta_win_artifact,
+    delta_win_a_column_width, delta_win_txt_matches_artifact, format_delta_win_a_cell, format_delta_win_b_cell, load_delta_win_artifact,
     parse_delta_txt, parse_quote_side, predict_delta_win_a, predict_delta_win_b,
+)
+from src.delta_win_bands import (
+    DELTA_LOOKUP_MAX, clamp_delta, fit_delta_p_for_sec, window_bounds,
 )
 from src.clob_api import side_from_chainlink
 from src.settlement import outcome_from_prices
@@ -27,7 +30,52 @@ def _synthetic_ticks() -> np.ndarray:
 
 
 class DeltaWinTests(unittest.TestCase):
-    def test_parse_delta_zero(self):
+    def test_window_bounds(self):
+        self.assertEqual(window_bounds(0), (0, 2))
+        self.assertEqual(window_bounds(1), (0, 3))
+        self.assertEqual(window_bounds(33), (31, 35))
+        self.assertEqual(window_bounds(150), (148, 150))
+        self.assertEqual(window_bounds(clamp_delta(180)), (148, 150))
+
+    def test_fit_merge_radius(self):
+        samples = []
+        for i in range(520):
+            samples.append({"sec": 90, "abs_delta": 50, "y_win": 1})
+        table = fit_delta_p_for_sec(samples, 90, min_samples=500)
+        self.assertEqual(table["50"]["merge_radius"], 0)
+        self.assertEqual(table["49"]["merge_radius"], 1)
+        self.assertGreater(table["49"]["n"], 500)
+
+    def test_checkpoints_from_setup(self):
+        from src.setup import (
+            DELTA_WIN_CHECKPOINTS, DELTA_WIN_CHECKPOINTS_END, DELTA_WIN_CHECKPOINTS_START, DELTA_WIN_CHECKPOINTS_STEP,
+        )
+        self.assertGreater(DELTA_WIN_CHECKPOINTS_START, DELTA_WIN_CHECKPOINTS_END)
+        self.assertGreater(DELTA_WIN_CHECKPOINTS_STEP, 0)
+        self.assertEqual(DELTA_WIN_CHECKPOINTS[0], DELTA_WIN_CHECKPOINTS_START)
+        self.assertEqual(DELTA_WIN_CHECKPOINTS[-1], DELTA_WIN_CHECKPOINTS_END)
+        expect = []
+        s = DELTA_WIN_CHECKPOINTS_START
+        while s >= DELTA_WIN_CHECKPOINTS_END:
+            expect.append(s)
+            s -= DELTA_WIN_CHECKPOINTS_STEP
+        self.assertEqual(list(DELTA_WIN_CHECKPOINTS), expect)
+
+    def test_delta_win_txt_matches_artifact(self):
+        art = load_delta_win_artifact()
+        old_cp = "  delta_win_checkpoints: [180, 150, 120, 90, 60, 30]\n"
+        new_lines = [
+            "header:\n",
+            f"  delta_win_model_version: {art['model_version']}\n",
+            f"  delta_win_hour_bands_hash: {art['hour_bands_hash']}\n",
+            f"  delta_win_lookup_max: {art['delta_lookup_max']}\n",
+            f"  delta_win_window_half: {art['delta_window_half']}\n",
+            old_cp,
+            "data:\n",
+        ]
+        self.assertFalse(delta_win_txt_matches_artifact(new_lines, art))
+        good_lines = [l if not l.startswith("  delta_win_checkpoints:") else f"  delta_win_checkpoints: {art['checkpoints']}\n" for l in new_lines]
+        self.assertTrue(delta_win_txt_matches_artifact(good_lines, art))
         self.assertEqual(parse_delta_txt("0$"), 0)
         self.assertEqual(parse_delta_txt("+0$"), 0)
         self.assertIsNone(parse_delta_txt("---"))
@@ -39,14 +87,17 @@ class DeltaWinTests(unittest.TestCase):
     def test_format_cells(self):
         self.assertEqual(format_delta_win_b_cell(0.876), "88%")
         self.assertEqual(format_delta_win_b_cell(None), "---")
-        self.assertEqual(format_delta_win_a_cell(0.876, 12, 26), "88% [12$-26$]")
-        self.assertEqual(format_delta_win_a_cell(0.5, 0, 0), "50% [0$]")
-        self.assertEqual(delta_win_a_column_width(), 15)
+        self.assertEqual(format_delta_win_a_cell(0.876, 31, 35), "88% [31$-35$]")
+        self.assertEqual(format_delta_win_a_cell(0.5, 0, 2), "50% [0$-2$]")
+        self.assertEqual(format_delta_win_a_cell(0.99, 148, 150), "99% [148$-150$]")
+        self.assertEqual(delta_win_a_column_width(), 17)
         art = load_delta_win_artifact()
         mx = 0
-        for sec_key, bands in art["bands_by_sec"].items():
-            for b in bands:
-                cell = format_delta_win_a_cell(float(b["p_win"]), int(b["lo"]), int(b["hi"]))
+        for sec in DELTA_WIN_CHECKPOINTS:
+            for d in range(DELTA_LOOKUP_MAX + 1):
+                lo, hi = window_bounds(clamp_delta(d))
+                p = float(art["delta_p_by_sec"][str(sec)][str(d)]["p_win"])
+                cell = format_delta_win_a_cell(p, lo, hi)
                 mx = max(mx, len(cell))
         self.assertLessEqual(mx, delta_win_a_column_width())
 
@@ -172,13 +223,14 @@ class DeltaWinTests(unittest.TestCase):
             self.skipTest("no gamma-labeled samples in first 5 bins")
         self.assertIn("p_a", samples[0])
         self.assertIn("p_b", samples[0])
+        self.assertIn("delta_window", samples[0])
 
         root = Path(r"H:/ticks/lighter-rounds5m")
         if not root.is_dir():
             self.skipTest("lighter dataset not mounted")
         sample = next(root.rglob("btc5m_*.txt"))
         recs = li_checkpoint_samples(sample)
-        self.assertEqual(len(recs), 6)
+        self.assertEqual(len(recs), len(DELTA_WIN_CHECKPOINTS))
         rows = read_lighter_data_rows(sample)
         self.assertEqual(len(rows), 300)
 

@@ -4,6 +4,13 @@ import numpy as np
 
 from src.setup import RISK_MIN_VOL_COVERAGE_RATIO, VOLATILITY_MIN_CHANGES, VOLATILITY_WINDOWS_SEC
 
+ROUND_COUNTDOWN_SEC_MAX = 300
+
+
+def vol_window_countdown_secs(sec: int, window: int, sec_max: int = ROUND_COUNTDOWN_SEC_MAX) -> range:
+    """Secondi countdown nella finestra vol trailing, troncata al massimo del round."""
+    return range(sec, min(sec_max + 1, sec + window))
+
 
 def chainlink_stale(sample_recv_ms: float, chainlink_recv_ms: float, stall_sec: float) -> bool:
     return (sample_recv_ms - chainlink_recv_ms) > stall_sec * 1000

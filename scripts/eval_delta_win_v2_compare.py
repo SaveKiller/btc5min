@@ -17,6 +17,7 @@ from src.binary_format import read_round
 from src.clob_api import side_from_chainlink
 from src.convert import iter_round_bin_paths
 from src.delta_win import load_delta_win_artifact, predict_delta_win_a, predict_delta_win_b
+from src.delta_win_bands import clamp_delta, window_bounds
 from src.lighter_ticks import hour_band
 from src.settlement import outcome_from_prices
 from src.setup import DELTA_WIN_CHECKPOINTS, VOLATILITY_WINDOWS_SEC
@@ -37,7 +38,8 @@ def log_loss(probs: list[float], labels: list[int]) -> float:
 
 
 def _stale_in_vol_window(ticks: np.ndarray, sec_index: dict[int, int], sec: int, window: int) -> bool:
-    for s in range(sec, sec + window):
+    from src.vol_stats import vol_window_countdown_secs
+    for s in vol_window_countdown_secs(sec, window):
         if s not in sec_index:
             raise Exception(f"missing sec {s}")
         ti = sec_index[s]
@@ -46,11 +48,10 @@ def _stale_in_vol_window(ticks: np.ndarray, sec_index: dict[int, int], sec: int,
     return False
 
 
-def _band_label(abs_delta: int, bands: list[dict]) -> str:
-    for b in bands:
-        if b["lo"] <= abs_delta <= b["hi"]:
-            return f"{b['lo']}-{b['hi']}"
-    return f">{bands[-1]['hi']}"
+def _window_label(abs_delta: int) -> str:
+    d = clamp_delta(abs_delta)
+    lo, hi = window_bounds(d)
+    return f"{lo}-{hi}"
 
 
 def collect_real_samples(bin_paths: list[Path], artifact: dict) -> list[dict]:
@@ -86,11 +87,10 @@ def collect_real_samples(bin_paths: list[Path], artifact: dict) -> list[dict]:
                 y_win = 1 if side == outcome else 0
                 pa = predict_delta_win_a(sec, abs_delta, artifact)
                 pb = predict_delta_win_b(sec, abs_delta, vol_dict, intraday_h, artifact)
-                bands = artifact["bands_by_sec"][str(sec)]
                 samples.append({
                     "bin": bp.name, "day": day, "start_ts": start_ts, "sec": sec, "intraday_h": intraday_h,
                     "abs_delta": abs_delta, "vols": vol_dict, "side": side, "outcome": outcome, "y_win": y_win,
-                    "p_a": pa, "p_b": pb, "band": _band_label(abs_delta, bands),
+                    "p_a": pa, "p_b": pb, "delta_window": _window_label(abs_delta),
                 })
     return samples
 
@@ -113,10 +113,10 @@ def _group_metrics(samples: list[dict], key_fn, pkey: str) -> dict:
     return {k: _metrics(v, pkey) for k, v in sorted(groups.items())}
 
 
-def _band_observed(samples: list[dict]) -> dict:
+def _window_observed(samples: list[dict]) -> dict:
     groups: dict[str, list[dict]] = defaultdict(list)
     for s in samples:
-        groups[f"sec={s['sec']} band={s['band']}"].append(s)
+        groups[f"sec={s['sec']} window={s['delta_window']}"].append(s)
     out = {}
     for k, rows in sorted(groups.items()):
         labels = [r["y_win"] for r in rows]
@@ -148,7 +148,7 @@ def main() -> None:
             "overall": _metrics(samples, "p_a"),
             "by_checkpoint": _group_metrics(samples, lambda s: s["sec"], "p_a"),
             "by_intraday_h": _group_metrics(samples, lambda s: s["intraday_h"], "p_a"),
-            "by_band_observed": _band_observed(samples),
+            "by_window_observed": _window_observed(samples),
         },
         "method_b": {
             "overall": _metrics(samples, "p_b"),

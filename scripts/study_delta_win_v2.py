@@ -1,4 +1,4 @@
-"""Studio delta_win v2: metodo A (fasce |delta|) + B (logistic_isotonic) su tutto Lighter."""
+"""Studio delta_win v2: metodo A (griglia |delta|) + B (logistic_isotonic) su tutto Lighter."""
 
 import json
 import math
@@ -14,8 +14,8 @@ import numpy as np
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 
-from src.delta_win import hour_bands_hash
-from src.delta_win_bands import fit_bands_for_sec, lookup_band_p_win
+from src.delta_win import hour_bands_hash, predict_delta_win_a
+from src.delta_win_bands import DELTA_LOOKUP_MAX, DELTA_WINDOW_HALF, fit_delta_p_for_sec
 from src.listats import li_collect_delta_win_dataset, li_delta_win_audit
 from src.setup import (
     DELTA_WIN_BAND_MIN_SAMPLES, DELTA_WIN_CHECKPOINTS, DELTA_WIN_MODEL_PATH,
@@ -73,13 +73,19 @@ def _holdout_weeks(samples: list[dict]) -> list[str]:
     return weeks[-HOLDOUT_WEEKS:]
 
 
-def _diagnostic_holdout(samples: list[dict], bands_by_sec: dict, logistic_by_sec: dict) -> dict:
+def _delta_p_diag(table: dict[str, dict]) -> dict:
+    ns = [v["n"] for v in table.values()]
+    merged = sum(1 for v in table.values() if v["merge_radius"] > 0)
+    return {"slot_count": len(table), "merged_slots": merged, "n_min": min(ns), "n_max": max(ns)}
+
+
+def _diagnostic_holdout(samples: list[dict], artifact: dict, logistic_by_sec: dict) -> dict:
     hold_w = set(_holdout_weeks(samples))
     hold = [s for s in samples if s["week"] in hold_w]
     pa, pb, labels = [], [], []
     for s in hold:
         sk = str(s["sec"])
-        pa.append(lookup_band_p_win(s["abs_delta"], bands_by_sec[sk]))
+        pa.append(predict_delta_win_a(s["sec"], s["abs_delta"], artifact))
         m = logistic_by_sec[sk]
         x = float(np.dot(_feature_matrix([s])[0], np.asarray(m["coef"])) + m["intercept"])
         raw = 1.0 / (1.0 + math.exp(-x))
@@ -96,18 +102,18 @@ def main() -> None:
     print("collecting lighter checkpoint samples...", flush=True)
     audit = li_delta_win_audit()
     samples = li_collect_delta_win_dataset()
-    bands_by_sec: dict[str, list[dict]] = {}
+    delta_p_by_sec: dict[str, dict] = {}
     logistic_by_sec: dict[str, dict] = {}
-    band_diag: dict[str, dict] = {}
+    delta_diag: dict[str, dict] = {}
     for sec in DELTA_WIN_CHECKPOINTS:
-        bands = fit_bands_for_sec(samples, sec)
-        bands_by_sec[str(sec)] = bands
+        table = fit_delta_p_for_sec(samples, sec)
+        delta_p_by_sec[str(sec)] = table
         logistic_by_sec[str(sec)] = _fit_logistic_iso(samples, sec)
-        ins_p = [lookup_band_p_win(s["abs_delta"], bands) for s in samples if s["sec"] == sec]
+        ins_p = [predict_delta_win_a(s["sec"], s["abs_delta"], {"delta_p_by_sec": delta_p_by_sec}) for s in samples if s["sec"] == sec]
         ins_y = [s["y_win"] for s in samples if s["sec"] == sec]
-        band_diag[str(sec)] = {
-            "band_count": len(bands), "in_sample_brier": brier(ins_p, ins_y),
-            "bands": bands,
+        delta_diag[str(sec)] = {
+            **_delta_p_diag(table),
+            "in_sample_brier": brier(ins_p, ins_y),
         }
     ts_vals = [s["start_ts"] for s in samples]
     artifact = {
@@ -120,23 +126,25 @@ def main() -> None:
         "hour_bands_hash": hour_bands_hash(),
         "vol_windows_sec": list(VOLATILITY_WINDOWS_SEC),
         "band_min_samples": DELTA_WIN_BAND_MIN_SAMPLES,
+        "delta_lookup_max": DELTA_LOOKUP_MAX,
+        "delta_window_half": DELTA_WINDOW_HALF,
         "training_sample_count": len(samples),
         "training_start_ts_min": min(ts_vals),
         "training_start_ts_max": max(ts_vals),
-        "bands_by_sec": bands_by_sec,
+        "delta_p_by_sec": delta_p_by_sec,
         "logistic_by_sec": logistic_by_sec,
     }
     _MODELS.mkdir(parents=True, exist_ok=True)
     model_path = _ROOT / DELTA_WIN_MODEL_PATH
     model_path.write_text(json.dumps(artifact, indent=4), encoding="utf-8")
-    holdout_diag = _diagnostic_holdout(samples, bands_by_sec, logistic_by_sec)
+    holdout_diag = _diagnostic_holdout(samples, artifact, logistic_by_sec)
     _REPORTS.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     report_path = _REPORTS / f"delta_win_study_v2_{ts}.json"
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "audit": audit, "sample_count": len(samples),
-        "band_diagnostics_by_sec": band_diag,
+        "delta_p_diagnostics_by_sec": delta_diag,
         "holdout_diagnostic_no_refit": holdout_diag,
         "artifact_path": str(model_path),
     }

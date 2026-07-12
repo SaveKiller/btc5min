@@ -1,5 +1,6 @@
 """Backfill delta_win_a/b nei .txt reali rigenerando da .bin (idempotente)."""
 
+import subprocess
 import sys
 from multiprocessing import Pool
 from pathlib import Path
@@ -10,24 +11,38 @@ if str(_ROOT) not in sys.path:
 
 from src.binary_format import read_round, txt_path_for_bin
 from src.convert import iter_round_bin_paths, read_txt_warnings, warnings_from_header, write_round_txt
+from src.delta_win import delta_win_txt_matches_artifact, load_delta_win_artifact
 from src.txt_format import format_column_header
 
 _DATA_DIR = _ROOT / "data"
+_STUDY_SCRIPT = _ROOT / "scripts" / "study_delta_win_v2.py"
+_artifact: dict | None = None
 
 
-def _data_header_ok(txt_path: Path) -> bool:
+def run_delta_win_study() -> None:
+    print(f"running {_STUDY_SCRIPT}...", flush=True)
+    r = subprocess.run([sys.executable, str(_STUDY_SCRIPT)], cwd=_ROOT)
+    if r.returncode != 0:
+        raise Exception(f"study_delta_win_v2.py failed with exit code {r.returncode}")
+    import src.delta_win as dw
+    dw._artifact_cache = None
+
+
+def _txt_ok(txt_path: Path) -> bool:
     if not txt_path.is_file():
         return False
     lines = txt_path.read_text(encoding="utf-8").splitlines()
     for i, line in enumerate(lines):
         if line.rstrip("\n") == "data:" and i + 1 < len(lines):
-            return lines[i + 1].strip() == format_column_header().strip()
+            if lines[i + 1].strip() != format_column_header().strip():
+                return False
+            return delta_win_txt_matches_artifact(lines, _artifact)
     return False
 
 
 def patch_bin(bin_path: Path, dry_run: bool = False) -> str:
     txt_path = txt_path_for_bin(str(bin_path))
-    if _data_header_ok(txt_path):
+    if _txt_ok(txt_path):
         return "present"
     if dry_run:
         return "would_patch"
@@ -36,11 +51,18 @@ def patch_bin(bin_path: Path, dry_run: bool = False) -> str:
     return "patched"
 
 
+def _init_pool(artifact: dict) -> None:
+    global _artifact
+    _artifact = artifact
+
+
 def _worker(bin_str: str) -> tuple[str, str]:
     return bin_str, patch_bin(Path(bin_str))
 
 
 def cmd_all(data_dir: Path, workers: int, dry_run: bool) -> None:
+    global _artifact
+    _artifact = load_delta_win_artifact()
     bin_paths = iter_round_bin_paths(data_dir)
     if not bin_paths:
         raise Exception(f"no .bin files under {data_dir}")
@@ -61,7 +83,7 @@ def cmd_all(data_dir: Path, workers: int, dry_run: bool) -> None:
                 stats["errors"] += 1
                 print(f"ERROR {bp}: {e}", flush=True)
     else:
-        with Pool(workers) as pool:
+        with Pool(workers, initializer=_init_pool, initargs=(_artifact,)) as pool:
             for bin_str, status in pool.imap_unordered(_worker, [str(p) for p in bin_paths], chunksize=32):
                 if status == "patched":
                     stats["patched"] += 1
@@ -100,6 +122,8 @@ def main() -> None:
     if not data_dir.is_dir():
         raise Exception(f"data directory not found: {data_dir}")
     print(f"data_dir: {data_dir} workers: {workers} dry_run: {dry_run} header_cols: {format_column_header()}", flush=True)
+    if not dry_run:
+        run_delta_win_study()
     cmd_all(data_dir, workers, dry_run)
 
 
