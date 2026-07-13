@@ -35,13 +35,11 @@
     "risk_flip_hysteresis_c": 3,
     "risk_flip_persist_sec": 3,
     "delta_win_model_version": 2,
-    "delta_win_checkpoints_start": 240,
-    "delta_win_checkpoints_end": 5,
-    "delta_win_checkpoints_step": 5,
+    "delta_win_sec_start": 240,
+    "delta_win_sec_end": 5,
     "delta_win_model_path": "models/delta_win_v2.json",
     "delta_win_window_half_base": 2,
-    "delta_win_window_expand_step": 3,
-    "delta_win_window_min_samples": 20,
+    "delta_win_window_min_samples": 30,
     "delta_win_txt_columns": [
         "a",
         "b"
