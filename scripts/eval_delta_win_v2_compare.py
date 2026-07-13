@@ -85,7 +85,7 @@ def collect_real_samples(bin_paths: list[Path], artifact: dict) -> list[dict]:
                 abs_delta = abs(round(float(ticks[ti, 6]) - ptb))
                 side = side_from_chainlink(float(ticks[ti, 6]), ptb)
                 y_win = 1 if side == outcome else 0
-                pa = predict_delta_win_a(sec, abs_delta, artifact)
+                pa = predict_delta_win_a(sec, abs_delta, intraday_h, artifact)
                 pb = predict_delta_win_b(sec, abs_delta, vol_dict, intraday_h, artifact)
                 samples.append({
                     "bin": bp.name, "day": day, "start_ts": start_ts, "sec": sec, "intraday_h": intraday_h,

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Sync poly → locale: solo file mancanti, una sessione SSH, timestamp dal tar."""
 import io
+import math
 import os
 import re
 import subprocess
@@ -9,12 +10,15 @@ import tarfile
 import threading
 from pathlib import Path
 
+from src.binary_format import read_round, txt_path_for_bin
+
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
 HOST = "ticksaver"
 REMOTE_CMD = "cd /opt/btc5min && venv/bin/python3 scripts/sync_pack.py"
 SSH_BASE = ["ssh", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"]
 DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+ROUND_SEC = 300
 
 
 def build_manifest() -> str:
@@ -50,7 +54,8 @@ def read_stdout(proc: subprocess.Popen) -> bytes:
     return bytes(buf)
 
 
-def extract_tar(data: bytes) -> None:
+def extract_tar(data: bytes) -> list[Path]:
+    downloaded: list[Path] = []
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
         members = [m for m in tar.getmembers() if m.name.endswith(".bin")]
         n = len(members)
@@ -59,8 +64,52 @@ def extract_tar(data: bytes) -> None:
             tar.extract(member, DATA, filter="data")
             dest = DATA / member.name
             os.utime(dest, (member.mtime, member.mtime))
+            downloaded.append(dest)
             if i == 1 or i == n or i % 20 == 0:
                 print(f"  {i}/{n} {member.name}", flush=True)
+    return downloaded
+
+
+def start_ts_from_bin(path: Path) -> int:
+    return int(path.stem.split("_")[1])
+
+
+def find_bin_at_ts(start_ts: int) -> Path | None:
+    matches = list(DATA.glob(f"**/bin/btc5m_{start_ts}_*.bin"))
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise Exception(f"multiple bins for start_ts {start_ts}: {matches}")
+    return matches[0]
+
+
+def trim_downloaded_nan_tail(downloaded: list[Path]) -> None:
+    if not downloaded:
+        return
+    downloaded_ts = {start_ts_from_bin(p) for p in downloaded}
+    ts = max(downloaded_ts)
+    deleted = 0
+    print("Tail trim final_gamma nan sui bin appena scaricati ...", flush=True)
+    while True:
+        path = find_bin_at_ts(ts)
+        if path is None:
+            print(f"tail trim: stop, bin assente per ts={ts}", flush=True)
+            break
+        header, _, _ = read_round(str(path))
+        if not math.isnan(header["final_gamma"]):
+            print(f"tail trim: anchor {path.name} final_gamma ok", flush=True)
+            break
+        if ts not in downloaded_ts:
+            print(f"tail trim: stop a {path.name} (nan, non scaricato in questa sync)", flush=True)
+            break
+        txt = txt_path_for_bin(str(path))
+        path.unlink()
+        if txt.is_file():
+            txt.unlink()
+        deleted += 1
+        print(f"tail trim: deleted {path.name}", flush=True)
+        ts -= ROUND_SEC
+    print(f"tail trim: deleted {deleted} bin", flush=True)
 
 
 def main() -> None:
@@ -94,7 +143,8 @@ def main() -> None:
         print(chunk.decode(), end="", flush=True)
 
     if stdout_data:
-        extract_tar(stdout_data)
+        downloaded = extract_tar(stdout_data)
+        trim_downloaded_nan_tail(downloaded)
     else:
         print("Nessun file da scaricare.", flush=True)
 

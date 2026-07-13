@@ -76,9 +76,15 @@ while _s >= DELTA_WIN_CHECKPOINTS_END:
     _s -= DELTA_WIN_CHECKPOINTS_STEP
 DELTA_WIN_CHECKPOINTS = tuple(_dw_cps)
 DELTA_WIN_MODEL_PATH = str(_req("delta_win_model_path"))
-DELTA_WIN_BAND_MIN_SAMPLES = int(_req("delta_win_band_min_samples"))
-if DELTA_WIN_BAND_MIN_SAMPLES <= 0:
-    raise Exception("delta_win_band_min_samples must be > 0")
+DELTA_WIN_WINDOW_HALF_BASE = int(_req("delta_win_window_half_base"))
+DELTA_WIN_WINDOW_EXPAND_STEP = int(_req("delta_win_window_expand_step"))
+DELTA_WIN_WINDOW_MIN_SAMPLES = int(_req("delta_win_window_min_samples"))
+if DELTA_WIN_WINDOW_HALF_BASE <= 0:
+    raise Exception("delta_win_window_half_base must be > 0")
+if DELTA_WIN_WINDOW_EXPAND_STEP <= 0:
+    raise Exception("delta_win_window_expand_step must be > 0")
+if DELTA_WIN_WINDOW_MIN_SAMPLES <= 0:
+    raise Exception("delta_win_window_min_samples must be > 0")
 _raw_dw_txt_cols = _req("delta_win_txt_columns")
 if not isinstance(_raw_dw_txt_cols, list) or len(_raw_dw_txt_cols) == 0:
     raise Exception("delta_win_txt_columns must be a non-empty list")

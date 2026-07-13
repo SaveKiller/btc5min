@@ -11,7 +11,7 @@ from src.delta_win import (
     parse_delta_txt, parse_quote_side, predict_delta_win_a, predict_delta_win_b,
 )
 from src.delta_win_bands import (
-    DELTA_LOOKUP_MAX, clamp_delta, fit_delta_p_for_sec, window_bounds,
+    DELTA_LOOKUP_MAX, clamp_delta, fit_window_for_sec_h, pool_in_range, window_bounds,
 )
 from src.clob_api import side_from_chainlink
 from src.settlement import outcome_from_prices
@@ -37,14 +37,48 @@ class DeltaWinTests(unittest.TestCase):
         self.assertEqual(window_bounds(150), (148, 150))
         self.assertEqual(window_bounds(clamp_delta(180)), (148, 150))
 
-    def test_fit_merge_radius(self):
+    def test_pool_empirico_n(self):
+        samples = [{"sec": 90, "abs_delta": 21, "y_win": 1, "intraday_h": 2} for _ in range(7)]
+        samples += [{"sec": 90, "abs_delta": 21, "y_win": 0, "intraday_h": 2} for _ in range(3)]
+        pool = pool_in_range(samples, 19, 23)
+        self.assertEqual(len(pool), 10)
+        self.assertEqual(sum(s["y_win"] for s in pool), 7)
+        table = fit_window_for_sec_h(samples, 90, 2, min_samples=10, half_base=2, expand_step=3)
+        slot = table["21"]
+        self.assertAlmostEqual(slot["p_win"], 0.7)
+        self.assertEqual(slot["n"], 10)
+        self.assertEqual(slot["lo"], 19)
+        self.assertEqual(slot["hi"], 23)
+        self.assertFalse(slot["expanded"])
+
+    def test_expansion_asterisk(self):
         samples = []
-        for i in range(520):
-            samples.append({"sec": 90, "abs_delta": 50, "y_win": 1})
-        table = fit_delta_p_for_sec(samples, 90, min_samples=500)
-        self.assertEqual(table["50"]["merge_radius"], 0)
-        self.assertEqual(table["49"]["merge_radius"], 1)
-        self.assertGreater(table["49"]["n"], 500)
+        for i in range(8):
+            samples.append({"sec": 90, "abs_delta": 21, "y_win": 1, "intraday_h": 2})
+        for i in range(20):
+            samples.append({"sec": 90, "abs_delta": 24, "y_win": 0, "intraday_h": 2})
+        table = fit_window_for_sec_h(samples, 90, 2, min_samples=15, half_base=2, expand_step=3)
+        slot = table["21"]
+        self.assertTrue(slot["expanded"])
+        self.assertEqual(slot["n"], 28)
+        self.assertEqual(slot["lo"], 16)
+        self.assertEqual(slot["hi"], 26)
+
+    def test_insufficient_max_range(self):
+        samples = [{"sec": 90, "abs_delta": 21, "y_win": 1, "intraday_h": 2} for _ in range(5)]
+        table = fit_window_for_sec_h(samples, 90, 2, min_samples=10, half_base=2, expand_step=3)
+        self.assertNotIn("21", table)
+
+    def test_h_filter(self):
+        samples = []
+        for i in range(20):
+            samples.append({"sec": 90, "abs_delta": 21, "y_win": 1, "intraday_h": 2})
+        for i in range(20):
+            samples.append({"sec": 90, "abs_delta": 21, "y_win": 0, "intraday_h": 6})
+        table_h2 = fit_window_for_sec_h(samples, 90, 2, min_samples=10)
+        table_h6 = fit_window_for_sec_h(samples, 90, 6, min_samples=10)
+        self.assertEqual(table_h2["21"]["p_win"], 1.0)
+        self.assertEqual(table_h6["21"]["p_win"], 0.0)
 
     def test_checkpoints_from_setup(self):
         from src.setup import (
@@ -68,8 +102,11 @@ class DeltaWinTests(unittest.TestCase):
             "header:\n",
             f"  delta_win_model_version: {art['model_version']}\n",
             f"  delta_win_hour_bands_hash: {art['hour_bands_hash']}\n",
+            f"  delta_win_band_stratify: {art['delta_win_band_stratify']}\n",
             f"  delta_win_lookup_max: {art['delta_lookup_max']}\n",
-            f"  delta_win_window_half: {art['delta_window_half']}\n",
+            f"  delta_win_window_half_base: {art['delta_win_window_half_base']}\n",
+            f"  delta_win_window_expand_step: {art['delta_win_window_expand_step']}\n",
+            f"  delta_win_window_min_samples: {art['delta_win_window_min_samples']}\n",
             old_cp,
             "data:\n",
         ]
@@ -87,18 +124,22 @@ class DeltaWinTests(unittest.TestCase):
     def test_format_cells(self):
         self.assertEqual(format_delta_win_b_cell(0.876), "88%")
         self.assertEqual(format_delta_win_b_cell(None), "---")
-        self.assertEqual(format_delta_win_a_cell(0.876, 31, 35), "88% [31$-35$]")
-        self.assertEqual(format_delta_win_a_cell(0.5, 0, 2), "50% [0$-2$]")
-        self.assertEqual(format_delta_win_a_cell(0.99, 148, 150), "99% [148$-150$]")
-        self.assertEqual(delta_win_a_column_width(), 17)
+        self.assertEqual(format_delta_win_a_cell(0.876, 31, 35, 412), "88% [31$-35$ n=412]")
+        self.assertEqual(format_delta_win_a_cell(0.64, 16, 26, 150, expanded=True), "64% [16$-26$ n=150*]")
+        self.assertEqual(format_delta_win_a_cell(0.5, 0, 2, 500), "50% [0$-2$ n=500]")
+        self.assertEqual(format_delta_win_a_cell(0.99, 148, 150, 510), "99% [148$-150$ n=510]")
+        self.assertEqual(format_delta_win_a_cell(None, 0, 0, 0), "---")
+        self.assertEqual(delta_win_a_column_width(), 28)
         art = load_delta_win_artifact()
         mx = 0
-        for sec in DELTA_WIN_CHECKPOINTS:
-            for d in range(DELTA_LOOKUP_MAX + 1):
-                lo, hi = window_bounds(clamp_delta(d))
-                p = float(art["delta_p_by_sec"][str(sec)][str(d)]["p_win"])
-                cell = format_delta_win_a_cell(p, lo, hi)
-                mx = max(mx, len(cell))
+        for h in range(1, 7):
+            for sec in DELTA_WIN_CHECKPOINTS:
+                for slot in art["delta_window_by_sec_h"][str(h)][str(sec)].values():
+                    cell = format_delta_win_a_cell(
+                        float(slot["p_win"]), int(slot["lo"]), int(slot["hi"]),
+                        int(slot["n"]), bool(slot["expanded"]),
+                    )
+                    mx = max(mx, len(cell))
         self.assertLessEqual(mx, delta_win_a_column_width())
 
     def test_artifact_load_and_predict_ab(self):
@@ -106,15 +147,20 @@ class DeltaWinTests(unittest.TestCase):
         vols_low = {w: 10 for w in VOLATILITY_WINDOWS_SEC}
         vols_high = {w: 80 for w in VOLATILITY_WINDOWS_SEC}
         for sec in DELTA_WIN_CHECKPOINTS:
-            pa_lo = predict_delta_win_a(sec, 5, art)
-            pa_hi = predict_delta_win_a(sec, 200, art)
+            pa_lo = predict_delta_win_a(sec, 5, 2, art)
+            pa_hi = predict_delta_win_a(sec, 200, 2, art)
             pb_lo = predict_delta_win_b(sec, 5, vols_low, 1, art)
             pb_hi = predict_delta_win_b(sec, 5, vols_high, 6, art)
-            for p in (pa_lo, pa_hi, pb_lo, pb_hi):
+            for p in (pb_lo, pb_hi):
                 self.assertIsNotNone(p)
                 self.assertGreaterEqual(p, 0.0)
                 self.assertLessEqual(p, 1.0)
-            self.assertGreaterEqual(pa_hi, pa_lo)
+            for p in (pa_lo, pa_hi):
+                if p is not None:
+                    self.assertGreaterEqual(p, 0.0)
+                    self.assertLessEqual(p, 1.0)
+            if pa_lo is not None and pa_hi is not None:
+                self.assertGreaterEqual(pa_hi, pa_lo)
 
     def test_renderer_dual_columns_before_btc(self):
         art = load_delta_win_artifact()
@@ -136,6 +182,7 @@ class DeltaWinTests(unittest.TestCase):
         parts = row90.split()
         btc_i_row = next(i for i, p in enumerate(parts) if p.endswith("$") and p[:-1].isdigit())
         self.assertIn("%", parts[btc_i_row - 1])
+        self.assertIn("n=", row90)
         row299 = next(l for l in txt.splitlines() if l.split() and l.split()[0] == "299")
         btc_pos = row299.index("100000$")
         dw_slice = row299[row299.index("0$") + 2:btc_pos]
@@ -181,6 +228,7 @@ class DeltaWinTests(unittest.TestCase):
         row90 = next(l for l in txt.splitlines() if l.split() and l.split()[0] == "90")
         self.assertIn("[", row90)
         self.assertIn("%", row90)
+        self.assertIn("n=", row90)
         import re
         gap = re.search(r"(\d+\.\d%|  ---)( *)(\d+% \[)", row90)
         self.assertIsNotNone(gap)

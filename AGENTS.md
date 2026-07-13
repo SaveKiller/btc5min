@@ -127,7 +127,7 @@ Sezione `data:` — righe ordinate per `sec` **decrescente** (300 → 1):
 
 ```
 sec  time  quote      delta    gain%             DWinA DWinB       btc  vol                         risk
-240  4:00  DOWN  61c   -28$  62.3%  88% [12$-26$]   93%  97206$  V30 18  V60 22  V120 31  Rq 5   Rd 4
+240  4:00  DOWN  61c   -28$  62.3%  66% [19$-23$ n=535]   93%  97206$  V30 18  V60 22  V120 31  Rq 5   Rd 4
 ```
 
 
@@ -138,7 +138,7 @@ sec  time  quote      delta    gain%             DWinA DWinB       btc  vol     
 | **quote** | Se tick completo: probabilità implicita = `round(mid_bid_ask × 100)` in centesimi; mostra il lato con probabilità più alta (`UP 75c`, `DOWN 60c`, oppure `---- 50c` se pari). Se partial: `UP ---` o `DOWN ---` (lato stimato da ultimo tick completo o da `chainlink` vs PTB)                                                                                                                                     |
 | **delta** | `round(chainlink_btc - ptb_chainlink)` in USD, con segno (`+12$`, `-5$`, `0$`). Se Chainlink stale: `---` (campione più vecchio di `stall_reconnect_sec` rispetto a `chainlink_recv_ms`)                                                                                                                                                                                                                           |
 | **gain%** | `majority_gain × 100`, una cifra decimale (`8.5%`). `---` se partial. Vedi formula sotto |
-| **DWinA** | Intero % + finestra `[lo$-hi$]` (±2 intorno a `\|delta\|`, clamp 0–150), es. `88% [31$-35$]`; checkpoint ogni `delta_win_checkpoints_step` s da `start` a `end` in `setup.json`; colonna opzionale (`delta_win_txt_columns`). |
+| **DWinA** | Intero % + finestra `[lo$-hi$ n=N]` o `n=N*` (pool empirico stratificato per fascia **H** del round), es. `66% [19$-23$ n=535]`; partenza ±2 intorno a `\|delta\|` (clamp 0–150), espansione +3/lato se `n` sotto soglia; `*` = range allargato; `---` se pool insufficiente anche a 0–150; checkpoint ogni `delta_win_checkpoints_step` s da `start` a `end` in `setup.json`; colonna opzionale (`delta_win_txt_columns`). |
 | **DWinB** | Intero %, es. `93%`; stessi checkpoint; colonna opzionale. |
 | **btc**   | `chainlink_btc` arrotondato all'intero, seguito da `$` senza spazio (es. `97235$`) |
 | **vol**   | Token `VW N` per ogni `W` in `setup.json` → `volatility_windows_sec` (es. `V30 18`, `V60 22`). Volatilità realizzata trailing in USD, intero arrotondato (`V30 0` se BTC fermo). `VW ---` se dati insufficienti o Chainlink stale sulla riga. Non è previsione forward.                                                                                                                                            |
@@ -209,7 +209,7 @@ Radice dati tick in `setup.json` → `ticks_root` (default `H:\ticks\`).
 | `build_lighter_rounds.bat [workers]`                                                                               | Batch Windows (default 8 worker); **salta** i `.txt` già presenti in output                     |
 | `python scripts/backfill_lighter_intraday.py [rounds_root] [workers] [--dry-run]`                                  | Aggiunge `intraday: Hk` agli header storici (idempotente; non tocca `data:`)                    |
 | `python scripts/backfill_lighter_delta_win.py [rounds_root] [workers] [--dry-run]`                                 | Aggiunge header modello v2 + colonne `DWinA` / `DWinB` (idempotente)                          |
-| `python scripts/study_delta_win_v2.py`                                                                             | Fit metodo A (griglia 0–150 + finestra ±2) + B (logistic) su Lighter → `models/delta_win_v2.json` |
+| `python scripts/study_delta_win_v2.py`                                                                             | Fit metodo A (pool empirico per H + espansione finestra) + B (logistic) su Lighter train weeks → `models/delta_win_v2.json`; calibrazione soglia + report |
 | `python scripts/eval_delta_win_v2_compare.py [data_dir]`                                                           | Report comparativo A vs B su round Chainlink (label Gamma)                                      |
 | `python scripts/backfill_real_delta_win.py [data_dir] [workers] [--dry-run]`                                       | Rifit `study_delta_win_v2.py` poi rigenera `.txt` reali da `.bin` con `DWinA`/`DWinB` (idempotente; `--dry-run` salta il fit) |
 | `python scripts/probe_delta_win_bands.py [data_dir]`                                                             | Win rate osservato per finestra \|delta\| ±2 sui reali (supporto metodo A)                      |

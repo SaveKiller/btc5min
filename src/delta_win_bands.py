@@ -1,44 +1,91 @@
-"""Lookup |delta| 0-150 per delta_win metodo A: p_win empirica + finestra runtime ±2."""
+"""Lookup |delta| 0-150 per delta_win metodo A: pool empirico per H + espansione finestra."""
 
-from src.setup import DELTA_WIN_BAND_MIN_SAMPLES
+
+
+from src.setup import DELTA_WIN_WINDOW_EXPAND_STEP, DELTA_WIN_WINDOW_HALF_BASE
+
+
 
 DELTA_LOOKUP_MAX = 150
-DELTA_WINDOW_HALF = 2
+
+
+
 
 
 def clamp_delta(abs_delta: int, max_delta: int = DELTA_LOOKUP_MAX) -> int:
+
     return min(abs_delta, max_delta)
 
 
-def window_bounds(d: int, max_delta: int = DELTA_LOOKUP_MAX, half: int = DELTA_WINDOW_HALF) -> tuple[int, int]:
+
+
+
+def window_bounds(d: int, max_delta: int = DELTA_LOOKUP_MAX, half: int = DELTA_WIN_WINDOW_HALF_BASE) -> tuple[int, int]:
+
     return max(0, d - half), min(max_delta, d + half)
 
 
-def _pool_samples(sec_samples: list[dict], d: int, radius: int, max_delta: int) -> list[dict]:
-    lo, hi = max(0, d - radius), min(max_delta, d + radius)
+
+
+
+def pool_in_range(sec_samples: list[dict], lo: int, hi: int) -> list[dict]:
+
     return [s for s in sec_samples if lo <= s["abs_delta"] <= hi]
 
 
-def fit_delta_p_for_sec(samples: list[dict], sec: int, max_delta: int = DELTA_LOOKUP_MAX,
-        min_samples: int = DELTA_WIN_BAND_MIN_SAMPLES) -> dict[str, dict]:
-    sec_samples = [s for s in samples if s["sec"] == sec]
+
+
+
+def fit_window_for_sec_h(samples: list[dict], sec: int, intraday_h: int, min_samples: int,
+
+        half_base: int = DELTA_WIN_WINDOW_HALF_BASE, expand_step: int = DELTA_WIN_WINDOW_EXPAND_STEP,
+
+        max_delta: int = DELTA_LOOKUP_MAX) -> dict[str, dict]:
+
+    sec_samples = [s for s in samples if s["sec"] == sec and s["intraday_h"] == intraday_h]
+
     if not sec_samples:
-        raise Exception(f"no samples for sec={sec}")
+
+        raise Exception(f"no samples for sec={sec} intraday_h={intraday_h}")
+
     out: dict[str, dict] = {}
-    for d in range(max_delta + 1):
-        radius = 0
-        pool = _pool_samples(sec_samples, d, radius, max_delta)
-        while len(pool) < min_samples and radius < max_delta:
-            radius += 1
-            pool = _pool_samples(sec_samples, d, radius, max_delta)
-        if not pool:
-            raise Exception(f"no samples for sec={sec} delta={d}")
+
+    for center_d in range(max_delta + 1):
+
+        half = half_base
+
+        lo, hi = window_bounds(center_d, max_delta, half)
+
+        pool = pool_in_range(sec_samples, lo, hi)
+
+        while len(pool) < min_samples:
+
+            if lo == 0 and hi == max_delta:
+
+                break
+
+            half += expand_step
+
+            lo, hi = window_bounds(center_d, max_delta, half)
+
+            pool = pool_in_range(sec_samples, lo, hi)
+
+        if len(pool) < min_samples:
+
+            continue
+
         n = len(pool)
+
         p_win = sum(s["y_win"] for s in pool) / n
-        out[str(d)] = {"p_win": p_win, "n": n, "merge_radius": radius}
+
+        out[str(center_d)] = {
+
+            "p_win": p_win, "n": n, "lo": lo, "hi": hi,
+
+            "half": half, "expanded": half > half_base,
+
+        }
+
     return out
 
 
-def mean_p_window(table: dict[str, dict], lo: int, hi: int) -> float:
-    ps = [float(table[str(i)]["p_win"]) for i in range(lo, hi + 1)]
-    return sum(ps) / len(ps)
