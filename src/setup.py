@@ -62,27 +62,20 @@ if RISK_FLIP_HYSTERESIS_C <= 0 or RISK_FLIP_PERSIST_SEC <= 0:
     raise Exception("risk_flip_hysteresis_c and risk_flip_persist_sec must be > 0")
 
 DELTA_WIN_MODEL_VERSION = int(_req("delta_win_model_version"))
-DELTA_WIN_CHECKPOINTS_START = int(_req("delta_win_checkpoints_start"))
-DELTA_WIN_CHECKPOINTS_END = int(_req("delta_win_checkpoints_end"))
-DELTA_WIN_CHECKPOINTS_STEP = int(_req("delta_win_checkpoints_step"))
-if DELTA_WIN_CHECKPOINTS_STEP <= 0:
-    raise Exception("delta_win_checkpoints_step must be > 0")
-if DELTA_WIN_CHECKPOINTS_START <= DELTA_WIN_CHECKPOINTS_END:
-    raise Exception("delta_win_checkpoints_start must be > delta_win_checkpoints_end")
-_dw_cps: list[int] = []
-_s = DELTA_WIN_CHECKPOINTS_START
-while _s >= DELTA_WIN_CHECKPOINTS_END:
-    _dw_cps.append(_s)
-    _s -= DELTA_WIN_CHECKPOINTS_STEP
-DELTA_WIN_CHECKPOINTS = tuple(_dw_cps)
+DELTA_WIN_SEC_START = int(_req("delta_win_sec_start"))
+DELTA_WIN_SEC_END = int(_req("delta_win_sec_end"))
+if DELTA_WIN_SEC_START <= DELTA_WIN_SEC_END:
+    raise Exception("delta_win_sec_start must be > delta_win_sec_end")
+DELTA_WIN_SECS = tuple(range(DELTA_WIN_SEC_END, DELTA_WIN_SEC_START + 1))
+
+
+def delta_win_sec_active(sec: int) -> bool:
+    return DELTA_WIN_SEC_END <= sec <= DELTA_WIN_SEC_START
 DELTA_WIN_MODEL_PATH = str(_req("delta_win_model_path"))
 DELTA_WIN_WINDOW_HALF_BASE = int(_req("delta_win_window_half_base"))
-DELTA_WIN_WINDOW_EXPAND_STEP = int(_req("delta_win_window_expand_step"))
 DELTA_WIN_WINDOW_MIN_SAMPLES = int(_req("delta_win_window_min_samples"))
 if DELTA_WIN_WINDOW_HALF_BASE <= 0:
     raise Exception("delta_win_window_half_base must be > 0")
-if DELTA_WIN_WINDOW_EXPAND_STEP <= 0:
-    raise Exception("delta_win_window_expand_step must be > 0")
 if DELTA_WIN_WINDOW_MIN_SAMPLES <= 0:
     raise Exception("delta_win_window_min_samples must be > 0")
 _raw_dw_txt_cols = _req("delta_win_txt_columns")

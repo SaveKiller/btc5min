@@ -20,7 +20,7 @@ from src.delta_win import load_delta_win_artifact, predict_delta_win_a, predict_
 from src.delta_win_bands import clamp_delta, window_bounds
 from src.lighter_ticks import hour_band
 from src.settlement import outcome_from_prices
-from src.setup import DELTA_WIN_CHECKPOINTS, VOLATILITY_WINDOWS_SEC
+from src.setup import DELTA_WIN_SECS, VOLATILITY_WINDOWS_SEC
 from src.txt_format import compute_trailing_vols, chainlink_stale_row
 from src.vol_stats import tick_sec
 
@@ -67,9 +67,9 @@ def collect_real_samples(bin_paths: list[Path], artifact: dict) -> list[dict]:
         vols = compute_trailing_vols(ticks)
         sec_index = {tick_sec(ticks[i]): i for i in range(ticks.shape[0])}
         day = bp.parent.parent.name
-        for sec in DELTA_WIN_CHECKPOINTS:
+        for sec in DELTA_WIN_SECS:
             if sec not in sec_index:
-                raise Exception(f"{bp}: missing checkpoint sec={sec}")
+                raise Exception(f"{bp}: missing delta_win sec={sec}")
             if _stale_in_vol_window(ticks, sec_index, sec, max(VOLATILITY_WINDOWS_SEC)):
                 continue
             ti = sec_index[sec]
@@ -136,7 +136,7 @@ def main() -> None:
         raise Exception(f"no bin files under {data_dir}")
     samples = collect_real_samples(bin_paths, artifact)
     if not samples:
-        raise Exception("no eligible real checkpoint samples with gamma labels")
+        raise Exception("no eligible real delta_win samples with gamma labels")
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "data_dir": str(data_dir),
@@ -146,13 +146,13 @@ def main() -> None:
         "eligible_samples": len(samples),
         "method_a": {
             "overall": _metrics(samples, "p_a"),
-            "by_checkpoint": _group_metrics(samples, lambda s: s["sec"], "p_a"),
+            "by_sec": _group_metrics(samples, lambda s: s["sec"], "p_a"),
             "by_intraday_h": _group_metrics(samples, lambda s: s["intraday_h"], "p_a"),
             "by_window_observed": _window_observed(samples),
         },
         "method_b": {
             "overall": _metrics(samples, "p_b"),
-            "by_checkpoint": _group_metrics(samples, lambda s: s["sec"], "p_b"),
+            "by_sec": _group_metrics(samples, lambda s: s["sec"], "p_b"),
             "by_intraday_h": _group_metrics(samples, lambda s: s["intraday_h"], "p_b"),
         },
     }

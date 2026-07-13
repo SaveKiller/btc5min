@@ -16,7 +16,7 @@ Due stime parallele che il lato indicato dal **segno del delta** al checkpoint v
 
 | `DWinA` | `delta_band_lookup` | `sec`, `\|delta\|` arrotondato, **H** | Pool empirico per fascia H: win rate su campioni con `\|delta\| ∈ [lo,hi]`; espansione progressiva se `n` basso |
 
-| `DWinB` | `logistic_isotonic` | `sec`, `\|delta\|`, V30–V120, H | Logistic + calibrazione isotonica per checkpoint |
+| `DWinB` | `logistic_isotonic` | `sec`, `\|delta\|`, V30–V120, H | Logistic + calibrazione isotonica per ogni `sec` |
 
 
 
@@ -28,9 +28,9 @@ Due stime parallele che il lato indicato dal **segno del delta** al checkpoint v
 
 
 
-- **Checkpoint:** da `delta_win_checkpoints_start` a `delta_win_checkpoints_end` ogni `delta_win_checkpoints_step` secondi in `setup.json` (default 240→5 step 5); altrove `---`.
+- **Intervallo sec:** da `delta_win_sec_start` a `delta_win_sec_end` inclusi, **ogni secondo** in `setup.json` (default 240→5); sopra `sec_start` solo spazi.
 
-- **Formato:** `DWinA` → `66% [19$-23$ n=535]` (pool empirico; `n` = checkpoint nel range); `64% [16$-26$ n=150*]` se range allargato oltre ±2; `---` se pool insufficiente anche a 0–150; `DWinB` → `93%` (arrotondamento intero).
+- **Formato:** `DWinA` → `87% [n=39]` (pool empirico; `n` = campioni nel range ±2 implicito); `    [n=29*]` se `n < delta_win_window_min_samples` (spazi al posto della %, `*` = campioni insufficienti); `---` se nessun pool locale; `DWinB` → `93%` (arrotondamento intero).
 
 - **Colonne feed:** `delta_win_txt_columns` in `setup.json` — `["a","b"]`, `["a"]` o `["b"]`; posizione **prima** di `btc`.
 
@@ -38,7 +38,7 @@ Due stime parallele che il lato indicato dal **segno del delta** al checkpoint v
 
 - **Label training:** `1` se quel lato = `outcome` Gamma; round con `outcome_agreement: nan` esclusi.
 
-- **Non eleggibile:** delta `---`, vol mancante, stale nella finestra V120 → `---` ai checkpoint; fuori checkpoint solo spazi.
+- **Non eleggibile:** delta `---`, vol mancante, stale nella finestra V120 → `---` nel range; fuori intervallo solo spazi.
 
 
 
@@ -50,7 +50,7 @@ Due stime parallele che il lato indicato dal **segno del delta** al checkpoint v
 
 
 
-- Per ogni **H** (1…6), checkpoint e `center_d` in `0..150`:
+- Per ogni **H** (1…6), `sec` nell'intervallo e `center_d` in `0..150`:
 
   - Partenza finestra ±`delta_win_window_half_base` (default 2) → `[d-2, d+2]` clamp 0–150
 
@@ -76,7 +76,7 @@ Due stime parallele che il lato indicato dal **segno del delta** al checkpoint v
 
 - Lookup `delta_window_by_sec_h[H][sec][min(|delta|, 150)]`
 
-- Cella mostra `p_win`, range `[lo, hi]` effettivo del fit, `n` del pool; `*` se `expanded=true`
+- Cella mostra `p_win` e `[n=N]` solo se `n ≥ soglia`; altrimenti spazi + `[n=N*]` (asterisco = campioni insufficienti)
 
 
 
@@ -90,7 +90,7 @@ Due stime parallele che il lato indicato dal **segno del delta** al checkpoint v
 
 - Metadati: `delta_win_band_stratify: intraday_h`, `delta_lookup_max: 150`, `delta_win_window_half_base`, `delta_win_window_expand_step`, `delta_win_window_min_samples`.
 
-- Verifica `hour_bands_hash` e lista checkpoint; mismatch → eccezione.
+- Verifica `hour_bands_hash` e intervallo `sec_start`/`sec_end`; mismatch → eccezione.
 
 
 
@@ -102,11 +102,17 @@ Due stime parallele che il lato indicato dal **segno del delta** al checkpoint v
 
 # Fit A+B su Lighter (train weeks) + calibrazione soglia + audit
 
-python scripts/study_delta_win_v2.py
+python scripts/study_delta_win_v2.py [workers]
+
+python scripts/study_delta_win_v2.py 8
 
 python scripts/study_delta_win_v2.py --audit-only
 
+```
 
+`workers` default 8: collect Lighter, fit A (1416 task H×sec), calibrazione 6 soglie e fit B in parallelo.
+
+```bash
 
 # Confronto A vs B su round reali in data/
 

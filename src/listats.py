@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.delta_win import parse_delta_txt, parse_intraday_h, parse_quote_side, parse_vol_txt
-from src.setup import DELTA_WIN_CHECKPOINTS, DELTA_WIN_TXT_COLUMNS, TICKS_ROOT, VOLATILITY_WINDOWS_SEC
+from src.setup import DELTA_WIN_SECS, DELTA_WIN_TXT_COLUMNS, TICKS_ROOT, VOLATILITY_WINDOWS_SEC
 
 _LIGHTER_ROUNDS_DIR = "lighter-rounds5m"
 _START_TS_RE = re.compile(r"btc5m_(\d+)_")
@@ -125,7 +125,7 @@ def _stale_in_vol_window(rows_by_sec: dict[int, dict], sec: int, window: int) ->
     return False
 
 
-def li_checkpoint_samples(path: Path, checkpoints: tuple[int, ...] = DELTA_WIN_CHECKPOINTS) -> list[dict]:
+def li_delta_win_samples(path: Path, secs: tuple[int, ...] = DELTA_WIN_SECS) -> list[dict]:
     hdr = read_lighter_header(path)
     if hdr.get("source") != "lighter_synthetic":
         raise Exception(f"{path}: source is not lighter_synthetic")
@@ -138,10 +138,10 @@ def li_checkpoint_samples(path: Path, checkpoints: tuple[int, ...] = DELTA_WIN_C
     data_rows = read_lighter_data_rows(path)
     by_sec = {r["sec"]: r for r in data_rows}
     out: list[dict] = []
-    for sec in checkpoints:
+    for sec in secs:
         row = by_sec.get(sec)
         if row is None:
-            raise Exception(f"{path}: missing checkpoint sec={sec}")
+            raise Exception(f"{path}: missing delta_win sec={sec}")
         if _stale_in_vol_window(by_sec, sec, max(VOLATILITY_WINDOWS_SEC)):
             continue
         if row["delta"] is None:
@@ -165,9 +165,36 @@ def li_collect_delta_win_dataset(root: Path | None = None) -> list[dict]:
     weeks = sorted({p.parent.name for p in iter_lighter_round_txt(root)})
     week_rank = {w: i for i, w in enumerate(weeks)}
     for path in iter_lighter_round_txt(root):
-        for rec in li_checkpoint_samples(path):
+        for rec in li_delta_win_samples(path):
             rec["week_idx"] = week_rank[rec["week"]]
             samples.append(rec)
+    return samples
+
+
+def _collect_one_file(args: tuple[str, dict[str, int]]) -> list[dict]:
+    path_str, week_rank = args
+    path = Path(path_str)
+    out: list[dict] = []
+    for rec in li_delta_win_samples(path):
+        rec["week_idx"] = week_rank[rec["week"]]
+        out.append(rec)
+    return out
+
+
+def li_collect_delta_win_dataset_parallel(root: Path | None = None, workers: int = 8) -> list[dict]:
+    from multiprocessing import Pool
+    paths = [str(p) for p in iter_lighter_round_txt(root)]
+    if not paths:
+        raise Exception("no lighter round txt files")
+    weeks = sorted({Path(p).parent.name for p in paths})
+    week_rank = {w: i for i, w in enumerate(weeks)}
+    if workers <= 1:
+        return li_collect_delta_win_dataset(root)
+    tasks = [(p, week_rank) for p in paths]
+    samples: list[dict] = []
+    with Pool(workers) as pool:
+        for chunk in pool.imap_unordered(_collect_one_file, tasks, chunksize=32):
+            samples.extend(chunk)
     return samples
 
 
@@ -182,15 +209,15 @@ def li_delta_win_audit(root: Path | None = None) -> dict:
         weeks[path.parent.name] += 1
         hdr = read_lighter_header(path)
         agreement[hdr.get("outcome_agreement", "?")] += 1
-        recs = li_checkpoint_samples(path)
+        recs = li_delta_win_samples(path)
         eligible += len(recs)
-        for sec in DELTA_WIN_CHECKPOINTS:
+        for sec in DELTA_WIN_SECS:
             if not any(r["sec"] == sec for r in recs):
                 missing_cp[sec] += 1
         by_sec.update(r["sec"] for r in recs)
     return {
         "round_count": len(paths), "weeks": dict(weeks), "outcome_agreement": dict(agreement),
-        "eligible_checkpoint_rows": eligible, "missing_checkpoint_rounds": dict(missing_cp),
+        "eligible_delta_win_rows": eligible, "missing_delta_win_rounds": dict(missing_cp),
         "rows_by_sec": dict(by_sec),
     }
 

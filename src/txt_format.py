@@ -14,9 +14,9 @@ from src.delta_win import (
 from src.lighter_ticks import hour_band
 from src.risk import TickRisk, compute_risk_state
 from src.setup import (
-    DELTA_WIN_CHECKPOINTS, RISK_LABEL_SOURCE, RISK_MIN_VOL_COVERAGE_RATIO, RISK_MODEL_VERSION,
+    RISK_LABEL_SOURCE, RISK_MIN_VOL_COVERAGE_RATIO, RISK_MODEL_VERSION,
     RISK_PRIMARY_VOL_WINDOW_SEC, RISK_PROBABILITY_BUCKETS, RISK_PTB_SOURCE, RISK_TARGET,
-    STALL_RECONNECT_SEC, VOLATILITY_MIN_CHANGES, VOLATILITY_WINDOWS_SEC,
+    STALL_RECONNECT_SEC, VOLATILITY_MIN_CHANGES, VOLATILITY_WINDOWS_SEC, delta_win_sec_active,
 )
 from src.vol_stats import chainlink_stale, compute_vol_stats_by_window, tick_sec as _tick_sec
 
@@ -181,7 +181,7 @@ def _delta_win_row(sec: int, tick_idx: int, ticks: np.ndarray, vols: dict[int, n
 
 def _delta_win_eligible(sec: int, tick_idx: int, ticks: np.ndarray, vols: dict[int, np.ndarray],
         ptb: float, indexed: dict[int, int]) -> tuple[bool, int, dict[int, int]]:
-    if sec not in DELTA_WIN_CHECKPOINTS:
+    if not delta_win_sec_active(sec):
         return False, 0, {}
     if _checkpoint_stale_in_vol_window(indexed, ticks, sec, max(VOLATILITY_WINDOWS_SEC)):
         return False, 0, {}

@@ -62,29 +62,59 @@ def write_round_txt(bin_path: str, warnings: list[str]) -> None:
     align_txt_mtime_to_bin(bp, txt_path)
 
 
-def iter_round_bin_paths(data_dir: Path) -> list[Path]:
+def iter_day_dirs(data_dir: Path) -> list[Path]:
     if not data_dir.is_dir():
         raise Exception(f"data dir not found: {data_dir}")
-    paths: list[Path] = []
+    out: list[Path] = []
     for day_dir in sorted(data_dir.iterdir()):
         if not day_dir.is_dir() or not _DATE_DIR.match(day_dir.name):
             continue
         bin_dir = day_dir / "bin"
-        if not bin_dir.is_dir():
-            continue
-        paths.extend(sorted(bin_dir.glob("*.bin")))
+        if bin_dir.is_dir() and any(bin_dir.glob("*.bin")):
+            out.append(day_dir)
+    return out
+
+
+def iter_round_bin_paths(data_dir: Path) -> list[Path]:
+    paths: list[Path] = []
+    for day_dir in iter_day_dirs(data_dir):
+        paths.extend(sorted((day_dir / "bin").glob("*.bin")))
     return paths
 
 
-def convert_all_round_bins(data_dir: Path) -> None:
-    bin_paths = iter_round_bin_paths(data_dir)
-    if not bin_paths:
-        raise Exception(f"no .bin files in {data_dir}/YYYY-MM-DD/bin")
-    for bin_path in bin_paths:
+def convert_day_bins(day_dir: Path) -> tuple[str, int]:
+    bin_dir = day_dir / "bin"
+    count = 0
+    for bin_path in sorted(bin_dir.glob("*.bin")):
         bp = str(bin_path)
-        txt = txt_path_for_bin(bp)
-        write_round_txt(bp, read_txt_warnings(str(txt)))
-        print(f"written {txt}")
+        write_round_txt(bp, read_txt_warnings(str(txt_path_for_bin(bp))))
+        count += 1
+    return day_dir.name, count
+
+
+def _convert_day_worker(day_dir_str: str) -> tuple[str, int]:
+    return convert_day_bins(Path(day_dir_str))
+
+
+def convert_all_round_bins(data_dir: Path) -> None:
+    day_dirs = iter_day_dirs(data_dir)
+    if not day_dirs:
+        raise Exception(f"no .bin files in {data_dir}/YYYY-MM-DD/bin")
+    workers = len(day_dirs)
+    if workers == 1:
+        name, count = convert_day_bins(day_dirs[0])
+        print(f"{name}: {count} files", flush=True)
+        print(f"Convertiti {count} file in 1 giornata.")
+        return
+    from multiprocessing import Pool
+    print(f"parallel convert: {workers} workers (1 per day)", flush=True)
+    with Pool(workers) as pool:
+        results = pool.map(_convert_day_worker, [str(d) for d in day_dirs])
+    total = 0
+    for name, count in sorted(results):
+        print(f"{name}: {count} files", flush=True)
+        total += count
+    print(f"Convertiti {total} file in {len(day_dirs)} giornate.")
 
 
 def convert_sync_bins(data_dir: Path) -> None:

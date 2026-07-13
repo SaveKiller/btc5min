@@ -10,8 +10,8 @@ from src.delta_win import delta_win_block_width, delta_win_data_header, delta_wi
 from src.lighter_risk import compute_lighter_rd
 from src.lighter_sampling import STALE_MS, lighter_stale
 from src.setup import (
-    DELTA_WIN_CHECKPOINTS, RISK_MIN_VOL_COVERAGE_RATIO, RISK_MODEL_VERSION, RISK_PRIMARY_VOL_WINDOW_SEC,
-    RISK_PROBABILITY_BUCKETS, RISK_TARGET, VOLATILITY_MIN_CHANGES, VOLATILITY_WINDOWS_SEC,
+    RISK_MIN_VOL_COVERAGE_RATIO, RISK_MODEL_VERSION, RISK_PRIMARY_VOL_WINDOW_SEC,
+    RISK_PROBABILITY_BUCKETS, RISK_TARGET, VOLATILITY_MIN_CHANGES, VOLATILITY_WINDOWS_SEC, delta_win_sec_active,
 )
 from src.txt_format import (
     _fmt_price, format_btc_cell, format_delta_cell, format_mmss, format_utc_ts,
@@ -70,7 +70,7 @@ def _checkpoint_stale_in_vol_window(indexed: dict[int, int], ticks: np.ndarray, 
 
 def _delta_win_row_live(sec: int, tick_idx: int, ticks: np.ndarray, vols: dict[int, np.ndarray],
         ptb: float, intraday_h: int, indexed: dict[int, int], artifact: dict) -> str:
-    eligible = sec in DELTA_WIN_CHECKPOINTS
+    eligible = delta_win_sec_active(sec)
     if eligible:
         if _checkpoint_stale_in_vol_window(indexed, ticks, sec, max(VOLATILITY_WINDOWS_SEC)):
             eligible = False

@@ -8,7 +8,8 @@ import numpy as np
 
 from src.delta_win import (
     delta_win_a_column_width, delta_win_txt_matches_artifact, format_delta_win_a_cell, format_delta_win_b_cell, load_delta_win_artifact,
-    parse_delta_txt, parse_quote_side, predict_delta_win_a, predict_delta_win_b,
+    lookup_delta_win_a_pool, parse_delta_txt, parse_quote_side, predict_delta_win_a, predict_delta_win_a_window, predict_delta_win_b,
+    _format_delta_win_a_from_pool, _DW_A_PCT_W,
 )
 from src.delta_win_bands import (
     DELTA_LOOKUP_MAX, clamp_delta, fit_window_for_sec_h, pool_in_range, window_bounds,
@@ -16,8 +17,8 @@ from src.delta_win_bands import (
 from src.clob_api import side_from_chainlink
 from src.settlement import outcome_from_prices
 from src.lighter_txt_format import render_lighter_round_txt
-from src.listats import li_checkpoint_samples, read_lighter_data_rows
-from src.setup import DELTA_WIN_CHECKPOINTS, VOLATILITY_WINDOWS_SEC
+from src.listats import li_delta_win_samples, read_lighter_data_rows
+from src.setup import DELTA_WIN_SEC_END, DELTA_WIN_SEC_START, DELTA_WIN_SECS, VOLATILITY_WINDOWS_SEC
 
 
 def _synthetic_ticks() -> np.ndarray:
@@ -38,36 +39,50 @@ class DeltaWinTests(unittest.TestCase):
         self.assertEqual(window_bounds(clamp_delta(180)), (148, 150))
 
     def test_pool_empirico_n(self):
-        samples = [{"sec": 90, "abs_delta": 21, "y_win": 1, "intraday_h": 2} for _ in range(7)]
-        samples += [{"sec": 90, "abs_delta": 21, "y_win": 0, "intraday_h": 2} for _ in range(3)]
+        samples = [{"sec": 90, "abs_delta": 21, "y_win": 1, "intraday_h": 2} for _ in range(18)]
+        samples += [{"sec": 90, "abs_delta": 21, "y_win": 0, "intraday_h": 2} for _ in range(12)]
         pool = pool_in_range(samples, 19, 23)
-        self.assertEqual(len(pool), 10)
-        self.assertEqual(sum(s["y_win"] for s in pool), 7)
-        table = fit_window_for_sec_h(samples, 90, 2, min_samples=10, half_base=2, expand_step=3)
+        self.assertEqual(len(pool), 30)
+        self.assertEqual(sum(s["y_win"] for s in pool), 18)
+        table = fit_window_for_sec_h(samples, 90, 2, min_samples=30)
         slot = table["21"]
-        self.assertAlmostEqual(slot["p_win"], 0.7)
-        self.assertEqual(slot["n"], 10)
+        self.assertAlmostEqual(slot["p_win"], 0.6)
+        self.assertEqual(slot["n"], 30)
         self.assertEqual(slot["lo"], 19)
         self.assertEqual(slot["hi"], 23)
-        self.assertFalse(slot["expanded"])
 
-    def test_expansion_asterisk(self):
-        samples = []
-        for i in range(8):
-            samples.append({"sec": 90, "abs_delta": 21, "y_win": 1, "intraday_h": 2})
-        for i in range(20):
-            samples.append({"sec": 90, "abs_delta": 24, "y_win": 0, "intraday_h": 2})
-        table = fit_window_for_sec_h(samples, 90, 2, min_samples=15, half_base=2, expand_step=3)
+    def test_min_samples_no_slot(self):
+        samples = [{"sec": 90, "abs_delta": 21, "y_win": 1, "intraday_h": 2} for _ in range(15)]
+        table = fit_window_for_sec_h(samples, 90, 2, min_samples=30)
+        self.assertIn("21", table)
+        self.assertNotIn("p_win", table["21"])
+
+    def test_sub_threshold_pool_without_pwin(self):
+        samples = [{"sec": 90, "abs_delta": 21, "y_win": 1, "intraday_h": 2} for _ in range(20)]
+        samples += [{"sec": 90, "abs_delta": 21, "y_win": 0, "intraday_h": 2} for _ in range(5)]
+        table = fit_window_for_sec_h(samples, 90, 2, min_samples=30)
         slot = table["21"]
-        self.assertTrue(slot["expanded"])
-        self.assertEqual(slot["n"], 28)
-        self.assertEqual(slot["lo"], 16)
-        self.assertEqual(slot["hi"], 26)
+        self.assertEqual(slot["n"], 25)
+        self.assertNotIn("p_win", slot)
 
-    def test_insufficient_max_range(self):
-        samples = [{"sec": 90, "abs_delta": 21, "y_win": 1, "intraday_h": 2} for _ in range(5)]
-        table = fit_window_for_sec_h(samples, 90, 2, min_samples=10, half_base=2, expand_step=3)
-        self.assertNotIn("21", table)
+    def test_sparse_no_percent(self):
+        self.assertEqual(format_delta_win_a_cell(None, 29, sparse=True), "    [n=29*]")
+        art = load_delta_win_artifact()
+        min_n = int(art["delta_win_window_min_samples"])
+        for sec in DELTA_WIN_SECS:
+            for d in range(0, 151):
+                pool = lookup_delta_win_a_pool(sec, d, 2, art)
+                if pool is None or pool.get("p_win") is not None:
+                    continue
+                if int(pool["n"]) >= min_n:
+                    continue
+                cell = _format_delta_win_a_from_pool(pool, art)
+                self.assertNotIn("%", cell)
+                self.assertIn("[n=", cell)
+                self.assertTrue(cell.endswith("*]"))
+                self.assertEqual(cell.index("["), _DW_A_PCT_W)
+                return
+        self.skipTest("no sub-threshold pool slot in artifact")
 
     def test_h_filter(self):
         samples = []
@@ -75,29 +90,34 @@ class DeltaWinTests(unittest.TestCase):
             samples.append({"sec": 90, "abs_delta": 21, "y_win": 1, "intraday_h": 2})
         for i in range(20):
             samples.append({"sec": 90, "abs_delta": 21, "y_win": 0, "intraday_h": 6})
-        table_h2 = fit_window_for_sec_h(samples, 90, 2, min_samples=10)
-        table_h6 = fit_window_for_sec_h(samples, 90, 6, min_samples=10)
+        table_h2 = fit_window_for_sec_h(samples, 90, 2, min_samples=20)
+        table_h6 = fit_window_for_sec_h(samples, 90, 6, min_samples=20)
         self.assertEqual(table_h2["21"]["p_win"], 1.0)
         self.assertEqual(table_h6["21"]["p_win"], 0.0)
 
-    def test_checkpoints_from_setup(self):
-        from src.setup import (
-            DELTA_WIN_CHECKPOINTS, DELTA_WIN_CHECKPOINTS_END, DELTA_WIN_CHECKPOINTS_START, DELTA_WIN_CHECKPOINTS_STEP,
-        )
-        self.assertGreater(DELTA_WIN_CHECKPOINTS_START, DELTA_WIN_CHECKPOINTS_END)
-        self.assertGreater(DELTA_WIN_CHECKPOINTS_STEP, 0)
-        self.assertEqual(DELTA_WIN_CHECKPOINTS[0], DELTA_WIN_CHECKPOINTS_START)
-        self.assertEqual(DELTA_WIN_CHECKPOINTS[-1], DELTA_WIN_CHECKPOINTS_END)
-        expect = []
-        s = DELTA_WIN_CHECKPOINTS_START
-        while s >= DELTA_WIN_CHECKPOINTS_END:
-            expect.append(s)
-            s -= DELTA_WIN_CHECKPOINTS_STEP
-        self.assertEqual(list(DELTA_WIN_CHECKPOINTS), expect)
+    def test_sec_h_index(self):
+        from src.delta_win_bands import fit_window_for_bucket
+        from src.delta_win_index import build_sec_h_index, sec_buckets
+        samples = [
+            {"sec": 90, "intraday_h": 2, "abs_delta": 21, "y_win": 1},
+            {"sec": 90, "intraday_h": 2, "abs_delta": 22, "y_win": 0},
+            {"sec": 91, "intraday_h": 3, "abs_delta": 21, "y_win": 1},
+        ]
+        idx = build_sec_h_index(samples)
+        self.assertEqual(len(idx[(90, 2)]), 2)
+        by_sec = sec_buckets(samples)
+        self.assertEqual(len(by_sec[90]), 2)
+        self.assertEqual(fit_window_for_bucket([], 90, 10), {})
+
+    def test_secs_from_setup(self):
+        self.assertGreater(DELTA_WIN_SEC_START, DELTA_WIN_SEC_END)
+        self.assertEqual(DELTA_WIN_SECS[0], DELTA_WIN_SEC_END)
+        self.assertEqual(DELTA_WIN_SECS[-1], DELTA_WIN_SEC_START)
+        self.assertEqual(list(DELTA_WIN_SECS), list(range(DELTA_WIN_SEC_END, DELTA_WIN_SEC_START + 1)))
 
     def test_delta_win_txt_matches_artifact(self):
         art = load_delta_win_artifact()
-        old_cp = "  delta_win_checkpoints: [180, 150, 120, 90, 60, 30]\n"
+        old_range = "  delta_win_sec_start: 180\n"
         new_lines = [
             "header:\n",
             f"  delta_win_model_version: {art['model_version']}\n",
@@ -105,13 +125,20 @@ class DeltaWinTests(unittest.TestCase):
             f"  delta_win_band_stratify: {art['delta_win_band_stratify']}\n",
             f"  delta_win_lookup_max: {art['delta_lookup_max']}\n",
             f"  delta_win_window_half_base: {art['delta_win_window_half_base']}\n",
-            f"  delta_win_window_expand_step: {art['delta_win_window_expand_step']}\n",
             f"  delta_win_window_min_samples: {art['delta_win_window_min_samples']}\n",
-            old_cp,
+            old_range,
+            "  delta_win_sec_end: 5\n",
             "data:\n",
         ]
         self.assertFalse(delta_win_txt_matches_artifact(new_lines, art))
-        good_lines = [l if not l.startswith("  delta_win_checkpoints:") else f"  delta_win_checkpoints: {art['checkpoints']}\n" for l in new_lines]
+        good_lines = [
+            l if not l.startswith("  delta_win_sec_start:") else f"  delta_win_sec_start: {art['sec_start']}\n"
+            for l in new_lines
+        ]
+        good_lines = [
+            l if not l.startswith("  delta_win_sec_end:") else f"  delta_win_sec_end: {art['sec_end']}\n"
+            for l in good_lines
+        ]
         self.assertTrue(delta_win_txt_matches_artifact(good_lines, art))
         self.assertEqual(parse_delta_txt("0$"), 0)
         self.assertEqual(parse_delta_txt("+0$"), 0)
@@ -124,21 +151,21 @@ class DeltaWinTests(unittest.TestCase):
     def test_format_cells(self):
         self.assertEqual(format_delta_win_b_cell(0.876), "88%")
         self.assertEqual(format_delta_win_b_cell(None), "---")
-        self.assertEqual(format_delta_win_a_cell(0.876, 31, 35, 412), "88% [31$-35$ n=412]")
-        self.assertEqual(format_delta_win_a_cell(0.64, 16, 26, 150, expanded=True), "64% [16$-26$ n=150*]")
-        self.assertEqual(format_delta_win_a_cell(0.5, 0, 2, 500), "50% [0$-2$ n=500]")
-        self.assertEqual(format_delta_win_a_cell(0.99, 148, 150, 510), "99% [148$-150$ n=510]")
-        self.assertEqual(format_delta_win_a_cell(None, 0, 0, 0), "---")
+        self.assertEqual(format_delta_win_a_cell(0.876, 412), "88% [n=412]")
+        self.assertEqual(format_delta_win_a_cell(None, 29, sparse=True), "    [n=29*]")
+        self.assertEqual(format_delta_win_a_cell(0.5, 500), "50% [n=500]")
+        self.assertEqual(format_delta_win_a_cell(0.99, 510), "99% [n=510]")
+        self.assertEqual(format_delta_win_a_cell(1.0, 39), "100%[n=39]")
+        self.assertEqual(format_delta_win_a_cell(None, 0), "---")
         self.assertEqual(delta_win_a_column_width(), 28)
         art = load_delta_win_artifact()
         mx = 0
         for h in range(1, 7):
-            for sec in DELTA_WIN_CHECKPOINTS:
+            for sec in DELTA_WIN_SECS:
                 for slot in art["delta_window_by_sec_h"][str(h)][str(sec)].values():
-                    cell = format_delta_win_a_cell(
-                        float(slot["p_win"]), int(slot["lo"]), int(slot["hi"]),
-                        int(slot["n"]), bool(slot["expanded"]),
-                    )
+                    if "p_win" not in slot:
+                        continue
+                    cell = format_delta_win_a_cell(float(slot["p_win"]), int(slot["n"]))
                     mx = max(mx, len(cell))
         self.assertLessEqual(mx, delta_win_a_column_width())
 
@@ -146,7 +173,7 @@ class DeltaWinTests(unittest.TestCase):
         art = load_delta_win_artifact()
         vols_low = {w: 10 for w in VOLATILITY_WINDOWS_SEC}
         vols_high = {w: 80 for w in VOLATILITY_WINDOWS_SEC}
-        for sec in DELTA_WIN_CHECKPOINTS:
+        for sec in DELTA_WIN_SECS:
             pa_lo = predict_delta_win_a(sec, 5, 2, art)
             pa_hi = predict_delta_win_a(sec, 200, 2, art)
             pb_lo = predict_delta_win_b(sec, 5, vols_low, 1, art)
@@ -247,7 +274,7 @@ class DeltaWinTests(unittest.TestCase):
                 "delta_lighter": 10.0, "delta_chainlink": 10.0, "move_error": 0.0, "tick_count": 300,
             }
             p.write_text(render_lighter_round_txt(header, _synthetic_ticks(), [], art), encoding="utf-8")
-            self.assertEqual(li_checkpoint_samples(p), [])
+            self.assertEqual(li_delta_win_samples(p), [])
 
     def test_real_eval_label_side_outcome_same_type(self):
         side = side_from_chainlink(100_050.0, 100_000.0)
@@ -277,8 +304,8 @@ class DeltaWinTests(unittest.TestCase):
         if not root.is_dir():
             self.skipTest("lighter dataset not mounted")
         sample = next(root.rglob("btc5m_*.txt"))
-        recs = li_checkpoint_samples(sample)
-        self.assertEqual(len(recs), len(DELTA_WIN_CHECKPOINTS))
+        recs = li_delta_win_samples(sample)
+        self.assertEqual(len(recs), len(DELTA_WIN_SECS))
         rows = read_lighter_data_rows(sample)
         self.assertEqual(len(rows), 300)
 

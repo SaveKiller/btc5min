@@ -18,7 +18,7 @@ from sklearn.linear_model import LogisticRegression
 
 from src.delta_win import brownian_win_prob, hour_bands_hash, z_score_w
 from src.listats import li_collect_delta_win_dataset, li_delta_win_audit
-from src.setup import DELTA_WIN_CHECKPOINTS, DELTA_WIN_MODEL_PATH, DELTA_WIN_MODEL_VERSION, VOLATILITY_WINDOWS_SEC
+from src.setup import DELTA_WIN_MODEL_PATH, DELTA_WIN_MODEL_VERSION, DELTA_WIN_SEC_END, DELTA_WIN_SEC_START, DELTA_WIN_SECS, VOLATILITY_WINDOWS_SEC
 
 TRAIN_WEEKS = 9
 HOLDOUT_WEEKS = 2
@@ -161,7 +161,7 @@ def _eval_method(name: str, train: list[dict], holdout: list[dict]) -> dict:
     by_sec_probs: dict[int, list[float]] = {}
     by_sec_labels: dict[int, list[int]] = {}
     specs: dict[str, dict] = {}
-    for sec in DELTA_WIN_CHECKPOINTS:
+    for sec in DELTA_WIN_SECS:
         ho = [s for s in holdout if s["sec"] == sec]
         labels = [s["y_win"] for s in ho]
         if name == "prevalence":
@@ -179,12 +179,12 @@ def _eval_method(name: str, train: list[dict], holdout: list[dict]) -> dict:
         by_sec_probs[sec] = probs
         by_sec_labels[sec] = labels
         specs[str(sec)] = spec
-    all_p = [p for sec in DELTA_WIN_CHECKPOINTS for p in by_sec_probs[sec]]
-    all_y = [y for sec in DELTA_WIN_CHECKPOINTS for y in by_sec_labels[sec]]
+    all_p = [p for sec in DELTA_WIN_SECS for p in by_sec_probs[sec]]
+    all_y = [y for sec in DELTA_WIN_SECS for y in by_sec_labels[sec]]
     week_scores = []
     for w in sorted({s["week"] for s in holdout}):
         wp, wy = [], []
-        for sec in DELTA_WIN_CHECKPOINTS:
+        for sec in DELTA_WIN_SECS:
             for s, p in zip([x for x in holdout if x["week"] == w and x["sec"] == sec], by_sec_probs[sec]):
                 wp.append(p)
                 wy.append(s["y_win"])
@@ -212,7 +212,7 @@ def _select_method(results: list[dict]) -> dict:
 
 def _fit_final_artifact(samples: list[dict], chosen_method: str) -> dict:
     models_by_sec: dict[str, dict] = {}
-    for sec in DELTA_WIN_CHECKPOINTS:
+    for sec in DELTA_WIN_SECS:
         tr = [s for s in samples if s["sec"] == sec]
         if chosen_method == "prevalence":
             p = sum(s["y_win"] for s in tr) / len(tr)
@@ -241,7 +241,8 @@ def _fit_final_artifact(samples: list[dict], chosen_method: str) -> dict:
         "status": "synthetic_calibrated",
         "target": "delta_side_wins_gamma_outcome",
         "label_source": "gamma_official_excluding_agreement_nan",
-        "checkpoints": list(DELTA_WIN_CHECKPOINTS),
+        "sec_start": DELTA_WIN_SEC_START,
+        "sec_end": DELTA_WIN_SEC_END,
         "hour_bands_hash": hour_bands_hash(),
         "vol_windows_sec": list(VOLATILITY_WINDOWS_SEC),
         "training_sample_count": len(samples),
@@ -252,7 +253,7 @@ def _fit_final_artifact(samples: list[dict], chosen_method: str) -> dict:
 
 
 def main() -> None:
-    print("collecting lighter checkpoint samples...", flush=True)
+    print("collecting lighter delta_win samples...", flush=True)
     audit = li_delta_win_audit()
     samples = li_collect_delta_win_dataset()
     train, holdout, weeks = _split_weeks(samples)
