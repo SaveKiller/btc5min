@@ -127,7 +127,7 @@ Sezione `data:` — righe ordinate per `sec` **decrescente** (300 → 1):
 
 ```
 sec  time  quote      delta    gain%             DWinA DWinB       btc  vol                         risk
-240  4:00  DOWN  61c   -28$  62.3%  66% [n=535]   93%  97206$  V30 18  V60 22  V120 31  Rq 5   Rd 4
+240  4:00  DOWN  61c   -28$  62.3%  66% [n=535]   93%  97206$  V30 18  V60 22  V120 31  Rq 5   Rs 4
 ```
 
 
@@ -142,7 +142,7 @@ sec  time  quote      delta    gain%             DWinA DWinB       btc  vol     
 | **DWinB** | Intero %, es. `93%`; stesso intervallo sec; colonna opzionale. |
 | **btc**   | `chainlink_btc` arrotondato all'intero, seguito da `$` senza spazio (es. `97235$`) |
 | **vol**   | Token `VW N` per ogni `W` in `setup.json` → `volatility_windows_sec` (es. `V30 18`, `V60 22`). Volatilità realizzata trailing in USD, intero arrotondato (`V30 0` se BTC fermo). `VW ---` se dati insufficienti o Chainlink stale sulla riga. Non è previsione forward.                                                                                                                                            |
-| **risk**  | `Rq N` rischio da mercato (`Pq0 = 1 − quota normalizzata del lato maggioritario` → bucket 1–9). `Rd N` rischio fisico (`Pz = Φ(−z)` con `z = delta_signed / (sigma_W × √secs_to_expiry)`, finestra primaria W60). `-` al posto del numero se non calcolabile. Ingresso eseguibile quando entrambi hanno valore numerico (nessuna lineetta). Stato `experimental_uncalibrated` finché non c'è calibrazione holdout. |
+| **risk**  | `Rq N` rischio di quota (`Pq0 = 1 − quota normalizzata del lato maggioritario` → bucket 1–9). `Rs N` rischio statistico (`Pz = Φ(−z)` con `z = delta_signed / (sigma_W × √secs_to_expiry)`, finestra primaria W60). `-` al posto del numero se non calcolabile. Ingresso eseguibile quando entrambi hanno valore numerico (nessuna lineetta). Stato `experimental_uncalibrated` finché non c'è calibrazione holdout. |
 
 
 **Indice R (rischio perdita a settlement):** target = outcome ufficiale header ≠ lato maggioritario scelto. Calcolo live-safe in `src/risk.py`, solo dati passati. Bucket preliminari da `risk_probability_buckets` in `setup.json`. Valutazione: `python scripts/eval_risk.py [data_dir]` → report in `data/reports/risk_eval_<timestamp>.json`. Test: `python -m unittest tests.test_risk`.
@@ -222,7 +222,7 @@ Radice dati tick in `setup.json` → `ticks_root` (default `H:\ticks\`).
 
 Header: `source: lighter_synthetic`; `intraday: Hk` (fascia oraria da `hour_bands.json` / `hour_band(market_start_ts)`); campi audit `outcome_lighter`, `outcome_agreement: TRUE` / `FALSE`, `delta_lighter`, `delta_chainlink`, `move_error`. Colonna `outcome` = Gamma ufficiale se presente, altrimenti proxy Lighter. `ptb_chainlink` / `final_chainlink` / colonna `btc` = valori Lighter. Header `delta_win_*`: versione modello `2`, metodi `[band, logistic]`, hash `hour_bands`, target, intervallo sec, periodo training, stato `synthetic_calibrated` (vedi `docs/indicator_delta_win.md`).
 
-Tabella `data:` **senza** `gain%` e **senza** `Rq`; colonne `DWinA`/`DWinB` (se in `delta_win_txt_columns`), poi `btc`, `vol`, `Rd`.
+Tabella `data:` **senza** `gain%` e **senza** `Rq`; colonne `DWinA`/`DWinB` (se in `delta_win_txt_columns`), poi `btc`, `vol`, `Rs`.
 
 Filtro build: griglia causale completa (301 confini); round 23:55 UTC esclusi (confine finale oltre il giorno CSV). Non usare `convert` / `verify` su questi file.
 

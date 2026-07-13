@@ -53,8 +53,8 @@ def _parse_dwin_a_tokens(parts: list[str], start: int, end: int) -> str | None:
 
 def parse_real_data_row(line: str) -> dict:
     parts = line.split()
-    rd_i = parts.index("Rd")
-    btc_i = next(i for i in range(6, rd_i) if _is_btc_cell(parts[i]))
+    rs_i = parts.index("Rs")
+    btc_i = next(i for i in range(6, rs_i) if _is_btc_cell(parts[i]))
     dw_a = _parse_dwin_a_tokens(parts, 6, btc_i)
     return {"sec": int(parts[0]), "delta": parse_delta_txt(parts[4]), "delta_win_a": dw_a}
 

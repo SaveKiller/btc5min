@@ -21,12 +21,12 @@ from src.setup import (
 from src.vol_stats import chainlink_stale, compute_vol_stats_by_window, tick_sec as _tick_sec
 
 RQ_COL_W = 4
-RD_COL_W = 4
-RD_GAP = 3
+RS_COL_W = 4
+RS_GAP = 3
 
 
 def risk_column_width() -> int:
-    return RQ_COL_W + RD_GAP + RD_COL_W
+    return RQ_COL_W + RS_GAP + RS_COL_W
 
 
 def _fmt_price(v: float) -> str:
@@ -129,9 +129,9 @@ def format_r_token(name: str, value: int | None) -> str:
 
 def format_risk_tokens(risk: TickRisk) -> str:
     rq = format_r_token("Rq", risk.Rq)
-    rd = format_r_token("Rd", risk.Rd)
-    gap = " " * RD_GAP
-    return f"{rq:>{RQ_COL_W}}{gap}{rd:>{RD_COL_W}}"
+    rs = format_r_token("Rs", risk.Rs)
+    gap = " " * RS_GAP
+    return f"{rq:>{RQ_COL_W}}{gap}{rs:>{RS_COL_W}}"
 
 
 def format_table_row(sec: str, time: str, quote: str, delta: str, gain_val: str, dw_part: str,
@@ -150,7 +150,7 @@ def format_table_row(sec: str, time: str, quote: str, delta: str, gain_val: str,
 
 def format_column_header() -> str:
     vol_hdr = format_vol_header()
-    risk_hdr = f"{'Rq':>{RQ_COL_W}}{' ' * RD_GAP}{'Rd':>{RD_COL_W}}"
+    risk_hdr = f"{'Rq':>{RQ_COL_W}}{' ' * RS_GAP}{'Rs':>{RS_COL_W}}"
     return (
         f"{'sec':>3}  {'time':>5}  {'quote':<9}  "
         f"{'delta':>5}  {'gain%':>7}  {delta_win_data_header()}  "
@@ -249,7 +249,7 @@ def render_round_txt(header: dict, ticks: np.ndarray, warnings: list[str],
         f"  risk_primary_vol_window_sec: {RISK_PRIMARY_VOL_WINDOW_SEC}",
         f"  risk_min_vol_coverage_ratio: {RISK_MIN_VOL_COVERAGE_RATIO}",
         f"  risk_probability_buckets: {RISK_PROBABILITY_BUCKETS}",
-        f"  risk_variants: [Rq, Rd]"]
+        f"  risk_variants: [Rq, Rs]"]
     lines.extend(delta_win_header_lines(artifact))
     if warnings:
         lines.append("  warnings:")

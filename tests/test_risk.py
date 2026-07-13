@@ -36,7 +36,7 @@ class RiskTests(unittest.TestCase):
         for i in range(ticks.shape[0]):
             if tick_sec(ticks[i]) >= 180:
                 self.assertEqual(base[i].Rq, after[i].Rq)
-                self.assertEqual(base[i].Rd, after[i].Rd)
+                self.assertEqual(base[i].Rs, after[i].Rs)
 
     def test_batch_matches_incremental(self):
         path = "data/2026-07-09/bin/btc5m_1783558200_0050.bin"
@@ -47,7 +47,7 @@ class RiskTests(unittest.TestCase):
             partial = compute_risk_state(ticks[:n], ptb)
             for i in range(n):
                 self.assertEqual(batch[i].Rq, partial[i].Rq)
-                self.assertEqual(batch[i].Rd, partial[i].Rd)
+                self.assertEqual(batch[i].Rs, partial[i].Rs)
 
     def test_partial_tick(self):
         row = _make_tick(120.0, float("nan"), float("nan"), float("nan"), float("nan"), 62000.0)
@@ -55,6 +55,8 @@ class RiskTests(unittest.TestCase):
         risk = compute_risk_state(ticks, 61900.0)[0]
         self.assertIsNone(risk.Rq)
         self.assertEqual(risk.rq_reason, "partial")
+        self.assertIsNone(risk.Rs)
+        self.assertEqual(risk.rs_reason, "partial")
         self.assertEqual(risk.eligible, "no")
 
     def test_tie_tick(self):
@@ -63,17 +65,30 @@ class RiskTests(unittest.TestCase):
         risk = compute_risk_state(ticks, 61900.0)[0]
         self.assertIsNone(risk.Rq)
         self.assertEqual(risk.rq_reason, "tie")
+        self.assertIsNone(risk.Rs)
+        self.assertEqual(risk.rs_reason, "tie")
+
+    def test_rs_stable_on_majority_flip(self):
+        ptb = 64008.09
+        btc = 64027.3
+        down_row = _make_tick(65.0, 0.47, 0.48, 0.52, 0.53, btc)
+        up_row = _make_tick(64.0, 0.57, 0.58, 0.42, 0.43, btc)
+        ticks = np.array([down_row, up_row])
+        risks = compute_risk_state(ticks, ptb)
+        self.assertEqual(risks[0].side, "Down")
+        self.assertEqual(risks[1].side, "Up")
+        self.assertEqual(risks[0].Rs, risks[1].Rs)
 
     def test_format_risk_tokens_spacing(self):
         path = "data/2026-07-09/bin/btc5m_1783558200_0050.bin"
         header, ticks, _ = read_round(path)
         risk = compute_risk_state(ticks, header["ptb_chainlink"])[100]
         tokens = format_risk_tokens(risk)
-        self.assertIn("   Rd ", tokens)
+        self.assertIn("   Rs ", tokens)
         self.assertNotIn("=", tokens)
         row = _make_tick(120.0, float("nan"), float("nan"), float("nan"), float("nan"), 62000.0)
         partial = compute_risk_state(np.array([row]), 61900.0)[0]
-        self.assertIn("Rd -", format_risk_tokens(partial))
+        self.assertIn("Rs -", format_risk_tokens(partial))
 
     def test_vol_window_past_only(self):
         path = "data/2026-07-09/bin/btc5m_1783558200_0050.bin"

@@ -7,7 +7,7 @@ import numpy as np
 from src.binary_format import OUTCOME_NAMES
 from src.clob_api import side_from_chainlink
 from src.delta_win import delta_win_block_width, delta_win_data_header, delta_win_header_lines, delta_win_row_part, load_delta_win_artifact
-from src.lighter_risk import compute_lighter_rd
+from src.lighter_risk import compute_lighter_rs
 from src.lighter_sampling import STALE_MS, lighter_stale
 from src.setup import (
     RISK_MIN_VOL_COVERAGE_RATIO, RISK_MODEL_VERSION, RISK_PRIMARY_VOL_WINDOW_SEC,
@@ -19,7 +19,7 @@ from src.txt_format import (
 )
 from src.vol_stats import compute_vol_stats_by_window, tick_sec as _tick_sec
 
-RD_COL_W = 4
+RS_COL_W = 4
 _STALL_SEC = 1.0
 
 
@@ -35,10 +35,10 @@ def format_quote_side(side: str) -> str:
     return label.ljust(9)
 
 
-def format_rd_token(value: int | None) -> str:
+def format_rs_token(value: int | None) -> str:
     if value is None:
-        return "Rd -"
-    return f"Rd {value}"
+        return "Rs -"
+    return f"Rs {value}"
 
 
 def _lighter_stale_row(boundary_ms: float, sample_ts_ms: float) -> bool:
@@ -90,14 +90,14 @@ def _delta_win_row_live(sec: int, tick_idx: int, ticks: np.ndarray, vols: dict[i
 
 
 def _format_lighter_table_row(sec: str, time: str, quote: str, delta: str, dw_part: str, btc_val: str,
-        vol_tokens: str, rd_token: str) -> str:
+        vol_tokens: str, rs_token: str) -> str:
     vol_w = vol_column_width()
     dw_w = delta_win_block_width()
     if dw_w:
         dw_part = f"{dw_part:<{dw_w}}"
     return (
         f"{sec:>3}  {time:>5}  {quote:<9}  "
-        f"{delta:>5}  {dw_part}  {btc_val:>8}  {vol_tokens:<{vol_w}}  {rd_token:>{RD_COL_W + 1}}"
+        f"{delta:>5}  {dw_part}  {btc_val:>8}  {vol_tokens:<{vol_w}}  {rs_token:>{RS_COL_W + 1}}"
     )
 
 
@@ -105,7 +105,7 @@ def _lighter_column_header() -> str:
     vol_hdr = format_vol_header()
     return (
         f"{'sec':>3}  {'time':>5}  {'quote':<9}  "
-        f"{'delta':>5}  {delta_win_data_header()}  {'btc':>8}  {vol_hdr}  {'Rd':>{RD_COL_W}}"
+        f"{'delta':>5}  {delta_win_data_header()}  {'btc':>8}  {vol_hdr}  {'Rs':>{RS_COL_W}}"
     )
 
 
@@ -114,7 +114,7 @@ def render_lighter_round_txt(header: dict, ticks: np.ndarray, warnings: list[str
     artifact = delta_win_artifact if delta_win_artifact is not None else load_delta_win_artifact()
     ptb = header["ptb_chainlink"]
     vols = compute_lighter_vols(ticks)
-    rd_vals = compute_lighter_rd(ticks, ptb)
+    rs_vals = compute_lighter_rs(ticks, ptb)
     stale_ticks = sum(1 for row in ticks if _lighter_stale_row(row[0], row[8]))
     agreement = header["outcome_agreement"]
     if agreement is True:
@@ -155,7 +155,7 @@ def render_lighter_round_txt(header: dict, ticks: np.ndarray, warnings: list[str
         f"  risk_primary_vol_window_sec: {RISK_PRIMARY_VOL_WINDOW_SEC}",
         f"  risk_min_vol_coverage_ratio: {RISK_MIN_VOL_COVERAGE_RATIO}",
         f"  risk_probability_buckets: {RISK_PROBABILITY_BUCKETS}",
-        f"  risk_variants: [Rd]"]
+        f"  risk_variants: [Rs]"]
     lines.extend(delta_win_header_lines(artifact))
     if warnings:
         lines.append("  warnings:")
@@ -174,5 +174,5 @@ def render_lighter_round_txt(header: dict, ticks: np.ndarray, warnings: list[str
         lines.append(_format_lighter_table_row(
             str(sec), format_mmss(sec), format_quote_side(side),
             format_delta_cell(chainlink, ptb, stale), dw_part, format_btc_cell(chainlink),
-            vol_tokens, format_rd_token(rd_vals[tick_idx])))
+            vol_tokens, format_rs_token(rs_vals[tick_idx])))
     return "\n".join(lines) + "\n"

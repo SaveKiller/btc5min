@@ -1,4 +1,4 @@
-"""Indice Rd su round sintetici Lighter (solo rischio fisico, no Rq)."""
+"""Indice Rs su round sintetici Lighter (solo rischio statistico, no Rq)."""
 
 import math
 
@@ -14,7 +14,7 @@ _SIGMA_EPS = 1e-9
 _STALL_SEC = 1.0
 
 
-def compute_lighter_rd(ticks: np.ndarray, ptb: float) -> list[int | None]:
+def compute_lighter_rs(ticks: np.ndarray, ptb: float) -> list[int | None]:
     vol_stats = compute_vol_stats_by_window(ticks, _STALL_SEC)
     n = ticks.shape[0]
     out: list[int | None] = []
@@ -25,7 +25,7 @@ def compute_lighter_rd(ticks: np.ndarray, ptb: float) -> list[int | None]:
         secs_to_expiry = float(row[1])
         side = side_from_chainlink(chainlink, ptb)
         stats = vol_stats[RISK_PRIMARY_VOL_WINDOW_SEC]
-        rd: int | None = None
+        rs: int | None = None
         if stale_row:
             pass
         elif not stats["valid"][i]:
@@ -38,6 +38,6 @@ def compute_lighter_rd(ticks: np.ndarray, ptb: float) -> list[int | None]:
             delta_signed = _delta_signed(chainlink, ptb, side)
             sigma_w = float(stats["sigma_w"][i])
             pz = _compute_pz(delta_signed, sigma_w, secs_to_expiry)
-            rd = prob_to_r(pz)
-        out.append(rd)
+            rs = prob_to_r(pz)
+        out.append(rs)
     return out

@@ -6,7 +6,7 @@ todos:
     content: "Creare src/lighter_sampling.py: load CSV, campionamento causale 301 punti, build ticks ndarray"
     status: completed
   - id: lighter-risk-txt
-    content: Creare src/lighter_risk.py (solo Rd) e src/lighter_txt_format.py (header con outcome/delta audit + tabella senza gain/Rq)
+    content: Creare src/lighter_risk.py (solo Rs) e src/lighter_txt_format.py (header con outcome/delta audit + tabella senza gain/Rq)
     status: completed
   - id: build-script-test
     content: Creare scripts/build_lighter_rounds.py con subcomando test-day per 2026-04-06 + cache Gamma jsonl
@@ -31,9 +31,9 @@ isProject: false
 |------|--------|
 | Label | Ibrido Gamma: fetch per ogni `start_ts`; se manca → scrivi comunque con **warning**, outcome proxy Lighter |
 | Output | `H:\ticks\lighter-rounds5m\<2615\|2616\|…>\btc5m_<start_ts>_<HHMM>.txt` |
-| Colonne data | **Senza** `gain%` e **senza** colonna `Rq`; solo `Rd` |
+| Colonne data | **Senza** `gain%` e **senza** colonna `Rq`; solo `Rs` |
 | quote | Lato da delta Lighter corrente: `"UP      "` / `"DOWN    "` (9 char, padding) |
-| Rd | Calcolato su mid Lighter + vol Lighter; lato = segno delta vs PTB Lighter |
+| Rs | Calcolato su mid Lighter + vol Lighter; lato = segno delta vs PTB Lighter |
 | Filtro round | Griglia causale **completa** (301 confini → 300 righe sec 300→1, zero gap) |
 | Mezzanotte | **Scarta** round che escono dal giorno CSV (es. 23:55 UTC) |
 | Header | Valori Lighter in campi esistenti (`ptb_chainlink`, `btc`, …); `outcome` da Gamma se c'è |
@@ -42,7 +42,7 @@ isProject: false
 | Stale | `sample_age_ms > 1000` → `delta: ---`, vol `---` |
 | Marker | `source: lighter_synthetic` in header |
 | fee_rate | `nan` |
-| risk header | `risk_variants: [Rd]` (solo Rd) |
+| risk header | `risk_variants: [Rs]` (solo Rs) |
 | Test iniziale | **Giorno intero** `raw-btc-2026-04-06.csv` → cartella `2615\` |
 
 ## Problema tecnico centrale
@@ -64,7 +64,7 @@ flowchart TD
   filter -->|no| skip[Scarta round]
   filter -->|sì| gamma[Fetch Gamma slug btc-updown-5m-T]
   gamma --> synth[Costruisci ticks ndarray + header]
-  synth --> metrics[vol_stats + Rd-only risk]
+  synth --> metrics[vol_stats + Rs-only risk]
   metrics --> txt[render_lighter_round_txt]
   txt --> out["H:/ticks/lighter-rounds5m/2615/btc5m_*.txt"]
 ```
@@ -89,7 +89,7 @@ Non toccare [`render_round_txt()`](src/txt_format.py) (feed Polymarket reali). N
 
 ### 2. [`src/lighter_risk.py`](src/lighter_risk.py) (~40 righe)
 
-Estratto minimo da [`compute_risk_state()`](src/risk.py): **solo Rd**, niente Rq/Pq0.
+Estratto minimo da [`compute_risk_state()`](src/risk.py): **solo Rs**, niente Rq/Pq0.
 
 - Lato sempre da `side_from_chainlink(mid, ptb_lighter)` (equivalente al lato quote scelto).
 - Riutilizza `compute_vol_stats_by_window()` passando `stall_sec=1.0` per coerenza con stale 1s, oppure marca stale per-riga prima del calcolo vol.
@@ -105,13 +105,13 @@ Estratto minimo da [`compute_risk_state()`](src/risk.py): **solo Rd**, niente Rq
   - `delta_chainlink` — `final_gamma - ptb_gamma` se Gamma presente, altrimenti `nan`
   - `move_error` — `delta_lighter - delta_chainlink` se entrambi i delta calcolabili, altrimenti `nan`
   - `fee_rate: nan`
-  - `risk_variants: [Rd]`
+  - `risk_variants: [Rs]`
   - `risk_label_source`: valore esplicito (es. `gamma_official_when_available`)
   - `stale_sec: 1.0` (soglia Lighter, distinta dal collector)
 - Sezione `data:` — **header tabella ridotto**:
 
 ```text
-sec   time  quote      delta       btc  V30  V60  V90  V120    Rd
+sec   time  quote      delta       btc  V30  V60  V90  V120    Rs
 ```
 
 - `format_quote_side(side) -> str` — `"UP      "` / `"DOWN    "` (9 char).
@@ -181,7 +181,7 @@ Log finale per run: round tentati / scritti / scartati (gap, mezzanotte, gamma o
 1. Aprire 2–3 `.txt` a sec diversi (es. `00:00`, `12:00`, `23:50` UTC): griglia 300→1, niente buchi in `sec`.
 2. Verificare `delta` al sec 300 ≈ `0$` e coerenza con `ptb_chainlink` header.
 3. Confrontare `outcome` header con Gamma per lo stesso slug su polymarket (se mercato esiste).
-4. Controllare colonne: **assenza** `gain%` e `Rq`; `quote` solo UP/DOWN padded; `Rd` numerico dove vol copertura ok.
+4. Controllare colonne: **assenza** `gain%` e `Rq`; `quote` solo UP/DOWN padded; `Rs` numerico dove vol copertura ok.
 5. Header: `source: lighter_synthetic`, `outcome_lighter` + `outcome_agreement` sempre presenti; `delta_lighter`, `delta_chainlink`, `move_error` sempre presenti (delta_chainlink/move_error = `nan` se Gamma incompleta); `outcome_agreement: FALSE` + warning su round discordanti.
 6. Round con tick Lighter vecchio >1s: `delta: ---` sulla riga.
 7. Verificare filtro futuro: `grep "outcome_agreement: FALSE"` trova solo i discordanti.

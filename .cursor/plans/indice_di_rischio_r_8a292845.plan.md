@@ -21,7 +21,7 @@ todos:
     content: Creare scripts/eval_risk.py e riprodurre la preview con ablation e pesi per round
     status: completed
   - id: convert-integration
-    content: Integrare nel TXT solo Rq/Rd utili, eleggibilità e metadati versione
+    content: Integrare nel TXT solo Rq/Rs utili, eleggibilità e metadati versione
     status: completed
   - id: verify-outcome
     content: Rendere i mismatch prezzi Gamma diagnostici senza invalidare l'outcome ufficiale
@@ -61,7 +61,7 @@ Finché non viene eseguita una calibrazione multi-giornata, R va chiamato **scor
 - `Pq0` basata sulla quota normalizzata è il benchmark principale da battere.
 - `Pz_W` resta una baseline/diagnostica fisica, calcolata per più finestre.
 - `Rc` non è preselezionata. Verrà costruita e adottata solo se migliora `Pq0` fuori campione.
-- `max(Rq, Rd)` può esistere soltanto come benchmark prudenziale `Rmax`, non come probabilità.
+- `max(Rq, Rs)` può esistere soltanto come benchmark prudenziale `Rmax`, non come probabilità.
 - Tick non eseguibili o con target indefinito non ricevono silenziosamente un rischio basso: mostrano `R=-` e un motivo.
 
 ## Stato attuale del repository
@@ -204,10 +204,10 @@ logit(Pc) =
 Separare sempre valore di rischio, qualità della componente ed eleggibilità dell'ingresso.
 
 - Tick partial: maggioranza corrente e book eseguibile non sono osservabili; `Rq=-`, ingresso non eleggibile. Un eventuale `Pz` su lato stimato resta diagnostica offline e non autorizza un ingresso.
-- Tie o fascia neutra attorno a 50c: target economicamente ambiguo; `Rq=-`, `Rd=-`, ingresso non eleggibile.
-- Chainlink stale sulla riga o dentro la finestra: `Rd=-`; `Rq` può restare disponibile se il CLOB è completo.
-- Storia insufficiente: `Rd=-` con motivo `insufficient_history`.
-- Volatilità nulla/quasi nulla: `Rd=-` con motivo `zero_vol`.
+- Tie o fascia neutra attorno a 50c: target economicamente ambiguo; `Rq=-`, `Rs=-`, ingresso non eleggibile.
+- Chainlink stale sulla riga o dentro la finestra: `Rs=-`; `Rq` può restare disponibile se il CLOB è completo.
+- Storia insufficiente: `Rs=-` con motivo `insufficient_history`.
+- Volatilità nulla/quasi nulla: `Rs=-` con motivo `zero_vol`.
 - Book completo ma spread/liquidità insufficienti: rischio calcolabile come diagnostica, ingresso non eseguibile.
 
 La soglia della fascia neutra, la copertura minima della finestra e le regole di liquidità devono essere esplicite in configurazione. Per la copertura si parte da un confronto fra 80% e 100% nella preview; il valore scelto viene poi congelato, senza fallback nel codice.
@@ -274,12 +274,12 @@ Aggiungere:
 Dopo la preview, mostrare inizialmente solo i componenti utili alla lettura:
 
 ```text
-... V30=18 V60=22 V120=31  Rq=5 Rd=4 eligible=full
-... V30=--- V60=--- V120=---  Rq=5 Rd=- eligible=q_only(stale)
-... V30=18 V60=22 V120=31  Rq=- Rd=- eligible=no(partial)
+... V30=18 V60=22 V120=31  Rq=5 Rs=4 eligible=full
+... V30=--- V60=--- V120=---  Rq=5 Rs=- eligible=q_only(stale)
+... V30=18 V60=22 V120=31  Rq=- Rs=- eligible=no(partial)
 ```
 
-`Rd` nel TXT usa la finestra primaria W60; tutte le `Pz_W` rimangono disponibili nel report. Le probabilità continue restano nell'output JSON/CSV di valutazione. `Rc` non viene mostrata finché non è validata.
+`Rs` nel TXT usa la finestra primaria W60; tutte le `Pz_W` rimangono disponibili nel report. Le probabilità continue restano nell'output JSON/CSV di valutazione. `Rc` non viene mostrata finché non è validata.
 
 ## Contratto del modulo
 
@@ -292,7 +292,7 @@ compute_risk_state(ticks, ptb_chainlink, vol_stats_by_window, books=None)
 Il risultato contiene:
 
 - `Pq0` e `Rq`;
-- `Pz_W` e `Rd_W`;
+- `Pz_W` e `Rs_W`;
 - qualità/eleggibilità per componente;
 - motivo di indisponibilità;
 - feature continue necessarie alla valutazione.
@@ -437,7 +437,7 @@ Registrare quote simultanee e misurare il valore incrementale rispetto al 5m. No
 6. Aggiungere test anti-look-ahead, batch-vs-live e casi limite.
 7. Implementare `scripts/eval_risk.py` e riprodurre la baseline della review.
 8. Eseguire ablation; scegliere componenti, fascia neutra e copertura, quindi congelarne i valori obbligatori in `setup.json`.
-9. Integrare inizialmente `Rq`, `Rd` W60 ed eleggibilità in `convert`.
+9. Integrare inizialmente `Rq`, `Rs` W60 ed eleggibilità in `convert`.
 10. Rendere V13 diagnostico e mantenere l'outcome dell'header come label definitiva.
 11. Rigenerare i TXT, eseguire `verify` e la suite dedicata.
 12. Aggiornare AGENTS.md e correggere il vecchio piano volatilità.

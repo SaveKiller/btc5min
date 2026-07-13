@@ -36,16 +36,16 @@ def _is_btc_cell(token: str) -> bool:
 
 def _rebuild_lighter_row(stripped: str, sec: int, row: dict, by_sec: dict, intraday_h: int, artifact: dict) -> str:
     parts = stripped.split()
-    rd_i = parts.index("Rd")
-    btc_i = next(i for i in range(4, rd_i) if _is_btc_cell(parts[i]))
+    rs_i = parts.index("Rs")
+    btc_i = next(i for i in range(4, rs_i) if _is_btc_cell(parts[i]))
     prefix = "  ".join(parts[:4])
     btc = parts[btc_i]
-    vol = "  ".join(parts[btc_i + 1:rd_i])
-    rd = " ".join(parts[rd_i:])
+    vol = "  ".join(parts[btc_i + 1:rs_i])
+    rs = " ".join(parts[rs_i:])
     dw = delta_win_row_from_data(sec, row, by_sec, intraday_h, artifact)
     if dw:
-        return f"{prefix}  {dw}  {btc}  {vol}  {rd}"
-    return f"{prefix}  {btc}  {vol}  {rd}"
+        return f"{prefix}  {dw}  {btc}  {vol}  {rs}"
+    return f"{prefix}  {btc}  {vol}  {rs}"
 
 
 def patch_delta_win(path: Path, artifact: dict, dry_run: bool = False) -> str:
@@ -77,7 +77,7 @@ def patch_delta_win(path: Path, artifact: dict, dry_run: bool = False) -> str:
     data_i = next(i for i, l in enumerate(cleaned) if l.rstrip("\n") == "data:")
     if not _has_v2_header(cleaned):
         for i, line in enumerate(cleaned):
-            if line.rstrip("\n") == "  risk_variants: [Rd]":
+            if line.rstrip("\n") == "  risk_variants: [Rs]":
                 block = [l + "\n" for l in delta_win_header_lines(artifact)]
                 cleaned[i + 1:i + 1] = block
                 data_i += len(block)

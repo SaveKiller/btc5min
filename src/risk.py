@@ -31,10 +31,10 @@ class TickRisk:
     Rq: int | None
     rq_reason: str | None
     Pz_by_window: dict[int, float]
-    Rd_by_window: dict[int, int | None]
-    rd_reason_by_window: dict[int, str | None]
-    Rd: int | None
-    rd_reason: str | None
+    Rs_by_window: dict[int, int | None]
+    rs_reason_by_window: dict[int, str | None]
+    Rs: int | None
+    rs_reason: str | None
     eligible: str
     side: str | None
     up_mid: float
@@ -96,49 +96,49 @@ def compute_risk_state(ticks: np.ndarray, ptb_chainlink: float) -> list[TickRisk
             else:
                 Pq0 = _compute_pq0(up_mid, down_mid, side)
                 Rq = prob_to_r(Pq0)
+        rs_side = side_from_chainlink(chainlink, ptb_chainlink)
         Pz_by_window: dict[int, float] = {}
-        Rd_by_window: dict[int, int | None] = {}
-        rd_reason_by_window: dict[int, str | None] = {}
+        Rs_by_window: dict[int, int | None] = {}
+        rs_reason_by_window: dict[int, str | None] = {}
         z_primary = float("nan")
         for w in VOLATILITY_WINDOWS_SEC:
             stats = vol_stats[w]
-            rd_reason: str | None = None
+            rs_reason: str | None = None
             Pz = float("nan")
-            Rd: int | None = None
+            Rs: int | None = None
             if partial:
-                rd_reason = "partial"
+                rs_reason = "partial"
+            elif rq_reason == "tie":
+                rs_reason = "tie"
             elif stale_row:
-                rd_reason = "stale"
+                rs_reason = "stale"
             elif not stats["valid"][i]:
                 if stats["stale_in_window"][i]:
-                    rd_reason = "stale"
+                    rs_reason = "stale"
                 elif stats["coverage"][i] < RISK_MIN_VOL_COVERAGE_RATIO:
-                    rd_reason = "insufficient_history"
+                    rs_reason = "insufficient_history"
                 elif stats["sigma_w"][i] <= _SIGMA_EPS:
-                    rd_reason = "zero_vol"
+                    rs_reason = "zero_vol"
                 else:
-                    rd_reason = "insufficient_history"
-            elif side is None:
-                rd_reason = "partial"
+                    rs_reason = "insufficient_history"
             else:
-                delta_signed = _delta_signed(chainlink, ptb_chainlink, side)
+                delta_signed = _delta_signed(chainlink, ptb_chainlink, rs_side)
                 sigma_w = float(stats["sigma_w"][i])
                 Pz = _compute_pz(delta_signed, sigma_w, secs_to_expiry)
-                Rd = prob_to_r(Pz)
+                Rs = prob_to_r(Pz)
                 if w == RISK_PRIMARY_VOL_WINDOW_SEC:
                     z_primary = delta_signed / (sigma_w * math.sqrt(secs_to_expiry))
             Pz_by_window[w] = Pz
-            Rd_by_window[w] = Rd
-            rd_reason_by_window[w] = rd_reason
-        Rd_primary = Rd_by_window[RISK_PRIMARY_VOL_WINDOW_SEC]
-        rd_reason = rd_reason_by_window[RISK_PRIMARY_VOL_WINDOW_SEC]
-        if partial or rq_reason == "tie" or Rq is None or Rd_primary is None:
+            Rs_by_window[w] = Rs
+            rs_reason_by_window[w] = rs_reason
+        Rs_primary = Rs_by_window[RISK_PRIMARY_VOL_WINDOW_SEC]
+        rs_reason = rs_reason_by_window[RISK_PRIMARY_VOL_WINDOW_SEC]
+        if partial or rq_reason == "tie" or Rq is None or Rs_primary is None:
             eligible = "no"
         else:
             eligible = "yes"
         out.append(TickRisk(
-            Pq0=Pq0, Rq=Rq, rq_reason=rq_reason, Pz_by_window=Pz_by_window, Rd_by_window=Rd_by_window,
-            rd_reason_by_window=rd_reason_by_window, Rd=Rd_primary, rd_reason=rd_reason, eligible=eligible,
+            Pq0=Pq0, Rq=Rq, rq_reason=rq_reason, Pz_by_window=Pz_by_window, Rs_by_window=Rs_by_window,
+            rs_reason_by_window=rs_reason_by_window, Rs=Rs_primary, rs_reason=rs_reason, eligible=eligible,
             side=side, up_mid=up_mid, down_mid=down_mid, z_primary=z_primary))
     return out
-
