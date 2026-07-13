@@ -22,9 +22,18 @@ Strategie:
 A) Se si è già dentro, prima del mismatch, si può usare il mismatch per uscire con poco guadagno o poca perdita, in modo prudenziale, evitando il risultato del round (positivo o negativo)
 B) Se si è fuori, prima del mismatch, si può entrare nella direzione della quota maggioritaria, quindi contro il delta, e sperare nell'inversione.
 
-
 3. gap-chainlink (btc5m_1783559700_0115)
 Intorno al 220 c'è una disconnessione del feed dei prezzi chainlink, quindi il prezzo bitcoin rimane fisso, il delta rimane fisso, mentre le quote variano normalmente. Il meccanismo di riconoscimento dello stall entra in funzione e risolve in circa 20 secondi. In quel lasso di tempo si può solo basarci sulle quote, quindi nel caso ci si trovi dentro, si può pensare 
 di uscire anticipatamente per via del problema con i prezzi.
 
+4. 5-candles
+Si deve fare una statistica che mappa il numero di candele consecutive, verdi o rosse, 
+per esempio 5, e sfruttare la rarità dell'evento di 6 candele di uno stesso colore, 
+per poter andare sulla quota minoritaria, confidando nell'inversione.
 
+5. quote 90-95c vs 75-85
+Ci sono due tipi di strategie: 
+1) quasi sicure, si agirano intorno ai 90c - 95C
+2) meno sicure, tra i 75c e gli 85c
+per ognuna c'è un payout diverso, non è detto che il payout di quelle ad alta probabilità 
+sia proporzionalmente più vantaggioso dell'altro, bisogna fare uno studio.
