@@ -58,8 +58,23 @@ export function renderStakeButtons() {
 }
 
 
+const UTC_HOUR_MARKETS = [
+    "Sydney, Tokyo", "Sydney, Tokyo", "Sydney, Tokyo", "Sydney, Tokyo", "Sydney, Tokyo", "Sydney, Tokyo",
+    "Tokyo", "Tokyo, Londra", "Tokyo, Londra", "Londra", "Londra", "Londra", "Londra",
+    "Londra, New York", "Londra, New York", "Londra, New York",
+    "New York", "New York", "New York", "New York", "New York",
+    "Sydney, New York", "Sydney", "Sydney",
+];
+
+
+function marketsForHourUtc(hourUtc) {
+    return UTC_HOUR_MARKETS[parseInt(hourUtc.split(":")[0], 10)] ?? "";
+}
+
+
 export function renderRoundPickerDays(days, onDaySelect) {
     const menu = $("roundPickerMenu");
+    menu.classList.remove("round-picker-rounds", "round-picker-hours");
     menu.innerHTML = days.map((d) => `
         <li><button class="dropdown-item round-day-btn" type="button" data-day="${d.day_utc}">
             ${d.day_utc}<span class="text-muted-app ms-1">(${d.count})</span>
@@ -77,14 +92,17 @@ export function renderRoundPickerDays(days, onDaySelect) {
 
 export function renderRoundPickerHours(dayUtc, hours, onBack, onHourSelect) {
     const menu = $("roundPickerMenu");
+    menu.classList.remove("round-picker-rounds");
+    menu.classList.add("round-picker-hours");
     menu.innerHTML = `
         <li><button class="dropdown-item round-picker-back" type="button"><i class="bi bi-chevron-left me-1"></i>Giorni</button></li>
         <li><hr class="dropdown-divider"></li>
         <li><h6 class="dropdown-header">${dayUtc} UTC</h6></li>
         ${hours.map((h) => `
         <li><button class="dropdown-item round-hour-btn" type="button" data-hour="${h.hour_utc}">
-            ${h.hour_utc}<span class="text-muted-app ms-1">(${h.count})</span>
-            <i class="bi bi-chevron-right float-end opacity-50"></i>
+            <span class="round-hour-time">${h.hour_utc}<span class="text-muted-app ms-1">(${h.count})</span></span>
+            <span class="round-hour-markets">${marketsForHourUtc(h.hour_utc)}</span>
+            <i class="bi bi-chevron-right round-hour-chevron"></i>
         </button></li>`).join("")}`;
     menu.querySelector(".round-picker-back").addEventListener("click", (e) => {
         e.preventDefault();
@@ -103,6 +121,8 @@ export function renderRoundPickerHours(dayUtc, hours, onBack, onHourSelect) {
 
 export function renderRoundPickerRounds(dayUtc, hourUtc, rounds, onBack, onSelect) {
     const menu = $("roundPickerMenu");
+    menu.classList.remove("round-picker-hours");
+    menu.classList.add("round-picker-rounds");
     const items = rounds.map((r) => {
         const cls = r.valid ? "" : "disabled";
         const title = r.valid ? "" : ` title="${r.reason || "invalid"}"`;
@@ -161,16 +181,51 @@ export function applyButtonPreviews(tick, previews) {
 }
 
 
+function dwinPctForSide(sideLabel, refSide, rawPct) {
+    if (rawPct == null || refSide == null) return null;
+    const side = sideLabel === "UP" ? "Up" : "Down";
+    return side === refSide ? rawPct : 100 - rawPct;
+}
+
+
+function riskForSide(sideLabel, tick) {
+    const key = sideLabel === "UP" ? "Up" : "Down";
+    const r = tick?.risk?.[key];
+    return { rq: r?.rq ?? "—", rs: r?.rs ?? "—" };
+}
+
+
+function sideRiskHtml(rq, rs) {
+    const rqNum = typeof rq === "number" ? rq : null;
+    const rsNum = typeof rs === "number" ? rs : null;
+    const rqTxt = rqNum != null ? String(rqNum) : "—";
+    const rsTxt = rsNum != null ? String(rsNum) : "—";
+    if (rqNum == null || rsNum == null) {
+        return `<div class="side-risk px-2 pb-2">Rq ${rqTxt}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Rs ${rsTxt}</div>`;
+    }
+    const diff = Math.abs(rqNum - rsNum);
+    if (diff < 2) {
+        return `<div class="side-risk px-2 pb-2">Rq ${rqTxt}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Rs ${rsTxt}</div>`;
+    }
+    const rqLow = rqNum < rsNum;
+    const rqClass = rqLow ? "risk-val-low" : "risk-val-high";
+    const rsClass = rqLow ? "risk-val-high" : "risk-val-low";
+    return `<div class="side-risk side-risk-mismatch px-2 pb-2"><span class="${rqClass}">Rq ${rqTxt}</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="${rsClass}">Rs ${rsTxt}</span></div>`;
+}
+
+
 function signalCardHtml(side, tick) {
+    const refSide = tick?.dwin_ref_side;
     const dwinA = tick?.dwin_a;
     const dwinB = tick?.dwin_b;
-    const rq = tick?.rq ?? "—";
-    const rs = tick?.rs ?? "—";
+    const { rq, rs } = riskForSide(side, tick);
     const sideLabel = side.toUpperCase();
-    const aPct = dwinA?.p_win_pct != null ? `${dwinA.p_win_pct}%` : "—";
+    const aPctVal = dwinPctForSide(side, refSide, dwinA?.p_win_pct);
+    const bPctVal = dwinPctForSide(side, refSide, dwinB?.p_win_pct);
+    const aPct = aPctVal != null ? `${aPctVal}%` : "—";
     const aN = dwinA?.n != null ? `n=${dwinA.n}` : "n=—";
-    const bPct = dwinB?.p_win_pct != null ? `${dwinB.p_win_pct}%` : "—";
-    return `<div class="row g-0"><div class="col-6 model-split p-2"><div class="tiny text-muted-app">Model A · ${aN}</div><div class="signal-value text-success">${aPct} <span class="fs-6 text-muted-app">${sideLabel}</span></div><div class="model-details">Rq ${rq}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Rs ${rs}</div></div><div class="col-6 model-split p-2"><div class="tiny text-muted-app">Model B</div><div class="signal-value text-success">${bPct} <span class="fs-6 text-muted-app">${sideLabel}</span></div><div class="model-details">Rq ${rq}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Rs ${rs}</div></div></div>`;
+    const bPct = bPctVal != null ? `${bPctVal}%` : "—";
+    return `<div class="row g-0"><div class="col-6 model-split p-2"><div class="tiny text-muted-app">Model A · ${aN}</div><div class="signal-value text-success">${aPct} <span class="signal-side-label text-muted-app">${sideLabel}</span></div></div><div class="col-6 model-split p-2"><div class="tiny text-muted-app">Model B</div><div class="signal-value text-success">${bPct} <span class="signal-side-label text-muted-app">${sideLabel}</span></div></div></div>${sideRiskHtml(rq, rs)}`;
 }
 
 
@@ -227,23 +282,36 @@ export function renderTick(state) {
 }
 
 
-function orderRowHtml(o) {
-    const sideCls = o.side === "Up" ? "text-success" : "text-danger";
-    const rowCls = o.side === "Down" ? "order-row down" : "order-row";
-    const mtm = o.mtm_available && o.mtm_usd != null ? `$${o.mtm_usd >= 0 ? "+" : ""}${o.mtm_usd.toFixed(2)}` : "Pending";
-    const badgeCls = o.mtm_available && o.mtm_usd != null ? (o.mtm_usd >= 0 ? "text-bg-success" : "text-bg-danger") : "text-bg-secondary";
+function orderMtmBadge(o) {
+    if (!o.mtm_available || o.mtm_usd == null) return { text: "Pending", cls: "order-mtm-pending" };
+    return {
+        text: `$${o.mtm_usd >= 0 ? "+" : ""}${o.mtm_usd.toFixed(2)}`,
+        cls: o.mtm_usd >= 0 ? "history-up" : "history-down",
+    };
+}
+
+
+function orderDetailLine(o) {
     const win = o.profit_if_win_usd != null ? ` · WIN $${o.profit_if_win_usd.toFixed(2)}` : "";
-    const mtmLine = o.mtm_available && o.mtm_usd != null ? ` · MTM $${o.mtm_usd.toFixed(2)}` : "";
-    return `<div class="${rowCls} rounded p-2 mb-2 d-flex align-items-center justify-content-between" data-order-id="${o.id}"><div><strong class="${sideCls}">${o.side.toUpperCase()}</strong><span class="text-muted-app mx-2">·</span><span>$${o.size_usd.toFixed(2)}</span><div class="tiny text-muted-app">Entry $${o.entry_btc?.toFixed(0) ?? "—"} · sec ${o.entry_sec} · Quote ${o.best_ask_c}c · Payout $${o.payout_if_win_usd?.toFixed(2) ?? "—"}${mtmLine}${win}</div></div><div class="d-flex align-items-center gap-2"><span class="badge order-mtm-badge ${badgeCls}">${mtm}</span><button class="btn btn-sm btn-outline-secondary cancel-order-btn" data-id="${o.id}" type="button">Cancel</button><button class="btn btn-sm btn-outline-light close-order-btn" data-id="${o.id}" type="button" ${o.close_enabled ? "" : "disabled"}>Close</button></div></div>`;
+    return `Entry $${o.entry_btc?.toFixed(0) ?? "—"} · sec ${o.entry_sec} · Quote ${o.best_ask_c}c · Payout $${o.payout_if_win_usd?.toFixed(2) ?? "—"}${win}`;
+}
+
+
+function orderRowHtml(o) {
+    const sideCls = o.side === "Up" ? "order-side-up" : "order-side-down";
+    const rowCls = o.side === "Down" ? "order-row down" : "order-row";
+    const { text: mtm, cls: badgeCls } = orderMtmBadge(o);
+    return `<div class="${rowCls} rounded p-2 mb-2 d-flex align-items-center justify-content-between" data-order-id="${o.id}"><div><strong class="${sideCls}">${o.side.toUpperCase()}</strong><span class="text-muted-app mx-2">·</span><span>$${o.size_usd.toFixed(2)}</span><div class="tiny text-muted-app order-detail-line">${orderDetailLine(o)}</div></div><div class="d-flex align-items-center gap-2"><span class="badge history-side-badge order-mtm-badge ${badgeCls}">${mtm}</span><button class="btn btn-sm btn-outline-secondary cancel-order-btn" data-id="${o.id}" type="button">Cancel</button><button class="btn btn-sm btn-outline-light close-order-btn" data-id="${o.id}" type="button" ${o.close_enabled ? "" : "disabled"}>Close</button></div></div>`;
 }
 
 
 function patchOrderRow(row, o) {
-    const mtm = o.mtm_available && o.mtm_usd != null ? `$${o.mtm_usd >= 0 ? "+" : ""}${o.mtm_usd.toFixed(2)}` : "Pending";
-    const badgeCls = o.mtm_available && o.mtm_usd != null ? (o.mtm_usd >= 0 ? "text-bg-success" : "text-bg-danger") : "text-bg-secondary";
+    const { text: mtm, cls: badgeCls } = orderMtmBadge(o);
     const badge = row.querySelector(".order-mtm-badge");
     badge.textContent = mtm;
-    badge.className = `badge order-mtm-badge ${badgeCls}`;
+    badge.className = `badge history-side-badge order-mtm-badge ${badgeCls}`;
+    const detail = row.querySelector(".order-detail-line");
+    if (detail) detail.textContent = orderDetailLine(o);
     const btn = row.querySelector(".close-order-btn");
     btn.disabled = !o.close_enabled;
 }
@@ -273,13 +341,20 @@ export function renderOrders(orders) {
 
 export function renderHistory(rows) {
     $("historyTableBody").innerHTML = rows.map((r) => {
-        const dirCls = r.direction === "Up" ? "text-bg-success" : "text-bg-danger";
-        const resCls = r.result === "won" ? "text-success" : (r.result === "lost" ? "text-danger" : "text-muted-app");
-        const pnlCls = (r.pnl_usd ?? 0) >= 0 ? "text-success" : "text-danger";
+        const sideBadge = (side) => {
+            if (!side || side === "unknown") return "—";
+            const cls = side === "Up" ? "history-up" : "history-down";
+            return `<span class="badge history-side-badge ${cls}">${side.toUpperCase()}</span>`;
+        };
+        const pnlCls = r.pnl_usd == null ? "" : ((r.pnl_usd ?? 0) >= 0 ? "history-val-pos" : "history-val-neg");
         const pnl = r.pnl_usd != null ? `${r.pnl_usd >= 0 ? "+" : ""}$${r.pnl_usd.toFixed(2)}` : "—";
-        const entry = r.entry_btc != null ? Math.round(r.entry_btc) : "—";
-        const exit = r.exit_btc != null ? Math.round(r.exit_btc) : "—";
-        return `<tr><td>${r.date_utc}</td><td>${r.time_utc}</td><td><span class="badge ${dirCls}">${r.direction.toUpperCase()}</span></td><td>$${r.size_usd.toFixed(2)}</td><td>${r.entry_sec}</td><td>${r.exit_sec ?? "—"}</td><td>${entry} / ${exit}</td><td><span class="${resCls}">${r.result || "—"}</span></td><td class="text-end ${pnlCls} fw-semibold">${pnl}</td></tr>`;
+        const finalCls = r.final_pnl_usd == null ? "" : ((r.final_pnl_usd ?? 0) >= 0 ? "history-val-pos" : "history-val-neg");
+        const finalPnl = r.final_pnl_usd != null ? `${r.final_pnl_usd >= 0 ? "+" : ""}$${r.final_pnl_usd.toFixed(2)}` : "—";
+        const entryQ = r.entry_quote_c != null ? `${r.entry_quote_c}c` : "—";
+        const exitQ = r.exit_quote_c != null ? `${r.exit_quote_c}c` : "—";
+        const entry = `${entryQ} / ${r.entry_sec}s`;
+        const exit = r.exit_sec != null ? `${exitQ} / ${r.exit_sec}s` : "—";
+        return `<tr><td>${r.date_utc}</td><td>${r.time_utc}</td><td>${sideBadge(r.direction)}</td><td>${sideBadge(r.outcome)}</td><td>$${r.size_usd.toFixed(2)}</td><td>${entry}</td><td>${exit}</td><td class="text-end ${finalCls} fw-semibold">${finalPnl}</td><td class="text-end ${pnlCls} fw-semibold">${pnl}</td></tr>`;
     }).join("");
 }
 

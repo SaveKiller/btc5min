@@ -116,8 +116,8 @@ class OrderEngine:
         return {**snap, "open": open_preview}
 
     def prune_seek(self, sec: int) -> None:
-        """Seek indietro (sec più alto): rimuove placement futuri; riapre close manuali nel futuro."""
-        self.open_orders = [o for o in self.open_orders if o["entry_sec"] <= sec]
+        """Seek: ordini aperti solo se già piazzati (entry_sec >= sec); riapre close manuali nel futuro."""
+        self.open_orders = [o for o in self.open_orders if o["entry_sec"] >= sec]
         revived: list[dict] = []
         kept_closed: list[dict] = []
         for c in self.closed_orders:

@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 
 from src.binary_format import read_round
-from src.risk import compute_risk_state, prob_to_r
+from src.risk import compute_risk_state, compute_side_risks, prob_to_r
 from src.txt_format import format_risk_tokens
 from src.setup import RISK_PROBABILITY_BUCKETS, RISK_PRIMARY_VOL_WINDOW_SEC
 from src.vol_stats import compute_vol_stats_by_window, tick_sec
@@ -78,6 +78,25 @@ class RiskTests(unittest.TestCase):
         self.assertEqual(risks[0].side, "Down")
         self.assertEqual(risks[1].side, "Up")
         self.assertEqual(risks[0].Rs, risks[1].Rs)
+
+    def test_side_risks_match_canonical_feed(self):
+        path = "data/2026-07-09/bin/btc5m_1783558200_0050.bin"
+        header, ticks, _ = read_round(path)
+        ptb = header["ptb_chainlink"]
+        canonical = compute_risk_state(ticks, ptb)
+        per_side = compute_side_risks(ticks, ptb)
+        from src.clob_api import side_from_chainlink
+        for i in range(ticks.shape[0]):
+            maj = canonical[i].side
+            delta_side = side_from_chainlink(float(ticks[i, 6]), ptb)
+            if maj is not None:
+                self.assertEqual(per_side[i][maj]["rq"], canonical[i].Rq)
+            self.assertEqual(per_side[i][delta_side]["rs"], canonical[i].Rs)
+
+    def test_side_risks_minority_higher_rq(self):
+        row = _make_tick(120.0, 0.40, 0.41, 0.58, 0.59, 62000.0)
+        per_side = compute_side_risks(np.array([row]), 61900.0)[0]
+        self.assertLess(per_side["Down"]["rq"], per_side["Up"]["rq"])
 
     def test_format_risk_tokens_spacing(self):
         path = "data/2026-07-09/bin/btc5m_1783558200_0050.bin"

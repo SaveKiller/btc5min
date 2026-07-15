@@ -11,6 +11,7 @@ from dashv2.txt_rows import parse_txt_data_rows, txt_path_for_bin_path
 from src.binary_format import OUTCOME_NAMES, read_round
 from src.book import BookSnapshot
 from src.clob_api import majority_side
+from src.risk import compute_side_risks
 
 
 def sec_from_secs_to_expiry(secs_to_expiry: float) -> int:
@@ -108,6 +109,7 @@ class RoundRepository:
         txt_rows = parse_txt_data_rows(txt_path)
         ptb = float(header["ptb_chainlink"])
         fee_rate = float(header["fee_rate"])
+        side_risks = compute_side_risks(ticks, ptb)
         by_sec: dict[int, dict] = {}
         books_by_sec: dict[int, BookSnapshot] = {}
         all_secs: set[int] = set(range(1, 301))
@@ -139,7 +141,7 @@ class RoundRepository:
                 "down_bid": None if partial else down_bid, "down_ask": None if partial else down_ask,
                 "delta_usd": delta_usd, "partial": partial, "gap": gap,
                 "up_mid_c": up_mid_c, "down_mid_c": down_mid_c, "majority_side": maj,
-                "vol": txt["vol"], "rq": txt["rq"], "rs": txt["rs"],
+                "vol": txt["vol"], "side_risk": side_risks[i],
                 "dwin_a": txt["dwin_a"], "dwin_b_pct": txt["dwin_b_pct"],
             }
             books_by_sec[sec] = books[i]

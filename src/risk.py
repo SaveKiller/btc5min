@@ -142,3 +142,35 @@ def compute_risk_state(ticks: np.ndarray, ptb_chainlink: float) -> list[TickRisk
             rs_reason_by_window=rs_reason_by_window, Rs=Rs_primary, rs_reason=rs_reason, eligible=eligible,
             side=side, up_mid=up_mid, down_mid=down_mid, z_primary=z_primary))
     return out
+
+
+def compute_side_risks(ticks: np.ndarray, ptb_chainlink: float) -> list[dict[str, dict[str, int | None]]]:
+    """Rq/Rs per lato Up e Down: rischio perdita a settlement se si punta quel token."""
+    vol_stats = compute_vol_stats_by_window(ticks, STALL_RECONNECT_SEC)
+    stats = vol_stats[RISK_PRIMARY_VOL_WINDOW_SEC]
+    out: list[dict[str, dict[str, int | None]]] = []
+    for i in range(ticks.shape[0]):
+        row = ticks[i]
+        partial = tick_quotes_missing(row)
+        stale_row = chainlink_stale(row[0], row[8], STALL_RECONNECT_SEC)
+        chainlink = float(row[6])
+        secs_to_expiry = float(row[1])
+        sides: dict[str, dict[str, int | None]] = {
+            "Up": {"rq": None, "rs": None},
+            "Down": {"rq": None, "rs": None},
+        }
+        tie = False
+        if not partial:
+            up_mid = (row[2] + row[3]) / 2.0
+            down_mid = (row[4] + row[5]) / 2.0
+            tie = _is_tie(up_mid, down_mid)
+            if not tie:
+                for side in ("Up", "Down"):
+                    sides[side]["rq"] = prob_to_r(_compute_pq0(up_mid, down_mid, side))
+        if not partial and not tie and not stale_row and stats["valid"][i]:
+            sigma_w = float(stats["sigma_w"][i])
+            for side in ("Up", "Down"):
+                pz = _compute_pz(_delta_signed(chainlink, ptb_chainlink, side), sigma_w, secs_to_expiry)
+                sides[side]["rs"] = prob_to_r(pz)
+        out.append(sides)
+    return out

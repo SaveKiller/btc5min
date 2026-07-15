@@ -250,12 +250,18 @@ document.getElementById("buyDownBtn").addEventListener("click", () => {
 
 document.getElementById("exportCsvBtn").addEventListener("click", () => {
     const rows = state.historyRows;
-    const header = ["Date","Time","Direction","Size","Entry Sec","Exit Sec","Entry BTC","Exit BTC","Result","PnL"];
+    const header = ["Date","Time","Direction","Outcome","Size","Entry","Exit","Final","PnL"];
     const lines = [header.join(",")];
-    rows.forEach((r) => lines.push([
-        r.date_utc, r.time_utc, r.direction, r.size_usd, r.entry_sec, r.exit_sec ?? "",
-        r.entry_btc ?? "", r.exit_btc ?? "", r.result ?? "", r.pnl_usd ?? "",
-    ].join(",")));
+    rows.forEach((r) => {
+        const entryQ = r.entry_quote_c != null ? `${r.entry_quote_c}c` : "—";
+        const exitQ = r.exit_quote_c != null ? `${r.exit_quote_c}c` : "—";
+        const entry = `${entryQ} / ${r.entry_sec}s`;
+        const exit = r.exit_sec != null ? `${exitQ} / ${r.exit_sec}s` : "";
+        lines.push([
+            r.date_utc, r.time_utc, r.direction, r.outcome ?? "", r.size_usd, entry, exit,
+            r.final_pnl_usd ?? "", r.pnl_usd ?? "",
+        ].join(","));
+    });
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);

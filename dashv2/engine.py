@@ -13,22 +13,18 @@ from dashv2.orders import OrderEngine
 from dashv2.rounds import LoadedRound, RoundRepository
 
 
-def _orient_dwin(tick: dict) -> dict:
-    """DWinA/B orientati dal segno del delta: lato opposto mostra complemento."""
+def _dwin_public(tick: dict) -> dict:
+    """DWinA/B dal txt: P(vittoria) per il lato del segno delta (come nel feed)."""
     delta = tick.get("delta_usd")
     dwin_a = tick.get("dwin_a")
     dwin_b = tick.get("dwin_b_pct")
-    delta_side = "Up" if delta is not None and delta >= 0 else "Down"
-    out_a = out_b = None
-    if dwin_a and dwin_a.get("p_win") is not None:
-        p = dwin_a["p_win"]
-        if delta_side == "Down": p = 1.0 - p
-        out_a = {"p_win_pct": int(round(p * 100)), "n": dwin_a["n"], "side": delta_side}
-    if dwin_b is not None:
-        p = dwin_b
-        if delta_side == "Down": p = 100 - p
-        out_b = {"p_win_pct": p, "side": delta_side}
-    return {"dwin_a": out_a, "dwin_b": out_b, "delta_side": delta_side if delta is not None else None}
+    ref = "Up" if delta is not None and delta >= 0 else ("Down" if delta is not None else None)
+    a_pct = int(round(dwin_a["p_win"] * 100)) if dwin_a and dwin_a.get("p_win") is not None else None
+    return {
+        "dwin_ref_side": ref,
+        "dwin_a": {"p_win_pct": a_pct, "n": dwin_a["n"] if dwin_a else None},
+        "dwin_b": {"p_win_pct": dwin_b},
+    }
 
 
 def _public_tick(tick: dict | None, sec: int, seq: int, gap: bool) -> dict:
@@ -36,19 +32,25 @@ def _public_tick(tick: dict | None, sec: int, seq: int, gap: bool) -> dict:
         return {
             "seq": seq, "sec": sec, "gap": True, "chainlink_btc": None, "delta_usd": None,
             "up_mid_c": None, "down_mid_c": None, "up_ask_c": None, "down_ask_c": None,
-            "vol": {}, "rq": None, "rs": None, "dwin_a": None, "dwin_b": None, "tradable": False,
+            "vol": {}, "risk": _empty_side_risk(), "dwin_ref_side": None,
+            "dwin_a": None, "dwin_b": None, "tradable": False,
         }
-    dwin = _orient_dwin(tick)
+    dwin = _dwin_public(tick)
     return {
         "seq": seq, "sec": sec, "gap": False, "chainlink_btc": tick["chainlink_btc"],
         "chainlink_stale": tick["chainlink_stale"], "delta_usd": tick["delta_usd"],
         "up_mid_c": tick["up_mid_c"], "down_mid_c": tick["down_mid_c"],
         "up_ask_c": int(round(tick["up_ask"] * 100)) if tick["up_ask"] is not None else None,
         "down_ask_c": int(round(tick["down_ask"] * 100)) if tick["down_ask"] is not None else None,
-        "majority_side": tick["majority_side"], "vol": tick["vol"], "rq": tick["rq"], "rs": tick["rs"],
-        "dwin_a": dwin["dwin_a"], "dwin_b": dwin["dwin_b"], "delta_side": dwin["delta_side"],
+        "majority_side": tick["majority_side"], "vol": tick["vol"], "risk": tick["side_risk"],
+        "dwin_ref_side": dwin["dwin_ref_side"], "dwin_a": dwin["dwin_a"], "dwin_b": dwin["dwin_b"],
         "tradable": not tick["partial"] and not tick["gap"] and tick["chainlink_btc"] is not None,
     }
+
+
+def _empty_side_risk() -> dict:
+    blank = {"rq": None, "rs": None}
+    return {"Up": dict(blank), "Down": dict(blank)}
 
 
 class ReplayEngine:
