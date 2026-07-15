@@ -9,13 +9,14 @@ esistente in polymarket:
 
 "[https://polymarket.com/event/btc-updown-5m-1783238400](https://polymarket.com/event/btc-updown-5m-1783238400)"
 
-Lo studio può essere fatto in molti modi ma per iniziare 
-deve comprendere un log di tutte le scommesse di questa
-pagina che si susseguono ogni 5 minuti. Durante i 5 minuti deve tenere 
-in memoria i dati numerici di ask e bid associati al timestamp e in 
-particolare al tempo (in sec) mancante alla scadenza della scommessa.
+### Collector
+
+Lo studio deve comprendere una raccolta di tutte le scommesse di questa
+pagina che si susseguono ogni 5 minuti. Deve salvare l'intero lob al timestamp e il tempo (in sec) mancante alla scadenza della scommessa.
 Allo scadere questi dati vanno scritti in un file binario rileggibile 
 in seguito. 
+
+### Strategies
 
 In base a tutti questi file di log poi si dovranno elaborare
 strategie per capire se e quando puntare per poter avere un gain che va
@@ -24,9 +25,134 @@ Cioè l'obbiettivo del progetto è proprio trovare un  meccanismo di entrata
 nela scommessa che permetta di avere un bilancio positivo oltre
 le normali vincite/perdite che si annullano a vicenda.
 
-Valutare se può essere utile associare le scommesse ogni 5 minuti con
-equivalenti da 15 min o 1 ora in modo collegato per compensare eventuali
-perdite o in modo da avere un sistema più solido.
+### Dashboard
+
+E' inclusa una webapp dashboard che permetta di eseguire i replay dei round in una ui personalizzata e completa di tutte le info possibili, sia quelle fornite dall'api di polymarket sia info statistiche calcolate successivamente.
+
+---
+
+
+
+## Dashboard (replay round)
+
+Interfaccia web per **replay** dei round salvati in `data/`: timeline 1 Hz, chart candele BTC, ladder delta, quote Up/Down, indicatori dal `.txt` (vol, Rq/Rs, DWinA/B), simulazione ordini sul book `.bin` con fee CLOB, history locale delle run completate.
+
+**Avvio:** `dashv2.bat` oppure `python -m dashv2` dalla root repo → apre `http://127.0.0.1:8780/` (host/porta in `dashv2/setup.json`).
+
+**Dipendenze Python:** `pip install -r dashv2/requirements.txt` (Flask-SocketIO, eventlet). Nessuna build frontend: HTML/CSS/JS serviti da `dashv2/static/`.
+
+### Architettura
+
+Due processi `multiprocessing` con `spawn`, avviati da `[dashv2/__main__.py](dashv2/__main__.py)`; comunicazione tramite due pipe unidirezionali (`[dashv2/ipc.py](dashv2/ipc.py)`: envelope `request` / `response` / `event`). Fail-fast: se un processo termina, l’altro viene killato.
+
+```
+Browser  ←Socket.IO→  dashv2/server.py (Flask, solo bridge)
+                              ↕ pipe
+                       dashv2/engine.py (unica fonte di verità)
+                              ↓
+              dashv2/rounds.py + orders.py + history.py + src/*
+```
+
+
+| Processo   | Modulo                                 | Ruolo                                                                                                         |
+| ---------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Server** | `[dashv2/server.py](dashv2/server.py)` | Serve `static/`, bridge Socket.IO↔pipe; **nessuna** business logic; un solo client controller per sessione    |
+| **Dati**   | `[dashv2/engine.py](dashv2/engine.py)` | Round load, clock replay 1 Hz, seek, tick, chart, ordini, settlement, history; emette eventi verso il browser |
+
+
+Config obbligatoria in `[dashv2/setup.json](dashv2/setup.json)`, caricata da `[dashv2/config.py](dashv2/config.py)` (chiavi mancanti → eccezione; nessun default implicito): `data_dir`, `history_dir`, `host`, `port`, `chart_previous_candles`, `default_order_size_usd`, `stall_reconnect_sec`.
+
+### Mappa cartelle e file
+
+
+| Percorso                                                             | Contenuto                                                                  |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `[dashv2/](dashv2/)`                                                 | Package Python dashboard                                                   |
+| `[dashv2/static/index.html](dashv2/static/index.html)`               | Layout DOM (header replay, chart, pannello ordini, history)                |
+| `[dashv2/static/css/dashboard.css](dashv2/static/css/dashboard.css)` | Stile (token/misure mockup v38)                                            |
+| `[dashv2/static/js/app.js](dashv2/static/js/app.js)`                 | Stato client, Socket.IO, binding controlli                                 |
+| `[dashv2/static/js/render.js](dashv2/static/js/render.js)`           | Aggiornamento DOM (tick, ladder, ordini, picker, history)                  |
+| `[dashv2/static/js/chart.js](dashv2/static/js/chart.js)`             | Lightweight Charts v5 — candele 5m, solo dati causali                      |
+| `[dashv2/static/vendor/](dashv2/static/vendor/)`                     | Bootstrap, Icons, Socket.IO client, Lightweight Charts (offline, no CDN)   |
+| `[dashv2/rounds.py](dashv2/rounds.py)`                               | Indice `.bin`, load merge bin+txt, candele precedenti, anti-spoiler picker |
+| `[dashv2/txt_rows.py](dashv2/txt_rows.py)`                           | Parser righe `data:` del `.txt` (vol, risk, DWinA/B, …)                    |
+| `[dashv2/orders.py](dashv2/orders.py)`                               | Simulazione BUY/SELL walk book, MTM, close, settlement                     |
+| `[dashv2/history.py](dashv2/history.py)`                             | JSON immutabili per run a sec 0 in `dashv2/history/` (gitignored)          |
+| `[dashv2/tests/](dashv2/tests/)`                                     | Test unitari dashboard                                                     |
+| `[dashv2.bat](dashv2.bat)`                                           | Launcher Windows                                                           |
+| `[docs/traccia.txt](docs/traccia.txt)`                               | Backlog UI/feature richieste dall’utente                                   |
+
+
+
+
+### Codice condiviso con il collector (`src/`)
+
+La dashboard **non** legge i file round da sola con logica duplicata: riusa moduli core del progetto.
+
+
+| Modulo `src/`                                  | Uso in dashboard                                       |
+| ---------------------------------------------- | ------------------------------------------------------ |
+| `[src/binary_format.py](src/binary_format.py)` | `read_round()`, path `.txt`                            |
+| `[src/book.py](src/book.py)`                   | `BookSnapshot`                                         |
+| `[src/clob_api.py](src/clob_api.py)`           | `majority_side`, `market_buy_walk`, `market_sell_walk` |
+| `[src/setup.py](src/setup.py)`                 | `VOLATILITY_WINDOWS_SEC`, `DELTA_WIN_TXT_COLUMNS`      |
+
+
+Ordini simulati: walk sul book ask/bid del tick corrente con `fee_rate` dell’header `.bin` — **non** il `gain%` precomputato nel `.txt`.
+
+### Protocollo [Socket.IO](http://Socket.IO)
+
+**Comandi client → server** (ack sincrono, tranne `round.load` che è async con evento `error` su fallimento):
+
+`round.load`, `rounds.list`, `replay.play`, `replay.pause`, `replay.seek`, `order.size`, `order.preview`, `order.place`, `order.close`, `session.sync`
+
+**Eventi server → client** (push dal processo dati):
+
+
+| Evento      | Payload tipico                                  |
+| ----------- | ----------------------------------------------- |
+| `bootstrap` | giorni round disponibili, size default          |
+| `session`   | round caricato, sec, playing, PTB, tradable     |
+| `tick`      | BTC, delta, quote, vol, Rq/Rs, DWin, previews   |
+| `chart`     | candele precedenti + candela corrente (causale) |
+| `orders`    | open/closed, size Up/Down, MTM                  |
+| `history`   | righe tabella + run visibili                    |
+| `round_end` | outcome, final BTC, ordini settled              |
+| `error`     | messaggio (es. load round fallito)              |
+
+
+Asse replay: `sec` = secondi mancanti a scadenza (300 → 0), come nei file round. Seek con `replay.seek` `{ sec, resume? }`; a sec 0 il round termina e scrive history.
+
+### Layout UI (dove modificare cosa)
+
+- **Header** (timestamp, picker round, play/pause, timeline, prezzo BTC): `index.html` + `render.js` (`renderTick`, picker) + `app.js` (slider seek)
+- **Chart candele**: `chart.js` + eventi `chart` in `engine.py` (`RoundRepository.previous_candles`, `current_candle`)
+- **Ladder delta / countdown / PTB**: `render.js` (`renderTick`)
+- **Pulsanti BUY Up/Down, size, signal card** (vol, Rq, Rs, DWin): `index.html` + `render.js` (`applyButtonPreviews`, signal) + `orders.py` / `engine.py` (`_public_tick`, `_orient_dwin`)
+- **Open orders + Close**: `render.js` (`renderOrders`) + `orders.py`
+- **Closed order history + Export CSV**: `render.js` (`renderHistory`) + `history.py`; CSV generato lato client in `app.js`
+- **Stile / responsive**: `dashboard.css`
+
+
+
+### Anti-spoiler
+
+Fino al settlement del round in replay: il picker espone solo timestamp/label (`RoundRepository.list_picker_day`); outcome e prezzi finali restano nascosti. Le run del round attivo non compaiono in history finché non si arriva a sec 0 (`visible_history`).
+
+### Test e smoke
+
+
+| Comando                                       | Uso                                                                              |
+| --------------------------------------------- | -------------------------------------------------------------------------------- |
+| `python -m unittest discover -s dashv2/tests` | Test round load, IPC, seek/history, CLOB walk                                    |
+| `dashv2.bat`                                  | Smoke manuale: load round → play → seek → BUY → close o settlement → history/CSV |
+
+
+Per modifiche alla dashboard: partire da questa sezione e dai file indicati; non cercare altre cartelle `dash*` nel repo.
+
+---
+
+
 
 ## Formato file del round (bin e txt)
 
@@ -131,17 +257,17 @@ sec  time  quote      delta    gain%             DWinA DWinB       btc  vol     
 ```
 
 
-| Colonna   | Calcolo / significato                                                                                                                                                                                                                                                                                                                                                                                              |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **sec**   | `floor(secs_to_expiry + 0.5)` — secondi mancanti alla scadenza                                                                                                                                                                                                                                                                                                                                                     |
-| **time**  | `sec` in `M:SS`                                                                                                                                                                                                                                                                                                                                                                                                    |
-| **quote** | Se tick completo: probabilità implicita = `round(mid_bid_ask × 100)` in centesimi; mostra il lato con probabilità più alta (`UP 75c`, `DOWN 60c`, oppure `---- 50c` se pari). Se partial: `UP ---` o `DOWN ---` (lato stimato da ultimo tick completo o da `chainlink` vs PTB)                                                                                                                                     |
-| **delta** | `round(chainlink_btc - ptb_chainlink)` in USD, con segno (`+12$`, `-5$`, `0$`). Se Chainlink stale: `---` (campione più vecchio di `stall_reconnect_sec` rispetto a `chainlink_recv_ms`)                                                                                                                                                                                                                           |
-| **gain%** | `majority_gain × 100`, una cifra decimale (`8.5%`). `---` se partial. Vedi formula sotto |
-| **DWinA** | Intero % + `[n=N]` (pool empirico per fascia **H**, finestra fissa ±2 implicita), es. `87% [n=39]`; slot con `p_win` solo se `n ≥ delta_win_window_min_samples` (default 30); se `n` sotto soglia: spazi al posto della % e `[n=N*]` allineato (`    [n=29*]`); `---` se nessun pool locale; calcolato ogni secondo da `delta_win_sec_start` a `delta_win_sec_end`. |
-| **DWinB** | Intero %, es. `93%`; stesso intervallo sec; colonna opzionale. |
-| **btc**   | `chainlink_btc` arrotondato all'intero, seguito da `$` senza spazio (es. `97235$`) |
-| **vol**   | Token `VW N` per ogni `W` in `setup.json` → `volatility_windows_sec` (es. `V30 18`, `V60 22`). Volatilità realizzata trailing in USD, intero arrotondato (`V30 0` se BTC fermo). `VW ---` se dati insufficienti o Chainlink stale sulla riga. Non è previsione forward.                                                                                                                                            |
+| Colonna   | Calcolo / significato                                                                                                                                                                                                                                                                                                                                                                                                |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **sec**   | `floor(secs_to_expiry + 0.5)` — secondi mancanti alla scadenza                                                                                                                                                                                                                                                                                                                                                       |
+| **time**  | `sec` in `M:SS`                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **quote** | Se tick completo: probabilità implicita = `round(mid_bid_ask × 100)` in centesimi; mostra il lato con probabilità più alta (`UP 75c`, `DOWN 60c`, oppure `---- 50c` se pari). Se partial: `UP ---` o `DOWN ---` (lato stimato da ultimo tick completo o da `chainlink` vs PTB)                                                                                                                                       |
+| **delta** | `round(chainlink_btc - ptb_chainlink)` in USD, con segno (`+12$`, `-5$`, `0$`). Se Chainlink stale: `---` (campione più vecchio di `stall_reconnect_sec` rispetto a `chainlink_recv_ms`)                                                                                                                                                                                                                             |
+| **gain%** | `majority_gain × 100`, una cifra decimale (`8.5%`). `---` se partial. Vedi formula sotto                                                                                                                                                                                                                                                                                                                             |
+| **DWinA** | Intero % + `[n=N]` (pool empirico per fascia **H**, finestra fissa ±2 implicita), es. `87% [n=39]`; slot con `p_win` solo se `n ≥ delta_win_window_min_samples` (default 30); se `n` sotto soglia: spazi al posto della % e `[n=N*]` allineato ( `[n=29*]`); `---` se nessun pool locale; calcolato ogni secondo da `delta_win_sec_start` a `delta_win_sec_end`.                                                     |
+| **DWinB** | Intero %, es. `93%`; stesso intervallo sec; colonna opzionale.                                                                                                                                                                                                                                                                                                                                                       |
+| **btc**   | `chainlink_btc` arrotondato all'intero, seguito da `$` senza spazio (es. `97235$`)                                                                                                                                                                                                                                                                                                                                   |
+| **vol**   | Token `VW N` per ogni `W` in `setup.json` → `volatility_windows_sec` (es. `V30 18`, `V60 22`). Volatilità realizzata trailing in USD, intero arrotondato (`V30 0` se BTC fermo). `VW ---` se dati insufficienti o Chainlink stale sulla riga. Non è previsione forward.                                                                                                                                              |
 | **risk**  | `Rq N` rischio di quota (`Pq0 = 1 − quota normalizzata del lato maggioritario` → bucket 1–9). `Rs N` rischio statistico (`Pz = Φ(−z)` con `z = delta_signed / (sigma_W × √secs_to_expiry)`, finestra primaria W60). `-` al posto del numero se non calcolabile. Ingresso eseguibile quando entrambi hanno valore numerico (nessuna lineetta). Stato `experimental_uncalibrated` finché non c'è calibrazione holdout. |
 
 
@@ -200,22 +326,22 @@ Radice dati tick in `setup.json` → `ticks_root` (default `H:\ticks\`).
 **Cache Gamma:** `<ticks_root>/lighter-rounds5m/_gamma_cache.jsonl` — prefetch giornaliero via `src/lighter_gamma.py` (`GET /events/keyset?series_id=10684`, ~3 richieste/giorno); lock solo su scrittura cache con pool parallelo.
 
 
-| Comando                                                                                                            | Uso                                                                                             |
-| ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `python scripts/build_lighter_rounds.py test-day <csv> <out_dir> [cache_name]`                                     | Build di un solo giorno (controllo qualità)                                                     |
-| `python scripts/build_lighter_rounds.py all <input_root> <out_dir> <workers> [cache_name]`                         | Build completo; `<workers>` = processi paralleli (1 = sequenziale, una giornata CSV per worker) |
-| `python scripts/compare_lighter_gamma_cache.py <baseline_cache> <bulk_cache> <baseline_dir> <bulk_dir> <week_iso>` | Confronto regressione cache + `.txt`                                                            |
-| `python -m src.listats [summary]`                                                                                  | Sommario tabellare del dataset Lighter (vedi sotto)                                             |
-| `build_lighter_rounds.bat [workers]`                                                                               | Batch Windows (default 8 worker); **salta** i `.txt` già presenti in output                     |
-| `python scripts/backfill_lighter_intraday.py [rounds_root] [workers] [--dry-run]`                                  | Aggiunge `intraday: Hk` agli header storici (idempotente; non tocca `data:`)                    |
-| `python scripts/backfill_lighter_delta_win.py [rounds_root] [workers] [--dry-run]`                                 | Aggiunge header modello v2 + colonne `DWinA` / `DWinB` (idempotente)                          |
+| Comando                                                                                                            | Uso                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `python scripts/build_lighter_rounds.py test-day <csv> <out_dir> [cache_name]`                                     | Build di un solo giorno (controllo qualità)                                                                                                                                 |
+| `python scripts/build_lighter_rounds.py all <input_root> <out_dir> <workers> [cache_name]`                         | Build completo; `<workers>` = processi paralleli (1 = sequenziale, una giornata CSV per worker)                                                                             |
+| `python scripts/compare_lighter_gamma_cache.py <baseline_cache> <bulk_cache> <baseline_dir> <bulk_dir> <week_iso>` | Confronto regressione cache + `.txt`                                                                                                                                        |
+| `python -m src.listats [summary]`                                                                                  | Sommario tabellare del dataset Lighter (vedi sotto)                                                                                                                         |
+| `build_lighter_rounds.bat [workers]`                                                                               | Batch Windows (default 8 worker); **salta** i `.txt` già presenti in output                                                                                                 |
+| `python scripts/backfill_lighter_intraday.py [rounds_root] [workers] [--dry-run]`                                  | Aggiunge `intraday: Hk` agli header storici (idempotente; non tocca `data:`)                                                                                                |
+| `python scripts/backfill_lighter_delta_win.py [rounds_root] [workers] [--dry-run]`                                 | Aggiunge header modello v2 + colonne `DWinA` / `DWinB` (idempotente)                                                                                                        |
 | `python scripts/study_delta_win_v2.py [workers]`                                                                   | Fit metodo A (pool empirico per H + espansione finestra) + B (logistic) su Lighter train weeks → `models/delta_win_v2.json`; calibrazione soglia + report; default 8 worker |
-| `python scripts/eval_delta_win_v2_compare.py [data_dir]`                                                           | Report comparativo A vs B su round Chainlink (label Gamma)                                      |
-| `python scripts/backfill_real_delta_win.py [data_dir] [workers] [--dry-run]`                                       | Rifit `study_delta_win_v2.py` poi rigenera `.txt` reali da `.bin` con `DWinA`/`DWinB` (idempotente; `--dry-run` salta il fit) |
-| `python scripts/probe_delta_win_bands.py [data_dir]`                                                             | Win rate osservato per finestra \|delta\| ±2 sui reali (supporto metodo A)                      |
-| `python scripts/study_delta_win.py`                                                                                | Studio modelli v1 (legacy) → `models/delta_win_v1.json`                                         |
-| `python scripts/eval_delta_win_real.py [data_dir]`                                                               | Valutazione esterna v1 su round Chainlink (legacy)                                              |
-| `backfill_lighter_intraday.bat [workers]`                                                                          | Batch Windows backfill header `intraday` su `H:\ticks\lighter-rounds5m`                         |
+| `python scripts/eval_delta_win_v2_compare.py [data_dir]`                                                           | Report comparativo A vs B su round Chainlink (label Gamma)                                                                                                                  |
+| `python scripts/backfill_real_delta_win.py [data_dir] [workers] [--dry-run]`                                       | Rifit `study_delta_win_v2.py` poi rigenera `.txt` reali da `.bin` con `DWinA`/`DWinB` (idempotente; `--dry-run` salta il fit)                                               |
+| `python scripts/probe_delta_win_bands.py [data_dir]`                                                               | Win rate osservato per finestra |delta| ±2 sui reali (supporto metodo A)                                                                                                    |
+| `python scripts/study_delta_win.py`                                                                                | Studio modelli v1 (legacy) → `models/delta_win_v1.json`                                                                                                                     |
+| `python scripts/eval_delta_win_real.py [data_dir]`                                                                 | Valutazione esterna v1 su round Chainlink (legacy)                                                                                                                          |
+| `backfill_lighter_intraday.bat [workers]`                                                                          | Batch Windows backfill header `intraday` su `H:\ticks\lighter-rounds5m`                                                                                                     |
 
 
 **Statistiche (**`src/listats.py`**).** Modulo dedicato all’analisi del dataset Lighter: funzioni con prefisso `li_` (es. `li_summary`, `li_rounds_root`, `read_lighter_header`). Legge gli header dei `.txt` sotto `<ticks_root>/lighter-rounds5m/`; estendere qui nuove metriche derivate dallo studio dei round sintetici. CLI: `python -m src.listats` o `python -m src.listats summary` — output a sezioni tabellari. Prima statistica implementata: `li_summary` (conteggio round, intervallo temporale, distribuzione outcome gamma/lighter, `outcome_agreement`, completezza tick, gap `ptb_gamma`/`final_gamma`, `move_error` medio e move_error medio, round per settimana ISO).
