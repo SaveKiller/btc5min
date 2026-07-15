@@ -64,22 +64,30 @@
     </div>
     <div class="workspace-orders">
       <article class="app-panel order-book">
-        <div class="panel-head d-flex justify-content-between align-items-center gap-3">
+        <div class="panel-head d-flex align-items-center gap-3 flex-wrap">
           <span class="panel-title">Orders</span>
-          <div class="d-flex align-items-center gap-3 ms-auto">
-            <span id="outcomeBadge" class="badge text-bg-warning order-outcome-badge"></span>
-            <div class="order-ptb text-end">
-              <div class="tiny text-muted-app">PTB</div>
-              <div class="order-ptb-value" id="refPtb">—</div>
-            </div>
+          <span class="order-head-divider" aria-hidden="true"></span>
+          <div class="order-head-stat">
+            <div class="tiny text-muted-app">PTB</div>
+            <div class="order-head-stat-value" id="refPtb">—</div>
+          </div>
+          <span class="order-head-divider" aria-hidden="true"></span>
+          <div class="order-head-stat">
+            <div class="tiny text-muted-app">OUTCOME</div>
+            <div class="order-head-stat-value" id="orderOutcome">---</div>
+          </div>
+          <span class="order-head-divider" aria-hidden="true"></span>
+          <div class="order-head-stat">
+            <div class="tiny text-muted-app">SEC TO END</div>
+            <div class="order-head-stat-value" id="orderSecToEnd">—</div>
           </div>
         </div>
         <div class="p-3">
           <section class="reference-ladder mb-4" aria-label="Price reference ladder">
             <div class="reference-cell zero" id="refNeg">0</div>
-            <div class="reference-track" id="refNegTrack"><div class="fill neg" id="refNegFill"></div><div class="ticks"><span>-120</span><span>-90</span><span>-50</span><span>-20</span><span>0</span></div></div>
+            <div class="reference-track" id="refNegTrack"><div class="fill neg" id="refNegFill"></div><div class="ticks"><span style="left:0%">-120</span><span style="left:33.33%">-80</span><span style="left:50%">-60</span><span style="left:66.67%">-40</span><span style="left:83.33%">-20</span><span style="left:100%">0</span></div></div>
             <div class="reference-cell time-remaining" id="refCountdown">—</div>
-            <div class="reference-track" id="refPosTrack"><div class="fill" id="refPosFill"></div><div class="ticks"><span>0</span><span>20</span><span>50</span><span>90</span><span>120</span></div></div>
+            <div class="reference-track" id="refPosTrack"><div class="fill" id="refPosFill"></div><div class="ticks"><span style="left:0%">0</span><span style="left:16.67%">20</span><span style="left:33.33%">40</span><span style="left:50%">60</span><span style="left:66.67%">80</span><span style="left:100%">120</span></div></div>
             <div class="reference-cell positive" id="refPos">0</div>
           </section>
           <div class="row g-4 mb-3">

@@ -66,7 +66,33 @@ export function renderRoundPickerDays(days, onDaySelect) {
 }
 
 
-export function renderRoundPickerRounds(dayUtc, rounds, onBack, onSelect) {
+export function renderRoundPickerHours(dayUtc, hours, onBack, onHourSelect) {
+    const menu = $("roundPickerMenu");
+    menu.innerHTML = `
+        <li><button class="dropdown-item round-picker-back" type="button"><i class="bi bi-chevron-left me-1"></i>Giorni</button></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><h6 class="dropdown-header">${dayUtc} UTC</h6></li>
+        ${hours.map((h) => `
+        <li><button class="dropdown-item round-hour-btn" type="button" data-hour="${h.hour_utc}">
+            ${h.hour_utc}<span class="text-muted-app ms-1">(${h.count})</span>
+            <i class="bi bi-chevron-right float-end opacity-50"></i>
+        </button></li>`).join("")}`;
+    menu.querySelector(".round-picker-back").addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onBack();
+    });
+    menu.querySelectorAll(".round-hour-btn").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onHourSelect(btn.dataset.hour);
+        });
+    });
+}
+
+
+export function renderRoundPickerRounds(dayUtc, hourUtc, rounds, onBack, onSelect) {
     const menu = $("roundPickerMenu");
     const items = rounds.map((r) => {
         const cls = r.valid ? "" : "disabled";
@@ -74,9 +100,9 @@ export function renderRoundPickerRounds(dayUtc, rounds, onBack, onSelect) {
         return `<li><button class="dropdown-item ${cls}" type="button" data-ts="${r.market_start_ts}"${title}>${r.label}</button></li>`;
     }).join("");
     menu.innerHTML = `
-        <li><button class="dropdown-item round-picker-back" type="button"><i class="bi bi-chevron-left me-1"></i>Giorni</button></li>
+        <li><button class="dropdown-item round-picker-back" type="button"><i class="bi bi-chevron-left me-1"></i>Orari</button></li>
         <li><hr class="dropdown-divider"></li>
-        <li><h6 class="dropdown-header">${dayUtc} UTC</h6></li>
+        <li><h6 class="dropdown-header">${dayUtc} · ${hourUtc} UTC</h6></li>
         ${items}`;
     menu.querySelector(".round-picker-back").addEventListener("click", (e) => {
         e.preventDefault();
@@ -147,6 +173,8 @@ export function renderTick(state) {
         $("timelineSlider").value = String(session.progress);
         updateTimelineSecLabel(session.sec, session.progress);
         $("refPtb").textContent = Math.round(session.ptb_chainlink).toLocaleString("en-US");
+        $("orderSecToEnd").textContent = String(session.sec);
+        if (!session.round_ended) $("orderOutcome").textContent = "---";
         $("refCountdown").textContent = formatMmSs(session.sec);
     }
     if (tick?.chainlink_btc != null) {
@@ -233,9 +261,7 @@ export function renderHistory(rows) {
 
 
 export function renderOutcome(roundEnd) {
-    const badge = $("outcomeBadge");
-    badge.textContent = roundEnd.outcome_label;
-    badge.classList.add("show");
+    $("orderOutcome").textContent = roundEnd.outcome_label;
 }
 
 

@@ -1,7 +1,7 @@
 import { initChart, setCandles, updateCurrentCandle } from "./chart.js";
 import {
     applyButtonPreviews, layoutReplayScale, renderHistory, renderOrders, renderOutcome,
-    renderRoundPickerDays, renderRoundPickerRounds, renderStakeButtons, renderTick, setDisconnectBanner,
+    renderRoundPickerDays, renderRoundPickerHours, renderRoundPickerRounds, renderStakeButtons, renderTick, setDisconnectBanner,
 } from "./render.js";
 
 const state = {
@@ -52,14 +52,46 @@ function requestPreviews() {
     }).catch(() => {});
 }
 
+function roundHourUtc(market_start_ts) {
+    const h = new Date(market_start_ts * 1000).getUTCHours();
+    return `${String(h).padStart(2, "0")}:00`;
+}
+
+function groupRoundsByHour(rounds) {
+    const byHour = {};
+    rounds.forEach((r) => {
+        const hour = roundHourUtc(r.market_start_ts);
+        if (!byHour[hour]) byHour[hour] = [];
+        byHour[hour].push(r);
+    });
+    return Object.keys(byHour).sort().map((hour_utc) => ({
+        hour_utc,
+        count: byHour[hour_utc].length,
+        rounds: byHour[hour_utc].sort((a, b) => a.market_start_ts - b.market_start_ts),
+    }));
+}
+
 function showRoundDays() {
     renderRoundPickerDays(state.roundDays, openRoundDay);
+}
+
+function showRoundHours(dayUtc, rounds) {
+    renderRoundPickerHours(dayUtc, groupRoundsByHour(rounds), showRoundDays, (hourUtc) => {
+        openRoundHour(dayUtc, hourUtc, rounds);
+    });
+}
+
+function openRoundHour(dayUtc, hourUtc, rounds) {
+    const filtered = rounds
+        .filter((r) => roundHourUtc(r.market_start_ts) === hourUtc)
+        .sort((a, b) => a.market_start_ts - b.market_start_ts);
+    renderRoundPickerRounds(dayUtc, hourUtc, filtered, () => showRoundHours(dayUtc, rounds), loadRound);
 }
 
 function openRoundDay(dayUtc) {
     const cached = state.loadedRoundDays[dayUtc];
     if (cached) {
-        renderRoundPickerRounds(dayUtc, cached, showRoundDays, loadRound);
+        showRoundHours(dayUtc, cached);
         return;
     }
     const menu = document.getElementById("roundPickerMenu");
@@ -74,7 +106,7 @@ function openRoundDay(dayUtc) {
     });
     emitAck("rounds.list", { day_utc: dayUtc }).then((res) => {
         state.loadedRoundDays[dayUtc] = res.rounds;
-        renderRoundPickerRounds(dayUtc, res.rounds, showRoundDays, loadRound);
+        showRoundHours(dayUtc, res.rounds);
     }).catch((e) => alert(e.message));
 }
 
@@ -86,7 +118,7 @@ socket.on("bootstrap", (payload) => {
 
 socket.on("session", (payload) => {
     state.session = payload;
-    if (!payload.round_ended) document.getElementById("outcomeBadge").classList.remove("show");
+    if (!payload.round_ended) document.getElementById("orderOutcome").textContent = "---";
     if (payload.loaded && payload.market_start_ts !== state.activeRoundTs) {
         state.activeRoundTs = payload.market_start_ts;
         state.syncSizesOnNextOrders = true;
