@@ -1,17 +1,20 @@
-import { initChart, setCandles, updateCurrentCandle } from "./chart.js";
+import { initChart, relayoutChart, resizeChart, setCandles, updateCurrentCandle } from "./chart.js";
 import {
-    applyButtonPreviews, layoutReplayScale, renderHistory, renderOrders, renderOutcome,
-    renderRoundPickerDays, renderRoundPickerHours, renderRoundPickerRounds, renderStakeButtons, renderTick, setDisconnectBanner,
+    applyButtonPreviews, layoutReplayScale, renderAccounts, renderHistory,
+    renderOrders, renderOutcome, renderRoundPickerDays, renderRoundPickerHours, renderRoundPickerRounds,
+    renderStakeButtons, renderTick, setDisconnectBanner,
 } from "./render.js";
 
 const state = {
     session: null, tick: null, orders: null, historyRows: [],
-    chartPrevious: [], chartCurrent: null, scrubbing: false, wasPlaying: false,
+    accounts: [], activeAccountId: null, activeAccount: null,
+    chartPrevious: [], chartCurrent: null, chartFreeView: false, scrubbing: false, wasPlaying: false,
     activeRoundTs: null, syncSizesOnNextOrders: false, loadedRoundDays: {},
     roundDays: [], roundNav: [],
 };
 
 const socket = io({ transports: ["websocket", "polling"] });
+let accountModal = null;
 
 
 function emitAck(event, payload = {}) {
@@ -31,7 +34,6 @@ socket.on("connect", () => {
 });
 
 socket.on("disconnect", () => setDisconnectBanner(true));
-
 socket.on("connect_error", () => setDisconnectBanner(true));
 
 function loadRound(market_start_ts) {
@@ -128,22 +130,80 @@ function openRoundDay(dayUtc) {
     }).catch((e) => alert(e.message));
 }
 
+function applyAccountsPayload(payload) {
+    state.accounts = payload.accounts || [];
+    state.activeAccountId = payload.active_account_id ?? null;
+    state.activeAccount = payload.active ?? null;
+    renderAccounts(state);
+}
+
+function openAccountModal(mode, account = null) {
+    document.getElementById("accountModalMode").value = mode;
+    document.getElementById("accountModalId").value = account?.id || "";
+    document.getElementById("accountModalName").value = account?.name || "";
+    document.getElementById("accountModalBalance").value = account ? String(account.initial_balance_usd) : "10000";
+    document.getElementById("accountModalNote").value = account?.note || "";
+    const title = mode === "create" ? "New account" : (mode === "rename" ? "Rename account" : "Edit account");
+    document.getElementById("accountModalTitle").textContent = title;
+    document.getElementById("accountModalBalance").closest(".mb-3").style.display = mode === "rename" ? "none" : "";
+    document.getElementById("accountModalNote").closest(".mb-0").style.display = mode === "rename" ? "none" : "";
+    accountModal.show();
+}
+
+function saveAccountModal() {
+    const mode = document.getElementById("accountModalMode").value;
+    const name = document.getElementById("accountModalName").value.trim();
+    const balance = Number(document.getElementById("accountModalBalance").value);
+    const note = document.getElementById("accountModalNote").value;
+    const accountId = document.getElementById("accountModalId").value;
+    if (!name) return alert("Nome obbligatorio");
+    let req;
+    if (mode === "create") {
+        req = emitAck("account.create", { name, initial_balance_usd: balance, note });
+    } else if (mode === "rename") {
+        req = emitAck("account.rename", { account_id: accountId, name });
+    } else {
+        req = emitAck("account.update", { account_id: accountId, name, initial_balance_usd: balance, note });
+    }
+    req.then(() => accountModal.hide()).catch(alert);
+}
+
+function selectLeftTab(tabId) {
+    const el = document.getElementById(tabId);
+    if (el) bootstrap.Tab.getOrCreateInstance(el).show();
+}
+
+
 socket.on("bootstrap", (payload) => {
     state.roundDays = payload.round_days || [];
     state.roundNav = payload.round_nav || [];
+    state.accounts = payload.accounts || [];
+    state.activeAccountId = payload.active_account_id ?? null;
+    state.activeAccount = state.accounts.find((a) => a.id === state.activeAccountId) || null;
     showRoundDays();
     updateRoundNavButtons();
     applyOrderSizes({ size_up_usd: payload.default_order_size_usd, size_down_usd: payload.default_order_size_usd });
+    renderAccounts(state);
 });
 
 socket.on("session", (payload) => {
+    const prev = state.session;
     state.session = payload;
+    if (payload.active_account_id !== undefined) state.activeAccountId = payload.active_account_id;
     if (!payload.round_ended) document.getElementById("orderOutcome").textContent = "---";
     if (payload.loaded && payload.market_start_ts !== state.activeRoundTs) {
         state.activeRoundTs = payload.market_start_ts;
         state.syncSizesOnNextOrders = true;
     }
+    const roundStart = payload.loaded && payload.sec === 300 && (
+        !prev?.loaded || prev.market_start_ts !== payload.market_start_ts || prev.round_ended
+    );
+    if (roundStart) {
+        state.chartFreeView = true;
+        selectLeftTab("candles-tab");
+    }
     updateRoundNavButtons();
+    renderAccounts(state);
     renderTick(state);
 });
 
@@ -157,10 +217,14 @@ socket.on("orders", (payload) => {
         requestPreviews();
     }
     renderOrders(payload);
+    renderAccounts(state);
 });
+
+socket.on("accounts", (payload) => applyAccountsPayload(payload));
 
 socket.on("history", (payload) => {
     state.historyRows = payload.rows || [];
+    if (payload.active_account_id !== undefined) state.activeAccountId = payload.active_account_id;
     renderHistory(state.historyRows);
 });
 
@@ -168,7 +232,9 @@ socket.on("chart", (payload) => {
     if (payload.full_reset) {
         state.chartPrevious = payload.previous || [];
         state.chartCurrent = payload.current;
-        setCandles(state.chartPrevious, state.chartCurrent);
+        const freeView = state.chartFreeView;
+        state.chartFreeView = false;
+        setCandles(state.chartPrevious, state.chartCurrent, { freeView });
     } else if (payload.current) {
         state.chartCurrent = payload.current;
         updateCurrentCandle(payload.current);
@@ -179,6 +245,7 @@ socket.on("round_end", (payload) => {
     renderOutcome(payload);
     state.session = { ...state.session, round_ended: true, tradable: false };
     renderTick(state);
+    selectLeftTab("accounts-tab");
 });
 
 socket.on("error", (payload) => alert(payload.message || "error"));
@@ -269,10 +336,30 @@ document.getElementById("exportCsvBtn").addEventListener("click", () => {
     a.click();
 });
 
+document.getElementById("accountSelect").addEventListener("change", (e) => {
+    const accountId = e.target.value || null;
+    emitAck("account.select", { account_id: accountId }).catch(alert);
+});
+
+document.getElementById("newAccountBtn").addEventListener("click", () => openAccountModal("create"));
+document.getElementById("renameAccountBtn").addEventListener("click", () => {
+    if (!state.activeAccount) return;
+    openAccountModal("rename", state.activeAccount);
+});
+document.getElementById("editAccountBtn").addEventListener("click", () => {
+    if (!state.activeAccount) return;
+    openAccountModal("edit", state.activeAccount);
+});
+document.getElementById("accountModalSaveBtn").addEventListener("click", saveAccountModal);
+
+document.getElementById("candles-tab").addEventListener("shown.bs.tab", () => relayoutChart());
+
 renderStakeButtons();
 initChart(document.getElementById("chartContainer"));
 layoutReplayScale();
-window.addEventListener("resize", layoutReplayScale);
+window.addEventListener("resize", () => { layoutReplayScale(); resizeChart(); });
+accountModal = new bootstrap.Modal(document.getElementById("accountModal"));
+renderOrders({ open: [] });
 
 document.getElementById("openOrdersList").addEventListener("click", (e) => {
     const cancelBtn = e.target.closest(".cancel-order-btn");

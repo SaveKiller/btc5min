@@ -44,10 +44,10 @@ class OrderEngine:
             "roi_if_win": roi, "payout_if_win_usd": payout, "profit_if_win_usd": payout - size_usd,
         }
 
-    def place(self, side: str, size_usd: float, sec: int, tick: dict, book: BookSnapshot, fee_rate: float) -> dict:
+    def place(self, side: str, size_usd: float, sec: int, tick: dict, book: BookSnapshot, fee_rate: float, account_id: str) -> dict:
         preview = self.preview(side, size_usd, sec, tick, book, fee_rate)
         order = {
-            "id": uuid4().hex[:12], "side": side, "entry_sec": sec, "size_usd": size_usd,
+            "id": uuid4().hex[:12], "account_id": account_id, "side": side, "entry_sec": sec, "size_usd": size_usd,
             "shares": preview["shares"], "entry_btc": tick["chainlink_btc"], "best_ask": preview["avg_price"],
             "best_ask_c": preview["best_ask_c"], "avg_entry_price": preview["avg_price"],
             "entry_fee_usd": preview["fee_usd"], "payout_if_win_usd": preview["payout_if_win_usd"],
@@ -157,7 +157,44 @@ class OrderEngine:
             return book.down_bids, tick["down_bid"]
         raise Exception(f"invalid side: {side!r}")
 
+    def _settlement_pnl_if_certain(self, order: dict, tick: dict, book: BookSnapshot) -> float | None:
+        """PnL a settlement quando il mercato è deciso ma non c'è liquidità bid per chiudere."""
+        if tick.get("gap") or tick.get("partial"):
+            return None
+        maj = tick.get("majority_side")
+        if maj not in ("Up", "Down"):
+            return None
+
+        def side_mid(side: str) -> float | None:
+            if side == "Up":
+                b, a = tick.get("up_bid"), tick.get("up_ask")
+            else:
+                b, a = tick.get("down_bid"), tick.get("down_ask")
+            if b is None or a is None:
+                return None
+            return (float(b) + float(a)) / 2.0
+
+        win_mid = side_mid(maj)
+        if win_mid is None or win_mid < 0.97:
+            return None
+        lose = "Down" if maj == "Up" else "Up"
+        lose_mid = side_mid(lose)
+        if lose_mid is not None and lose_mid > 0.05:
+            return None
+        my_bids, _ = self._side_bids(order["side"], tick, book)
+        if my_bids and win_mid < 0.99:
+            return None
+        if order["side"] == maj:
+            return float(order["profit_if_win_usd"])
+        return -float(order["size_usd"])
+
     def _mtm(self, order: dict, tick: dict, book: BookSnapshot, fee_rate: float) -> dict:
+        est = self._settlement_pnl_if_certain(order, tick, book)
+        if est is not None:
+            return {
+                "mtm_usd": est, "mtm_available": False,
+                "proceeds_usd": None, "avg_exit_price": None, "exit_fee_usd": None,
+            }
         bids, quote_bid = self._side_bids(order["side"], tick, book)
         try:
             sell = market_sell_walk(bids, order["shares"], fee_rate, quote_bid=quote_bid)

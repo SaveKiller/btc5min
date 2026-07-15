@@ -6,9 +6,14 @@ import time
 import uuid
 from datetime import datetime, timezone
 from multiprocessing.connection import Connection
+from pathlib import Path
 
 from dashv2 import ipc
-from dashv2.history import history_rows, list_runs, order_rows_for_run, visible_history, write_run
+from dashv2.history import (
+    account_summary, accounts_dir, append_settled_orders, compute_stats, create_account,
+    list_accounts, load_account, load_active_account_id, order_rows_for_run, order_rows_from_ledger,
+    rename_account, save_active_account_id, update_account,
+)
 from dashv2.orders import OrderEngine
 from dashv2.rounds import LoadedRound, RoundRepository
 
@@ -60,6 +65,8 @@ class ReplayEngine:
         self.evt_conn = evt_conn
         self.repo = RoundRepository(cfg["data_dir"], cfg["stall_reconnect_sec"])
         self.orders = OrderEngine(cfg["default_order_size_usd"], cfg["default_order_size_usd"])
+        self.accounts_root = accounts_dir(Path(cfg["history_dir"]))
+        self.active_account_id: str | None = load_active_account_id(self.accounts_root)
         self.loaded: LoadedRound | None = None
         self.sec = 300
         self.playing = False
@@ -72,6 +79,7 @@ class ReplayEngine:
 
     def run(self) -> None:
         self._emit_event("bootstrap", self._bootstrap_payload())
+        self._emit_accounts()
         next_tick_at = 0.0
         while True:
             while self.cmd_conn.poll(0):
@@ -89,6 +97,8 @@ class ReplayEngine:
             "round_nav": self.repo.list_nav_ts(),
             "default_order_size_usd": self.cfg["default_order_size_usd"],
             "host": self.cfg["host"], "port": self.cfg["port"],
+            "accounts": list_accounts(self.accounts_root),
+            "active_account_id": self.active_account_id,
         }
 
     def _handle_cmd(self, msg: dict) -> None:
@@ -111,6 +121,11 @@ class ReplayEngine:
             elif cmd == "order.place": result = self._cmd_order_place(payload)
             elif cmd == "order.close": result = self._cmd_order_close(payload)
             elif cmd == "order.cancel": result = self._cmd_order_cancel(payload)
+            elif cmd == "account.list": result = self._cmd_account_list()
+            elif cmd == "account.select": result = self._cmd_account_select(payload)
+            elif cmd == "account.create": result = self._cmd_account_create(payload)
+            elif cmd == "account.rename": result = self._cmd_account_rename(payload)
+            elif cmd == "account.update": result = self._cmd_account_update(payload)
             elif cmd == "session.sync": result = self._cmd_session_sync()
             elif cmd == "controller.claim": result = {"ok": True}
             elif cmd == "controller.release": result = {"ok": True}
@@ -136,6 +151,7 @@ class ReplayEngine:
             self._emit_tick_at(self.sec)
             self._emit_orders()
             self._emit_history()
+            self._emit_accounts()
         return result, after
 
     def _cmd_rounds_list(self, payload: dict) -> dict:
@@ -198,6 +214,8 @@ class ReplayEngine:
             "ptb_chainlink": self.loaded.ptb_chainlink,
             "tradable": not self.round_ended and sec >= 1,
             "preview": True,
+            "active_account_id": self.active_account_id,
+            "account_switch_locked": bool(self.orders.open_orders),
         })
         self.seq += 1
         tick = self.loaded.ticks_by_sec.get(sec)
@@ -271,13 +289,20 @@ class ReplayEngine:
                     out[side] = None
         return {"ok": True, "previews": out}
 
+    def _require_active_account(self) -> str:
+        if self.active_account_id is None:
+            raise Exception("no account selected")
+        return self.active_account_id
+
     def _cmd_order_place(self, payload: dict) -> dict:
         if not self.loaded or self.round_ended: raise Exception("trading blocked")
+        account_id = self._require_active_account()
         tick, book = self._require_tick_book()
         side, size = payload["side"], float(payload["size_usd"])
-        order = self.orders.place(side, size, self.sec, tick, book, self.loaded.fee_rate)
+        order = self.orders.place(side, size, self.sec, tick, book, self.loaded.fee_rate, account_id)
         self.orders.revalue_mtm(self.sec, tick, book, self.loaded.fee_rate)
         self._emit_orders()
+        self._emit_session()
         return {"ok": True, "order": order}
 
     def _cmd_order_close(self, payload: dict) -> dict:
@@ -286,13 +311,54 @@ class ReplayEngine:
         closed = self.orders.close(payload["order_id"], self.sec, tick, book, self.loaded.fee_rate)
         self._emit_orders()
         self._emit_history()
+        self._emit_session()
         return {"ok": True, "order": closed}
 
     def _cmd_order_cancel(self, payload: dict) -> dict:
         if not self.loaded or self.round_ended: raise Exception("trading blocked")
         removed = self.orders.cancel(payload["order_id"])
         self._emit_orders()
+        self._emit_session()
         return {"ok": True, "order": removed}
+
+    def _cmd_account_list(self) -> dict:
+        return {"ok": True, "accounts": list_accounts(self.accounts_root), "active_account_id": self.active_account_id}
+
+    def _cmd_account_select(self, payload: dict) -> dict:
+        if self.orders.open_orders:
+            raise Exception("cannot switch account with open orders")
+        account_id = payload["account_id"]
+        if account_id is not None:
+            load_account(self.accounts_root, account_id)
+        self.active_account_id = account_id
+        save_active_account_id(self.accounts_root, account_id)
+        self._emit_accounts()
+        self._emit_history()
+        self._emit_session()
+        return {"ok": True, "active_account_id": account_id}
+
+    def _cmd_account_create(self, payload: dict) -> dict:
+        data = create_account(
+            self.accounts_root, payload["name"], float(payload["initial_balance_usd"]), payload.get("note", ""))
+        self.active_account_id = data["id"]
+        save_active_account_id(self.accounts_root, data["id"])
+        self._emit_accounts()
+        self._emit_history()
+        self._emit_session()
+        return {"ok": True, "account": account_summary(data)}
+
+    def _cmd_account_rename(self, payload: dict) -> dict:
+        data = rename_account(self.accounts_root, payload["account_id"], payload["name"])
+        self._emit_accounts()
+        return {"ok": True, "account": account_summary(data)}
+
+    def _cmd_account_update(self, payload: dict) -> dict:
+        data = update_account(
+            self.accounts_root, payload["account_id"], payload["name"],
+            float(payload["initial_balance_usd"]), payload.get("note", ""))
+        self._emit_accounts()
+        self._emit_history()
+        return {"ok": True, "account": account_summary(data)}
 
     def _cmd_session_sync(self) -> dict:
         self._emit_event("bootstrap", self._bootstrap_payload())
@@ -302,6 +368,7 @@ class ReplayEngine:
             self._emit_tick_at(self.sec)
             self._emit_orders()
         self._emit_history()
+        self._emit_accounts()
         return {"ok": True}
 
     def _advance_sec(self) -> None:
@@ -322,14 +389,18 @@ class ReplayEngine:
         outcome = self.loaded.outcome_name
         final_btc = self.loaded.final_chainlink
         settled = self.orders.settle_open(outcome, 0, final_btc)
-        run = {
-            "market_start_ts": self.loaded.market_start_ts, "run_id": self.run_id,
-            "outcome": outcome, "final_chainlink": final_btc, "ptb_chainlink": self.loaded.ptb_chainlink,
-            "orders": self.orders.closed_orders, "total_pnl_usd": sum(o.get("pnl_usd", 0) for o in self.orders.closed_orders),
-        }
-        write_run(self.cfg["history_dir"], self.loaded.market_start_ts, run)
+        by_account: dict[str, list[dict]] = {}
+        for o in self.orders.closed_orders:
+            aid = o.get("account_id")
+            if aid is None:
+                raise Exception(f"closed order missing account_id: {o.get('id')}")
+            by_account.setdefault(aid, []).append(o)
+        for aid, orders in by_account.items():
+            append_settled_orders(
+                self.accounts_root, aid, self.loaded.market_start_ts, self.run_id or "", outcome, orders)
         self._emit_orders()
         self._emit_history()
+        self._emit_accounts()
         self._emit_event("round_end", {
             "outcome": outcome, "outcome_label": outcome.upper(),
             "final_chainlink": final_btc, "settled_orders": settled,
@@ -376,16 +447,24 @@ class ReplayEngine:
 
     def _emit_session(self) -> None:
         if not self.loaded:
-            self._emit_event("session", {"loaded": False})
+            self._emit_event("session", {
+                "loaded": False, "active_account_id": self.active_account_id,
+                "account_switch_locked": bool(self.orders.open_orders),
+            })
             return
         dt = datetime.fromtimestamp(self.loaded.market_start_ts, tz=timezone.utc)
         mm, ss = divmod(max(self.sec, 0), 60)
+        tradable = (
+            not self.round_ended and self.sec >= 1 and self.active_account_id is not None
+        )
         self._emit_event("session", {
             "loaded": True, "market_start_ts": self.loaded.market_start_ts,
             "replay_timestamp": dt.strftime("%d/%m/%Y | %H:%M:%S"),
             "sec": self.sec, "countdown": f"{self.sec} | {mm}:{ss:02d}",
             "progress": 300 - self.sec, "playing": self.playing, "round_ended": self.round_ended,
-            "ptb_chainlink": self.loaded.ptb_chainlink, "tradable": not self.round_ended and self.sec >= 1,
+            "ptb_chainlink": self.loaded.ptb_chainlink, "tradable": tradable,
+            "active_account_id": self.active_account_id,
+            "account_switch_locked": bool(self.orders.open_orders),
         })
 
     def _emit_chart_full(self) -> None:
@@ -402,15 +481,33 @@ class ReplayEngine:
         snap = self.orders.snapshot()
         self._emit_event("orders", snap)
 
+    def _account_payload(self) -> dict | None:
+        if self.active_account_id is None:
+            return None
+        data = load_account(self.accounts_root, self.active_account_id)
+        stats = compute_stats(data)
+        return {
+            "id": data["id"], "name": data["name"], "note": data.get("note", ""),
+            "initial_balance_usd": data["initial_balance_usd"], "created_at_utc": data["created_at_utc"],
+            "updated_at_utc": data.get("updated_at_utc"), **stats,
+        }
+
+    def _emit_accounts(self) -> None:
+        self._emit_event("accounts", {
+            "accounts": list_accounts(self.accounts_root),
+            "active_account_id": self.active_account_id,
+            "active": self._account_payload(),
+        })
+
     def _emit_history(self) -> None:
-        runs = list_runs(self.cfg["history_dir"])
-        active = self.loaded.market_start_ts if self.loaded else None
-        visible = visible_history(runs, active, self.round_ended)
-        rows = history_rows(visible)
+        rows: list[dict] = []
+        if self.active_account_id is not None:
+            data = load_account(self.accounts_root, self.active_account_id)
+            rows = order_rows_from_ledger(data.get("orders", []))
         if self.loaded and not self.round_ended and self.orders.closed_orders:
             live = order_rows_for_run(self.loaded.market_start_ts, self.orders.closed_orders)
             rows = live + rows
-        self._emit_event("history", {"runs": visible, "rows": rows})
+        self._emit_event("history", {"rows": rows, "active_account_id": self.active_account_id})
 
     def _emit_event(self, name: str, payload: dict) -> None:
         self.evt_conn.send(ipc.make_event(name, payload))

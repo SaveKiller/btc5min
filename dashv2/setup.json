@@ -3,7 +3,7 @@
     "history_dir": "history",
     "host": "127.0.0.1",
     "port": 8780,
-    "chart_previous_candles": 24,
+    "chart_previous_candles": 60,
     "default_order_size_usd": 100,
     "stall_reconnect_sec": 15
 }

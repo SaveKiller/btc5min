@@ -58,7 +58,7 @@ class ServerBridge:
                 except Exception:
                     pass
 
-        for evt in ("round.load", "rounds.list", "replay.play", "replay.pause", "replay.seek", "replay.preview", "order.size", "order.preview", "order.place", "order.close", "order.cancel", "session.sync"):
+        for evt in ("round.load", "rounds.list", "replay.play", "replay.pause", "replay.seek", "replay.preview", "order.size", "order.preview", "order.place", "order.close", "order.cancel", "account.list", "account.select", "account.create", "account.rename", "account.update", "session.sync"):
             self._bind_command(evt)
 
     def _bind_command(self, cmd: str) -> None:

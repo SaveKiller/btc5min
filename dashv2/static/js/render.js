@@ -19,6 +19,20 @@ function formatRoundClockUtc(market_start_ts, sec) {
 }
 
 
+function money(v) {
+    if (v == null || Number.isNaN(v)) return "—";
+    const sign = v >= 0 ? "+" : "";
+    return `${sign}$${Math.abs(v).toFixed(2)}`;
+}
+
+
+function pct(v) {
+    if (v == null || Number.isNaN(v)) return "—";
+    const sign = v >= 0 ? "+" : "";
+    return `${sign}${v.toFixed(1)}%`;
+}
+
+
 const TIMELINE_THUMB_PX = 16;
 
 
@@ -283,7 +297,7 @@ export function renderTick(state) {
 
 
 function orderMtmBadge(o) {
-    if (!o.mtm_available || o.mtm_usd == null) return { text: "Pending", cls: "order-mtm-pending" };
+    if (o.mtm_usd == null) return { text: "Pending", cls: "order-mtm-pending" };
     return {
         text: `$${o.mtm_usd >= 0 ? "+" : ""}${o.mtm_usd.toFixed(2)}`,
         cls: o.mtm_usd >= 0 ? "history-up" : "history-down",
@@ -292,8 +306,8 @@ function orderMtmBadge(o) {
 
 
 function orderDetailLine(o) {
-    const win = o.profit_if_win_usd != null ? ` · WIN $${o.profit_if_win_usd.toFixed(2)}` : "";
-    return `Entry $${o.entry_btc?.toFixed(0) ?? "—"} · sec ${o.entry_sec} · Quote ${o.best_ask_c}c · Payout $${o.payout_if_win_usd?.toFixed(2) ?? "—"}${win}`;
+    const win = o.profit_if_win_usd != null ? ` · Win $${o.profit_if_win_usd.toFixed(2)}` : "";
+    return `Entry $${o.entry_btc?.toFixed(0) ?? "—"} · Sec ${o.entry_sec} · Quote ${o.best_ask_c}c${win}`;
 }
 
 
@@ -301,7 +315,7 @@ function orderRowHtml(o) {
     const sideCls = o.side === "Up" ? "order-side-up" : "order-side-down";
     const rowCls = o.side === "Down" ? "order-row down" : "order-row";
     const { text: mtm, cls: badgeCls } = orderMtmBadge(o);
-    return `<div class="${rowCls} rounded p-2 mb-2 d-flex align-items-center justify-content-between" data-order-id="${o.id}"><div><strong class="${sideCls}">${o.side.toUpperCase()}</strong><span class="text-muted-app mx-2">·</span><span>$${o.size_usd.toFixed(2)}</span><div class="tiny text-muted-app order-detail-line">${orderDetailLine(o)}</div></div><div class="d-flex align-items-center gap-2"><span class="badge history-side-badge order-mtm-badge ${badgeCls}">${mtm}</span><button class="btn btn-sm btn-outline-secondary cancel-order-btn" data-id="${o.id}" type="button">Cancel</button><button class="btn btn-sm btn-outline-light close-order-btn" data-id="${o.id}" type="button" ${o.close_enabled ? "" : "disabled"}>Close</button></div></div>`;
+    return `<div class="${rowCls} rounded p-2 mb-2 d-flex align-items-center justify-content-between" data-order-id="${o.id}"><div><strong class="${sideCls}">${o.side.toUpperCase()}</strong><span class="text-muted-app mx-2">·</span><span>$${o.size_usd.toFixed(2)}</span><div class="text-muted-app order-detail-line">${orderDetailLine(o)}</div></div><div class="d-flex align-items-center gap-2"><span class="badge history-side-badge order-mtm-badge ${badgeCls}">${mtm}</span><button class="btn btn-sm btn-outline-secondary cancel-order-btn" data-id="${o.id}" type="button">Cancel</button><button class="btn btn-sm btn-outline-light close-order-btn" data-id="${o.id}" type="button" ${o.close_enabled ? "" : "disabled"}>Close</button></div></div>`;
 }
 
 
@@ -323,7 +337,7 @@ export function renderOrders(orders) {
     const open = orders.open;
     if (!open.length) {
         list.dataset.orderIds = "";
-        list.innerHTML = "";
+        list.innerHTML = `<div class="open-orders-placeholder">NO ORDERS</div>`;
         return;
     }
     const ids = open.map((o) => o.id).join(",");
@@ -339,23 +353,78 @@ export function renderOrders(orders) {
 }
 
 
+function sideBadge(side) {
+    if (!side || side === "unknown") return "—";
+    const cls = side === "Up" ? "history-up" : "history-down";
+    return `<span class="badge history-side-badge ${cls}">${side.toUpperCase()}</span>`;
+}
+
+
+function valCell(v, clsBase = "") {
+    if (v == null) return `<td class="text-end ${clsBase}">—</td>`;
+    const cls = v >= 0 ? "history-val-pos" : "history-val-neg";
+    return `<td class="text-end ${clsBase} ${cls} fw-semibold">${v >= 0 ? "+" : ""}$${v.toFixed(2)}</td>`;
+}
+
+
 export function renderHistory(rows) {
     $("historyTableBody").innerHTML = rows.map((r) => {
-        const sideBadge = (side) => {
-            if (!side || side === "unknown") return "—";
-            const cls = side === "Up" ? "history-up" : "history-down";
-            return `<span class="badge history-side-badge ${cls}">${side.toUpperCase()}</span>`;
-        };
-        const pnlCls = r.pnl_usd == null ? "" : ((r.pnl_usd ?? 0) >= 0 ? "history-val-pos" : "history-val-neg");
-        const pnl = r.pnl_usd != null ? `${r.pnl_usd >= 0 ? "+" : ""}$${r.pnl_usd.toFixed(2)}` : "—";
-        const finalCls = r.final_pnl_usd == null ? "" : ((r.final_pnl_usd ?? 0) >= 0 ? "history-val-pos" : "history-val-neg");
-        const finalPnl = r.final_pnl_usd != null ? `${r.final_pnl_usd >= 0 ? "+" : ""}$${r.final_pnl_usd.toFixed(2)}` : "—";
         const entryQ = r.entry_quote_c != null ? `${r.entry_quote_c}c` : "—";
         const exitQ = r.exit_quote_c != null ? `${r.exit_quote_c}c` : "—";
         const entry = `${entryQ} / ${r.entry_sec}s`;
         const exit = r.exit_sec != null ? `${exitQ} / ${r.exit_sec}s` : "—";
-        return `<tr><td>${r.date_utc}</td><td>${r.time_utc}</td><td>${sideBadge(r.direction)}</td><td>${sideBadge(r.outcome)}</td><td>$${r.size_usd.toFixed(2)}</td><td>${entry}</td><td>${exit}</td><td class="text-end ${finalCls} fw-semibold">${finalPnl}</td><td class="text-end ${pnlCls} fw-semibold">${pnl}</td></tr>`;
+        return `<tr><td>${r.date_utc}</td><td>${r.time_utc}</td><td>${sideBadge(r.direction)}</td><td>${sideBadge(r.outcome)}</td><td>$${r.size_usd.toFixed(2)}</td><td>${entry}</td><td>${exit}</td>${valCell(r.final_pnl_usd)}${valCell(r.pnl_usd)}</tr>`;
     }).join("");
+}
+
+
+export function renderAccounts(state) {
+    const accounts = state.accounts || [];
+    const activeId = state.activeAccountId;
+    const locked = !!state.session?.account_switch_locked;
+    const count = accounts.length;
+    $("accountCountLabel").textContent = `${count} account${count === 1 ? "" : "s"}`;
+    const select = $("accountSelect");
+    if (!count) {
+        select.innerHTML = `<option value="">Create your first account</option>`;
+        select.disabled = true;
+    } else {
+        select.disabled = locked;
+        select.innerHTML = accounts.map((a) => `<option value="${a.id}"${a.id === activeId ? " selected" : ""}>${a.name}</option>`).join("");
+    }
+    const hasActive = activeId != null;
+    $("renameAccountBtn").disabled = !hasActive;
+    $("editAccountBtn").disabled = !hasActive;
+    $("exportCsvBtn").disabled = !hasActive;
+    renderAccountSummary(state.activeAccount);
+}
+
+
+function statBlock(label, value) {
+    return `<div><div class="account-stat-label">${label}</div><div class="account-stat-value">${value}</div></div>`;
+}
+
+
+export function renderAccountSummary(account) {
+    const body = $("accountSummaryBody");
+    if (!account) {
+        body.innerHTML = `<p class="text-muted-app mb-0 tiny">Crea o seleziona un account per vedere i dati.</p>`;
+        return;
+    }
+    const note = account.note ? `<div class="mt-2 tiny text-muted-app">${account.note}</div>` : "";
+    body.innerHTML = `
+        <div class="account-summary-grid">
+            ${statBlock("Current balance", money(account.current_balance_usd))}
+            ${statBlock("Initial balance", money(account.initial_balance_usd))}
+            ${statBlock("Realized PnL", money(account.realized_pnl_usd))}
+            ${statBlock("Gain %", pct(account.gain_pct))}
+            ${statBlock("Wins", String(account.wins))}
+            ${statBlock("Losses", String(account.losses))}
+            ${statBlock("Win rate", pct(account.win_rate_pct))}
+            ${statBlock("Orders", String(account.order_count))}
+            ${statBlock("Total staked", money(account.total_staked_usd))}
+            ${statBlock("Avg stake", money(account.avg_stake_usd))}
+        </div>${note}`;
 }
 
 
