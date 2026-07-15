@@ -17,26 +17,33 @@
       <div class="fw-semibold" id="replayTimestamp">—</div>
     </div>
     <span class="divider d-none d-md-block"></span>
-    <div class="btn-group" role="group" aria-label="Replay controls">
-      <button class="btn btn-outline-secondary dropdown-toggle" id="loadRoundBtn" type="button" data-bs-toggle="dropdown" aria-label="Load round"><i class="bi bi-folder2-open"></i></button>
+    <div class="btn-group" role="group" aria-label="Round navigation">
+      <button class="btn btn-outline-secondary" id="prevRoundBtn" type="button" aria-label="Previous round" disabled><i class="bi bi-caret-left-fill"></i></button>
+      <button class="btn btn-outline-secondary" id="loadRoundBtn" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Load round"><i class="bi bi-folder2-open"></i></button>
+      <button class="btn btn-outline-secondary" id="nextRoundBtn" type="button" aria-label="Next round" disabled><i class="bi bi-caret-right-fill"></i></button>
       <ul class="dropdown-menu round-picker-menu" id="roundPickerMenu" data-bs-auto-close="true"></ul>
+    </div>
+    <div class="btn-group" role="group" aria-label="Playback">
       <button class="btn btn-primary" id="playBtn" type="button" aria-label="Play"><i class="bi bi-play-fill"></i></button>
       <button class="btn btn-outline-secondary" id="pauseBtn" type="button" aria-label="Pause"><i class="bi bi-pause-fill"></i></button>
     </div>
-    <div class="flex-grow-1 px-1 timeline-block" style="min-width:210px">
-      <div class="replay-scale tiny text-muted-app mb-1">
-        <span>300</span><span>280</span><span>260</span><span>240</span><span>220</span><span>200</span>
-        <span>180</span><span>160</span><span>140</span><span>120</span><span>100</span><span>80</span>
-        <span>60</span><span>40</span><span>20</span><span>0</span>
+    <span class="divider d-none d-md-block" aria-hidden="true"></span>
+    <div class="toolbar-timeline flex-grow-1 d-flex align-items-center gap-2 min-w-0">
+      <div class="timeline-block flex-grow-1 min-w-0">
+        <div class="replay-scale text-muted-app mb-1">
+          <span>300</span><span>280</span><span>260</span><span>240</span><span>220</span><span>200</span>
+          <span>180</span><span>160</span><span>140</span><span>120</span><span>100</span><span>80</span>
+          <span>60</span><span>40</span><span>20</span><span>0</span>
+        </div>
+        <div class="timeline-wrap">
+          <input type="range" class="form-range" id="timelineSlider" min="0" max="300" step="1" value="0">
+          <div class="timeline-sec-label" id="timelineSecLabel">—</div>
+        </div>
       </div>
-      <div class="timeline-wrap">
-        <input type="range" class="form-range" id="timelineSlider" min="0" max="300" step="1" value="0">
-        <div class="timeline-sec-label" id="timelineSecLabel">—</div>
+      <div class="quote flex-shrink-0">
+        <div class="tiny text-muted-app text-xl-end">BTC/USD</div>
+        <div class="price text-xl-end" id="btcPrice">—</div>
       </div>
-    </div>
-    <div class="quote ms-xl-auto">
-      <div class="tiny text-muted-app text-xl-end">BTC/USD</div>
-      <div class="price text-xl-end" id="btcPrice">—</div>
     </div>
   </header>
 
@@ -68,13 +75,28 @@
           <span class="panel-title">Orders</span>
           <span class="order-head-divider" aria-hidden="true"></span>
           <div class="order-head-stat">
+            <div class="tiny text-muted-app">BTC/USD</div>
+            <div class="order-head-stat-value" id="orderBtcPrice">—</div>
+          </div>
+          <span class="order-head-divider" aria-hidden="true"></span>
+          <div class="order-head-stat">
             <div class="tiny text-muted-app">PTB</div>
             <div class="order-head-stat-value" id="refPtb">—</div>
           </div>
           <span class="order-head-divider" aria-hidden="true"></span>
           <div class="order-head-stat">
+            <div class="tiny text-muted-app">DELTA</div>
+            <div class="order-head-stat-value" id="orderDelta">—</div>
+          </div>
+          <span class="order-head-divider" aria-hidden="true"></span>
+          <div class="order-head-stat">
             <div class="tiny text-muted-app">OUTCOME</div>
             <div class="order-head-stat-value" id="orderOutcome">---</div>
+          </div>
+          <span class="order-head-divider" aria-hidden="true"></span>
+          <div class="order-head-stat order-head-stat-time">
+            <div class="tiny text-muted-app">TIME</div>
+            <div class="order-head-stat-value" id="orderRoundTime">—</div>
           </div>
           <span class="order-head-divider" aria-hidden="true"></span>
           <div class="order-head-stat">

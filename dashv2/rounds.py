@@ -86,6 +86,9 @@ class RoundRepository:
             counts[e.day_utc] = counts.get(e.day_utc, 0) + 1
         return [{"day_utc": d, "count": counts[d]} for d in sorted(counts.keys(), reverse=True)]
 
+    def list_nav_ts(self) -> list[int]:
+        return sorted(e.market_start_ts for e in self._index if e.valid)
+
     def list_picker_day(self, day_utc: str) -> list[dict]:
         return [
             {"market_start_ts": e.market_start_ts, "label": e.label, "valid": e.valid, "reason": e.reason}

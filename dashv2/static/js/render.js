@@ -10,6 +10,15 @@ function formatMmSs(sec) {
 }
 
 
+function formatRoundClockUtc(market_start_ts, sec) {
+    const d = new Date((market_start_ts + 300 - sec) * 1000);
+    const h = String(d.getUTCHours()).padStart(2, "0");
+    const m = String(d.getUTCMinutes()).padStart(2, "0");
+    const s = String(d.getUTCSeconds()).padStart(2, "0");
+    return `${h}:${m}:${s}`;
+}
+
+
 const TIMELINE_THUMB_PX = 16;
 
 
@@ -174,15 +183,28 @@ export function renderTick(state) {
         updateTimelineSecLabel(session.sec, session.progress);
         $("refPtb").textContent = Math.round(session.ptb_chainlink).toLocaleString("en-US");
         $("orderSecToEnd").textContent = String(session.sec);
+        $("orderRoundTime").textContent = formatRoundClockUtc(session.market_start_ts, session.sec);
         if (!session.round_ended) $("orderOutcome").textContent = "---";
         $("refCountdown").textContent = formatMmSs(session.sec);
     }
     if (tick?.chainlink_btc != null) {
-        $("btcPrice").textContent = `${Math.round(tick.chainlink_btc).toLocaleString("en-US")} $`;
+        const btc = Math.round(tick.chainlink_btc).toLocaleString("en-US");
+        $("btcPrice").textContent = `${btc} $`;
+        $("orderBtcPrice").textContent = btc;
     } else {
         $("btcPrice").textContent = "—";
+        $("orderBtcPrice").textContent = "—";
     }
     const delta = tick?.delta_usd;
+    const deltaEl = $("orderDelta");
+    if (delta == null) {
+        deltaEl.textContent = "---";
+        deltaEl.classList.remove("delta-pos", "delta-neg");
+    } else {
+        deltaEl.textContent = delta > 0 ? `+${delta.toLocaleString("en-US")}` : delta.toLocaleString("en-US");
+        deltaEl.classList.toggle("delta-pos", delta > 0);
+        deltaEl.classList.toggle("delta-neg", delta < 0);
+    }
     if (delta != null) {
         const neg = delta < 0 ? Math.abs(delta) : 0;
         const pos = delta > 0 ? delta : 0;
@@ -197,7 +219,9 @@ export function renderTick(state) {
     $("downSignals").innerHTML = signalCardHtml("DOWN", tick);
     const prev = tick?.previews || {};
     applyButtonPreviews(tick, prev);
-    const tradable = tick?.tradable && session?.tradable;
+    const tradable = tick?.tradable && (
+        session?.tradable || (state.scrubbing && !session?.round_ended && session?.sec >= 1)
+    );
     $("buyUpBtn").disabled = !tradable;
     $("buyDownBtn").disabled = !tradable;
 }
@@ -210,7 +234,7 @@ function orderRowHtml(o) {
     const badgeCls = o.mtm_available && o.mtm_usd != null ? (o.mtm_usd >= 0 ? "text-bg-success" : "text-bg-danger") : "text-bg-secondary";
     const win = o.profit_if_win_usd != null ? ` · WIN $${o.profit_if_win_usd.toFixed(2)}` : "";
     const mtmLine = o.mtm_available && o.mtm_usd != null ? ` · MTM $${o.mtm_usd.toFixed(2)}` : "";
-    return `<div class="${rowCls} rounded p-2 mb-2 d-flex align-items-center justify-content-between" data-order-id="${o.id}"><div><strong class="${sideCls}">${o.side.toUpperCase()}</strong><span class="text-muted-app mx-2">·</span><span>$${o.size_usd.toFixed(2)}</span><div class="tiny text-muted-app">Entry $${o.entry_btc?.toFixed(0) ?? "—"} · sec ${o.entry_sec} · Quote ${o.best_ask_c}c · Payout $${o.payout_if_win_usd?.toFixed(2) ?? "—"}${mtmLine}${win}</div></div><div class="d-flex align-items-center gap-2"><span class="badge order-mtm-badge ${badgeCls}">${mtm}</span><button class="btn btn-sm btn-outline-light close-order-btn" data-id="${o.id}" type="button" ${o.close_enabled ? "" : "disabled"}>Close</button></div></div>`;
+    return `<div class="${rowCls} rounded p-2 mb-2 d-flex align-items-center justify-content-between" data-order-id="${o.id}"><div><strong class="${sideCls}">${o.side.toUpperCase()}</strong><span class="text-muted-app mx-2">·</span><span>$${o.size_usd.toFixed(2)}</span><div class="tiny text-muted-app">Entry $${o.entry_btc?.toFixed(0) ?? "—"} · sec ${o.entry_sec} · Quote ${o.best_ask_c}c · Payout $${o.payout_if_win_usd?.toFixed(2) ?? "—"}${mtmLine}${win}</div></div><div class="d-flex align-items-center gap-2"><span class="badge order-mtm-badge ${badgeCls}">${mtm}</span><button class="btn btn-sm btn-outline-secondary cancel-order-btn" data-id="${o.id}" type="button">Cancel</button><button class="btn btn-sm btn-outline-light close-order-btn" data-id="${o.id}" type="button" ${o.close_enabled ? "" : "disabled"}>Close</button></div></div>`;
 }
 
 

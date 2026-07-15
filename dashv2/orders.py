@@ -74,6 +74,11 @@ class OrderEngine:
         self.closed_orders.append(closed)
         return closed
 
+    def cancel(self, order_id: str) -> dict:
+        order = self._find_open(order_id)
+        self.open_orders = [o for o in self.open_orders if o["id"] != order_id]
+        return order
+
     def settle_open(self, outcome: str, sec: int, final_btc: float) -> list[dict]:
         settled: list[dict] = []
         for order in list(self.open_orders):
@@ -95,6 +100,20 @@ class OrderEngine:
             order["mtm_usd"] = mtm["mtm_usd"]
             order["mtm_available"] = mtm["mtm_available"]
             order["close_enabled"] = mtm["mtm_available"] and not tick.get("gap") and not tick.get("partial")
+
+    def preview_snapshot(self, sec: int, tick: dict, book: BookSnapshot, fee_rate: float) -> dict:
+        snap = self.snapshot()
+        if tick.get("gap") or tick.get("partial"):
+            return snap
+        open_preview = []
+        for order in self.open_orders:
+            o = dict(order)
+            mtm = self._mtm(order, tick, book, fee_rate)
+            o["mtm_usd"] = mtm["mtm_usd"]
+            o["mtm_available"] = mtm["mtm_available"]
+            o["close_enabled"] = mtm["mtm_available"] and order["entry_sec"] <= sec
+            open_preview.append(o)
+        return {**snap, "open": open_preview}
 
     def prune_seek(self, sec: int) -> None:
         """Seek indietro (sec più alto): rimuove placement futuri; riapre close manuali nel futuro."""

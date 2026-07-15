@@ -17,6 +17,15 @@ def _book(up_ask=0.55, down_ask=0.45):
 
 
 class TestSeekAndHistory(unittest.TestCase):
+    def test_cancel_removes_open_without_history(self):
+        eng = OrderEngine(100, 100)
+        tick = {"chainlink_btc": 90000.0, "partial": False, "gap": False, "up_ask": 0.55, "up_bid": 0.53, "down_ask": 0.45, "down_bid": 0.43}
+        book = _book()
+        order = eng.place("Up", 10.0, 200, tick, book, 0.02)
+        eng.cancel(order["id"])
+        self.assertEqual(eng.open_orders, [])
+        self.assertEqual(eng.closed_orders, [])
+
     def test_prune_seek_reopens_manual_close(self):
         eng = OrderEngine(100, 100)
         tick = {"chainlink_btc": 90000.0, "partial": False, "gap": False, "up_ask": 0.55, "up_bid": 0.53, "down_ask": 0.45, "down_bid": 0.43}

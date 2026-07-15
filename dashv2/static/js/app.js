@@ -8,7 +8,7 @@ const state = {
     session: null, tick: null, orders: null, historyRows: [],
     chartPrevious: [], chartCurrent: null, scrubbing: false, wasPlaying: false,
     activeRoundTs: null, syncSizesOnNextOrders: false, loadedRoundDays: {},
-    roundDays: [],
+    roundDays: [], roundNav: [],
 };
 
 const socket = io({ transports: ["websocket", "polling"] });
@@ -36,6 +36,24 @@ socket.on("connect_error", () => setDisconnectBanner(true));
 
 function loadRound(market_start_ts) {
     socket.emit("round.load", { market_start_ts });
+}
+
+function updateRoundNavButtons() {
+    const cur = state.activeRoundTs ?? state.session?.market_start_ts;
+    const nav = state.roundNav;
+    const idx = cur == null ? -1 : nav.indexOf(cur);
+    document.getElementById("prevRoundBtn").disabled = idx <= 0;
+    document.getElementById("nextRoundBtn").disabled = idx < 0 || idx >= nav.length - 1;
+}
+
+function loadAdjacentRound(direction) {
+    const cur = state.activeRoundTs ?? state.session?.market_start_ts;
+    if (cur == null) return;
+    const idx = state.roundNav.indexOf(cur);
+    if (idx < 0) return;
+    const ts = state.roundNav[idx + direction];
+    if (ts == null) return;
+    loadRound(ts);
 }
 
 function applyOrderSizes(payload) {
@@ -112,7 +130,9 @@ function openRoundDay(dayUtc) {
 
 socket.on("bootstrap", (payload) => {
     state.roundDays = payload.round_days || [];
+    state.roundNav = payload.round_nav || [];
     showRoundDays();
+    updateRoundNavButtons();
     applyOrderSizes({ size_up_usd: payload.default_order_size_usd, size_down_usd: payload.default_order_size_usd });
 });
 
@@ -123,6 +143,7 @@ socket.on("session", (payload) => {
         state.activeRoundTs = payload.market_start_ts;
         state.syncSizesOnNextOrders = true;
     }
+    updateRoundNavButtons();
     renderTick(state);
 });
 
@@ -165,8 +186,20 @@ socket.on("error", (payload) => alert(payload.message || "error"));
 
 document.getElementById("playBtn").addEventListener("click", () => emitAck("replay.play").catch(alert));
 document.getElementById("pauseBtn").addEventListener("click", () => emitAck("replay.pause").catch(alert));
+document.getElementById("prevRoundBtn").addEventListener("click", () => loadAdjacentRound(-1));
+document.getElementById("nextRoundBtn").addEventListener("click", () => loadAdjacentRound(1));
 
 const slider = document.getElementById("timelineSlider");
+let scrubPreviewRaf = 0;
+
+function scrubPreview(sec) {
+    if (scrubPreviewRaf) cancelAnimationFrame(scrubPreviewRaf);
+    scrubPreviewRaf = requestAnimationFrame(() => {
+        scrubPreviewRaf = 0;
+        emitAck("replay.preview", { sec }).catch(() => {});
+    });
+}
+
 slider.addEventListener("pointerdown", () => {
     state.scrubbing = true;
     state.wasPlaying = !!state.session?.playing;
@@ -177,8 +210,13 @@ slider.addEventListener("input", () => {
     const sec = 300 - progress;
     if (state.session) state.session = { ...state.session, progress, sec };
     renderTick(state);
+    scrubPreview(sec);
 });
 slider.addEventListener("pointerup", () => {
+    if (scrubPreviewRaf) {
+        cancelAnimationFrame(scrubPreviewRaf);
+        scrubPreviewRaf = 0;
+    }
     state.scrubbing = false;
     const sec = 300 - Number(slider.value);
     emitAck("replay.seek", { sec, resume: state.wasPlaying }).catch(alert);
@@ -231,6 +269,11 @@ layoutReplayScale();
 window.addEventListener("resize", layoutReplayScale);
 
 document.getElementById("openOrdersList").addEventListener("click", (e) => {
+    const cancelBtn = e.target.closest(".cancel-order-btn");
+    if (cancelBtn) {
+        emitAck("order.cancel", { order_id: cancelBtn.dataset.id }).catch(alert);
+        return;
+    }
     const btn = e.target.closest(".close-order-btn");
     if (!btn || btn.disabled) return;
     emitAck("order.close", { order_id: btn.dataset.id }).catch(alert);

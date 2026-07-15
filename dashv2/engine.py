@@ -84,6 +84,7 @@ class ReplayEngine:
     def _bootstrap_payload(self) -> dict:
         return {
             "round_days": self.repo.list_days(),
+            "round_nav": self.repo.list_nav_ts(),
             "default_order_size_usd": self.cfg["default_order_size_usd"],
             "host": self.cfg["host"], "port": self.cfg["port"],
         }
@@ -102,10 +103,12 @@ class ReplayEngine:
             elif cmd == "replay.play": result = self._cmd_replay_play()
             elif cmd == "replay.pause": result = self._cmd_replay_pause()
             elif cmd == "replay.seek": result = self._cmd_replay_seek(payload)
+            elif cmd == "replay.preview": result = self._cmd_replay_preview(payload)
             elif cmd == "order.size": result = self._cmd_order_size(payload)
             elif cmd == "order.preview": result = self._cmd_order_preview(payload)
             elif cmd == "order.place": result = self._cmd_order_place(payload)
             elif cmd == "order.close": result = self._cmd_order_close(payload)
+            elif cmd == "order.cancel": result = self._cmd_order_cancel(payload)
             elif cmd == "session.sync": result = self._cmd_session_sync()
             elif cmd == "controller.claim": result = {"ok": True}
             elif cmd == "controller.release": result = {"ok": True}
@@ -166,6 +169,47 @@ class ReplayEngine:
         self._emit_session()
         return {"ok": True, "playing": False}
 
+    def _scrub_sec(self, target_sec: int) -> int:
+        if target_sec < 0 or target_sec > 300:
+            raise Exception(f"sec out of range 0..300: {target_sec}")
+        if self.round_ended:
+            return 0 if target_sec == 0 else max(1, min(300, target_sec))
+        if target_sec < 1:
+            return 1
+        return target_sec
+
+    def _cmd_replay_preview(self, payload: dict) -> dict:
+        if not self.loaded:
+            raise Exception("no round loaded")
+        sec = self._scrub_sec(int(payload["sec"]))
+        self._emit_scrub_preview(sec)
+        return {"ok": True, "sec": sec}
+
+    def _emit_scrub_preview(self, sec: int) -> None:
+        dt = datetime.fromtimestamp(self.loaded.market_start_ts, tz=timezone.utc)
+        mm, ss = divmod(max(sec, 0), 60)
+        self._emit_event("session", {
+            "loaded": True, "market_start_ts": self.loaded.market_start_ts,
+            "replay_timestamp": dt.strftime("%d/%m/%Y | %H:%M:%S"),
+            "sec": sec, "countdown": f"{sec} | {mm}:{ss:02d}",
+            "progress": 300 - sec, "playing": False, "round_ended": self.round_ended,
+            "ptb_chainlink": self.loaded.ptb_chainlink,
+            "tradable": not self.round_ended and sec >= 1,
+            "preview": True,
+        })
+        self.seq += 1
+        tick = self.loaded.ticks_by_sec.get(sec)
+        gap = tick is None or tick.get("gap", False)
+        public = _public_tick(tick, sec, self.seq, gap)
+        previews = self._previews_at(sec) if not gap and public.get("tradable") else {}
+        self._emit_event("tick", {**public, "previews": previews, "preview": True})
+        current = self.repo.current_candle(self.loaded, sec)
+        self._emit_event("chart", {"current": current, "full_reset": False, "preview": True})
+        if not gap and tick:
+            book = self.loaded.books_by_sec[sec]
+            snap = self.orders.preview_snapshot(sec, tick, book, self.loaded.fee_rate)
+            self._emit_event("orders", {**snap, "preview": True})
+
     def _cmd_replay_seek(self, payload: dict) -> dict:
         if not self.loaded: raise Exception("no round loaded")
         target_sec = int(payload["sec"])
@@ -176,7 +220,7 @@ class ReplayEngine:
             was_playing = bool(payload.get("resume"))
             result = self._restart_round(playing=was_playing, sec=target_sec)
             return result
-        was_playing = self.playing
+        resume = bool(payload.get("resume"))
         self.playing = False
         if target_sec == 0:
             self._finish_round()
@@ -189,9 +233,10 @@ class ReplayEngine:
         self._emit_tick_at(self.sec)
         self._emit_orders()
         self._emit_history()
-        if was_playing and payload.get("resume"):
+        if resume:
             self.playing = True
-        return {"ok": True, "sec": self.sec}
+            self._emit_session()
+        return {"ok": True, "sec": self.sec, "playing": self.playing}
 
     def _cmd_order_size(self, payload: dict) -> dict:
         size = float(payload["size_usd"])
@@ -240,6 +285,12 @@ class ReplayEngine:
         self._emit_orders()
         self._emit_history()
         return {"ok": True, "order": closed}
+
+    def _cmd_order_cancel(self, payload: dict) -> dict:
+        if not self.loaded or self.round_ended: raise Exception("trading blocked")
+        removed = self.orders.cancel(payload["order_id"])
+        self._emit_orders()
+        return {"ok": True, "order": removed}
 
     def _cmd_session_sync(self) -> dict:
         self._emit_event("bootstrap", self._bootstrap_payload())
@@ -306,11 +357,17 @@ class ReplayEngine:
         self._emit_event("tick", {**public, "previews": previews})
 
     def _previews(self) -> dict:
-        tick, book = self._require_tick_book()
+        return self._previews_at(self.sec)
+
+    def _previews_at(self, sec: int) -> dict:
+        tick = self.loaded.ticks_by_sec.get(sec)
+        book = self.loaded.books_by_sec.get(sec)
+        if tick is None or book is None or tick.get("gap") or tick.get("partial"):
+            raise Exception(f"tick not tradable sec={sec}")
         out = {}
         for side, size in (("Up", self.orders.size_up_usd), ("Down", self.orders.size_down_usd)):
             try:
-                out[side] = self.orders.preview(side, size, self.sec, tick, book, self.loaded.fee_rate)
+                out[side] = self.orders.preview(side, size, sec, tick, book, self.loaded.fee_rate)
             except Exception:
                 out[side] = None
         return out
