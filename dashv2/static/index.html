@@ -24,8 +24,13 @@
       <ul class="dropdown-menu round-picker-menu" id="roundPickerMenu" data-bs-auto-close="true"></ul>
     </div>
     <div class="btn-group" role="group" aria-label="Playback">
-      <button class="btn btn-primary" id="playBtn" type="button" aria-label="Play"><i class="bi bi-play-fill"></i></button>
-      <button class="btn btn-outline-secondary" id="pauseBtn" type="button" aria-label="Pause"><i class="bi bi-pause-fill"></i></button>
+      <button class="btn btn-outline-secondary" id="playBtn" type="button" aria-label="Play"><i class="bi bi-play-fill"></i></button>
+      <button class="btn btn-primary" id="pauseBtn" type="button" aria-label="Pause"><i class="bi bi-pause-fill"></i></button>
+    </div>
+    <div class="btn-group" role="group" aria-label="Playback speed">
+      <button class="btn btn-primary replay-speed-btn active" type="button" data-speed="1">x1</button>
+      <button class="btn btn-outline-secondary replay-speed-btn" type="button" data-speed="2">x2</button>
+      <button class="btn btn-outline-secondary replay-speed-btn" type="button" data-speed="5">x5</button>
     </div>
     <span class="divider d-none d-md-block" aria-hidden="true"></span>
     <div class="toolbar-timeline flex-grow-1 d-flex align-items-center gap-2 min-w-0">
@@ -51,14 +56,14 @@
     <div class="workspace-left app-panel">
       <ul class="nav nav-tabs workspace-tabs" id="leftTabs" role="tablist">
         <li class="nav-item" role="presentation">
-          <button class="nav-link active" id="candles-tab" data-bs-toggle="tab" data-bs-target="#candlesPane" type="button" role="tab" aria-controls="candlesPane" aria-selected="true">CANDLES</button>
+          <button class="nav-link" id="candles-tab" data-bs-toggle="tab" data-bs-target="#candlesPane" type="button" role="tab" aria-controls="candlesPane" aria-selected="false">CANDLES</button>
         </li>
         <li class="nav-item" role="presentation">
-          <button class="nav-link" id="accounts-tab" data-bs-toggle="tab" data-bs-target="#accountsPane" type="button" role="tab" aria-controls="accountsPane" aria-selected="false">ACCOUNTS</button>
+          <button class="nav-link active" id="accounts-tab" data-bs-toggle="tab" data-bs-target="#accountsPane" type="button" role="tab" aria-controls="accountsPane" aria-selected="true">ACCOUNTS</button>
         </li>
       </ul>
       <div class="tab-content workspace-tab-content flex-grow-1 min-h-0">
-        <div class="tab-pane fade show active h-100" id="candlesPane" role="tabpanel" aria-labelledby="candles-tab" tabindex="0">
+        <div class="tab-pane fade h-100" id="candlesPane" role="tabpanel" aria-labelledby="candles-tab" tabindex="0">
           <article class="chart-panel h-100 d-flex flex-column">
             <div class="panel-head d-flex justify-content-between align-items-center">
               <span class="panel-title">BTC/USD · Candlestick</span>
@@ -67,7 +72,7 @@
             <div class="chart-wrap flex-grow-1"><div id="chartContainer"></div></div>
           </article>
         </div>
-        <div class="tab-pane fade h-100" id="accountsPane" role="tabpanel" aria-labelledby="accounts-tab" tabindex="0">
+        <div class="tab-pane fade show active h-100" id="accountsPane" role="tabpanel" aria-labelledby="accounts-tab" tabindex="0">
           <div class="accounts-stack h-100 d-flex flex-column">
             <article class="app-panel account-manage-panel mb-2">
               <div class="panel-head d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -76,9 +81,9 @@
               </div>
               <div class="p-3 d-flex flex-wrap align-items-center gap-2">
                 <select class="form-select form-select-sm account-select" id="accountSelect" aria-label="Select account"></select>
-                <button class="btn btn-sm btn-primary" id="newAccountBtn" type="button">New account</button>
-                <button class="btn btn-sm btn-outline-secondary" id="renameAccountBtn" type="button" disabled>Rename</button>
-                <button class="btn btn-sm btn-outline-secondary" id="editAccountBtn" type="button" disabled>Edit account</button>
+                <button class="btn btn-sm btn-primary" id="newAccountBtn" type="button">NEW</button>
+                <button class="btn btn-sm btn-outline-secondary" id="renameAccountBtn" type="button" disabled>RENAME</button>
+                <button class="btn btn-sm btn-outline-secondary" id="editAccountBtn" type="button" disabled>EDIT</button>
               </div>
             </article>
             <article class="app-panel account-summary-panel mb-2" id="accountSummaryPanel">
@@ -94,7 +99,7 @@
               </div>
               <div class="table-responsive account-history-scroll flex-grow-1 px-3 pb-2">
                 <table class="table table-sm mb-0 align-middle">
-                  <thead><tr><th>Date</th><th>Time</th><th>Direction</th><th>Outcome</th><th>Size</th><th>Entry</th><th>Exit</th><th class="text-end">Final</th><th class="text-end">PnL</th></tr></thead>
+                  <thead><tr><th>Session</th><th class="history-toggle-col"></th><th>Date</th><th>Time</th><th>Direction</th><th>Outcome</th><th>Size</th><th>Entry</th><th>Exit</th><th class="text-end">Final</th><th class="text-end">PnL</th></tr></thead>
                   <tbody id="historyTableBody"></tbody>
                 </table>
               </div>

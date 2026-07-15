@@ -87,12 +87,14 @@ class TestSeekAndHistory(unittest.TestCase):
                 "best_ask_c": 55, "exit_price": 1.0, "payout_if_win_usd": 180.0, "profit_if_win_usd": 80.0,
                 "pnl_usd": 80.0, "result": "won", "close_type": "settlement",
             }]
-            append_settled_orders(root, aid, 12345, "run1", "Up", orders)
+            append_settled_orders(root, aid, 12345, "sess1", "2026-07-15T13:35:00Z", "Up", orders)
             loaded = load_account(root, aid)
             stats = compute_stats(loaded)
             self.assertEqual(stats["wins"], 1)
             self.assertEqual(stats["current_balance_usd"], 1080.0)
             self.assertEqual(stats["gain_pct"], 8.0)
+            self.assertEqual(loaded["orders"][0]["session_id"], "sess1")
+            self.assertEqual(loaded["orders"][0]["session_started_at_utc"], "2026-07-15T13:35:00Z")
 
     def test_rename_and_update_account(self):
         with tempfile.TemporaryDirectory() as td:
@@ -125,8 +127,11 @@ class TestSeekAndHistory(unittest.TestCase):
                 "pnl_usd": -15.0, "result": "lost", "close_type": "settlement",
             },
         ]
-        rows = order_rows_for_run(12345, orders, "run1", "Down")
+        rows = order_rows_for_run(12345, orders, "sess1", "2026-07-15T13:35:00Z", "Down")
         self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0]["session_id"], "sess1")
+        self.assertEqual(rows[0]["session_date_utc"], "15/07")
+        self.assertEqual(rows[0]["session_time_utc"], "13:35")
         self.assertEqual(rows[0]["entry_quote_c"], 67)
         self.assertEqual(rows[0]["exit_quote_c"], 79)
         self.assertEqual(rows[0]["payout_usd"], 0.0)
@@ -147,8 +152,9 @@ class TestSeekAndHistory(unittest.TestCase):
             "best_ask_c": 67, "exit_price": 0.79, "payout_if_win_usd": 14.5, "profit_if_win_usd": 4.5,
             "pnl_usd": 2.1, "result": "closed", "close_type": "manual",
         }]
-        rows = order_rows_for_run(12345, orders, "run1")
+        rows = order_rows_for_run(12345, orders, "sess1", "2026-07-15T13:35:00Z")
         self.assertIsNone(rows[0]["outcome"])
+        self.assertEqual(rows[0]["session_id"], "sess1")
         self.assertIsNone(rows[0]["payout_usd"])
         self.assertIsNone(rows[0]["final_pnl_usd"])
 
@@ -160,13 +166,33 @@ class TestSeekAndHistory(unittest.TestCase):
             self.assertEqual(summary["current_balance_usd"], 2000.0)
             self.assertEqual(summary["order_count"], 0)
 
-    def test_order_rows_from_ledger_sort(self):
+    def test_order_rows_from_ledger_sort_by_session(self):
         ledger = [
-            {"market_start_ts": 100, "close_type": "settlement", "side": "Up", "size_usd": 10, "entry_sec": 50, "pnl_usd": 1, "outcome": "Up", "payout_if_win_usd": 18.0, "profit_if_win_usd": 8.0},
-            {"market_start_ts": 200, "close_type": "manual", "side": "Down", "size_usd": 20, "entry_sec": 80, "exit_sec": 40, "pnl_usd": -2, "outcome": None, "payout_if_win_usd": 36.0, "profit_if_win_usd": 16.0},
+            {
+                "market_start_ts": 200, "close_type": "settlement", "side": "Up", "size_usd": 10,
+                "entry_sec": 50, "pnl_usd": 1, "outcome": "Up", "session_id": "old",
+                "session_started_at_utc": "2026-07-14T10:00:00Z",
+                "payout_if_win_usd": 18.0, "profit_if_win_usd": 8.0,
+            },
+            {
+                "market_start_ts": 100, "close_type": "manual", "side": "Down", "size_usd": 20,
+                "entry_sec": 80, "exit_sec": 40, "pnl_usd": -2, "outcome": None, "session_id": "new",
+                "session_started_at_utc": "2026-07-15T10:00:00Z",
+                "payout_if_win_usd": 36.0, "profit_if_win_usd": 16.0,
+            },
         ]
         rows = order_rows_from_ledger(ledger)
-        self.assertEqual(rows[0]["market_start_ts"], 200)
+        self.assertEqual(rows[0]["session_id"], "new")
+        self.assertEqual(rows[1]["session_id"], "old")
+
+    def test_order_rows_legacy_run_id(self):
+        ledger = [{
+            "market_start_ts": 100, "close_type": "settlement", "side": "Up", "size_usd": 10,
+            "entry_sec": 50, "pnl_usd": 1, "outcome": "Up", "run_id": "legacy1",
+            "payout_if_win_usd": 18.0, "profit_if_win_usd": 8.0,
+        }]
+        rows = order_rows_from_ledger(ledger)
+        self.assertEqual(rows[0]["session_id"], "legacy1")
 
     def test_mtm_settlement_estimate_when_no_bid_liquidity(self):
         eng = OrderEngine(100, 100)

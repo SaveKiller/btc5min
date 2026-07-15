@@ -5,6 +5,13 @@ let candleSeries = null;
 let chartContainer = null;
 let candleCount = 0;
 let currentRoundCandleTime = null;
+let chartViewFree = false;
+let layoutQueued = false;
+
+
+function candleValid(c) {
+    return c && [c.time, c.open, c.high, c.low, c.close].every((v) => Number.isFinite(v));
+}
 
 
 function enableFreeInteraction() {
@@ -18,11 +25,34 @@ function enableFreeInteraction() {
 
 
 function fitRoundStartViewport() {
-    if (!chart || !candleCount) return;
+    if (!chart || !candleCount || !chartContainer?.clientWidth || !chartContainer?.clientHeight) return false;
     const w = Math.max(120, chartContainer.clientWidth - 58);
     chart.timeScale().applyOptions({ barSpacing: Math.max(4, w / candleCount) });
-    chart.timeScale().setVisibleLogicalRange({ from: 0, to: candleCount });
-    candleSeries.priceScale().applyOptions({ autoScale: false });
+    chart.timeScale().setVisibleLogicalRange({ from: 0, to: Math.max(1, candleCount) });
+    candleSeries.priceScale().applyOptions({ autoScale: true });
+    return true;
+}
+
+
+function applyChartLayout() {
+    layoutQueued = false;
+    if (!chart || !chartContainer) return;
+    resizeChart();
+    if (!candleCount || !chartContainer.clientWidth || !chartContainer.clientHeight) {
+        queueChartLayout();
+        return;
+    }
+    if (chartViewFree) fitRoundStartViewport();
+    else candleSeries.priceScale().applyOptions({ autoScale: true });
+}
+
+
+function queueChartLayout() {
+    if (layoutQueued) return;
+    layoutQueued = true;
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => applyChartLayout());
+    });
 }
 
 
@@ -40,28 +70,31 @@ export function initChart(container) {
         upColor: "#22c55e", downColor: "#ef4444", borderVisible: false,
         wickUpColor: "#22c55e", wickDownColor: "#ef4444",
     });
-    new ResizeObserver(() => resizeChart()).observe(container);
+    new ResizeObserver(() => queueChartLayout()).observe(container);
 }
 
 
 export function setCandles(previous, current, opts = {}) {
-    const data = [...previous];
-    if (current) data.push(current);
+    const data = [...(previous || []).filter(candleValid)];
+    if (current && candleValid(current)) data.push(current);
     data.sort((a, b) => a.time - b.time);
     candleCount = data.length;
     currentRoundCandleTime = current?.time ?? null;
-    candleSeries.priceScale().applyOptions({ autoScale: true });
+    chartViewFree = !!opts.freeView;
     candleSeries.setData(data.map((c) => ({
         time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
     })));
     enableFreeInteraction();
-    if (opts.freeView) fitRoundStartViewport();
-    else candleSeries.priceScale().applyOptions({ autoScale: false });
+    queueChartLayout();
 }
 
 
 export function updateCurrentCandle(candle) {
-    if (!candle) return;
+    if (!candle || !candleValid(candle)) return;
+    if (!candleCount) {
+        setCandles([], candle, { freeView: chartViewFree });
+        return;
+    }
     if (currentRoundCandleTime !== candle.time) {
         candleCount += 1;
         currentRoundCandleTime = candle.time;
@@ -79,5 +112,5 @@ export function resizeChart() {
 
 
 export function relayoutChart() {
-    resizeChart();
+    queueChartLayout();
 }

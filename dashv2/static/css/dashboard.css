@@ -6,7 +6,7 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .panel-head { padding:.65rem .85rem; border-bottom:1px solid var(--border); background:rgba(255,255,255,.018); }
 .panel-title { font-size:.76rem; letter-spacing:.08em; text-transform:uppercase; color:#b9c4d9; font-weight:700; }
 .text-muted-app { color:var(--muted)!important; }
-.toolbar { min-height:73px; flex-shrink:0; }
+.toolbar .btn-group[aria-label="Playback speed"] .btn { min-width:2.6rem; font-weight:700; }
 .toolbar .divider { height:36px; width:1px; background:var(--border); }
 .toolbar .btn-group[aria-label="Round navigation"] > .btn#prevRoundBtn { border-top-left-radius:var(--bs-border-radius); border-bottom-left-radius:var(--bs-border-radius); }
 .toolbar .btn-group[aria-label="Round navigation"] > .btn#loadRoundBtn { border-radius:0; margin-left:calc(-1 * var(--bs-border-width)); z-index:2; }
@@ -38,9 +38,11 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .accounts-stack { min-height:0; overflow:hidden; }
 .account-manage-panel, .account-summary-panel { flex-shrink:0; }
 .account-select { min-width:180px; max-width:280px; }
-.account-summary-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:.65rem; }
+.account-summary-grid { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:.65rem; }
 .account-stat-label { font-size:.68rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
 .account-stat-value { font-size:1.05rem; font-weight:700; color:#dbe4f5; }
+.account-stat-value.account-stat-pos { color:#7dd99a; }
+.account-stat-value.account-stat-neg { color:#f09595; }
 .account-history-panel { overflow:hidden; }
 .account-history-scroll { overflow:auto; min-height:0; }
 .order-book { min-height:0; overflow:hidden; }
@@ -88,6 +90,20 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .order-mtm-badge.order-mtm-pending { background:rgba(148,163,184,.35); color:#b9c4d9; }
 #historyTableBody td.history-val-pos { color:#7dd99a; }
 #historyTableBody td.history-val-neg { color:#f09595; }
+.history-toggle-col { width:1.25rem; padding-left:0!important; padding-right:.15rem!important; }
+.history-toggle-icon { color:#8fa4ff; font-size:1.1rem; font-weight:700; line-height:1; min-width:1rem; display:inline-block; text-align:center; user-select:none; }
+.history-session-row { background:rgba(255,255,255,.025); cursor:pointer; transition:background .12s ease; }
+.history-session-row:hover { background:rgba(143,164,255,.1); }
+.history-session-row-expanded { background:rgba(143,164,255,.06); }
+.history-session-row-expanded:hover { background:rgba(143,164,255,.14); }
+.history-session-row td { border-top-width:2px; }
+.account-history-panel .table th:first-child,
+.account-history-panel .table td.history-session-datetime { width:1%; white-space:nowrap; padding-right:.2rem!important; }
+.history-session-datetime { white-space:nowrap; font-weight:600; }
+.history-session-count { margin-left:.25rem; font-size:calc(.72rem + 1pt); color:#ff7a00; font-weight:700; }
+.history-bet-row td:nth-child(3),
+.history-bet-row td:nth-child(4) { color:var(--muted); }
+.history-bet-row-hidden { display:none; }
 .tiny { font-size:.84rem; }
 .form-range::-webkit-slider-thumb { background:#4f7cff; }
 .form-range::-moz-range-thumb { background:#4f7cff; }

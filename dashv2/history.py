@@ -134,12 +134,15 @@ def update_account(accounts_root: Path, account_id: str, name: str, initial_bala
     return data
 
 
-def append_settled_orders(accounts_root: Path, account_id: str, market_start_ts: int, run_id: str, outcome: str, orders: list[dict]) -> dict:
+def append_settled_orders(accounts_root: Path, account_id: str, market_start_ts: int, session_id: str, session_started_at_utc: str, outcome: str, orders: list[dict]) -> dict:
     data = load_account(accounts_root, account_id)
     for o in orders:
         if o.get("close_type") not in ("manual", "settlement"):
             continue
-        entry = {**o, "market_start_ts": market_start_ts, "run_id": run_id, "outcome": outcome, "saved_at_utc": _utc_now_iso()}
+        entry = {
+            **o, "market_start_ts": market_start_ts, "session_id": session_id,
+            "session_started_at_utc": session_started_at_utc, "outcome": outcome, "saved_at_utc": _utc_now_iso(),
+        }
         data["orders"].append(entry)
     data["updated_at_utc"] = _utc_now_iso()
     _atomic_write(_account_path(accounts_root, account_id), data)
@@ -155,6 +158,22 @@ def visible_orders(orders: list[dict], active_market_start_ts: int | None, round
     return out
 
 
+def _session_display(o: dict) -> tuple[str, str]:
+    raw = o.get("session_started_at_utc") or o.get("saved_at_utc")
+    if not raw:
+        return "—", "—"
+    dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    return dt.strftime("%d/%m"), dt.strftime("%H:%M")
+
+
+def _session_sort_ts(o: dict) -> int:
+    raw = o.get("session_started_at_utc") or o.get("saved_at_utc")
+    if not raw:
+        return 0
+    dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    return int(dt.timestamp())
+
+
 def order_rows_from_ledger(orders: list[dict]) -> list[dict]:
     rows: list[dict] = []
     for o in orders:
@@ -163,8 +182,12 @@ def order_rows_from_ledger(orders: list[dict]) -> list[dict]:
         mts = int(o["market_start_ts"])
         outcome = o.get("outcome")
         dt = datetime.fromtimestamp(mts, tz=timezone.utc)
+        session_date, session_time = _session_display(o)
         rows.append({
-            "date_utc": dt.strftime("%d/%m/%Y"), "time_utc": dt.strftime("%H:%M:%S"),
+            "date_utc": dt.strftime("%d/%m"), "time_utc": dt.strftime("%H:%M"),
+            "session_date_utc": session_date, "session_time_utc": session_time,
+            "session_started_at_utc": o.get("session_started_at_utc") or o.get("saved_at_utc") or "",
+            "session_sort_ts": _session_sort_ts(o),
             "direction": o["side"], "outcome": outcome,
             "size_usd": o["size_usd"], "entry_sec": o["entry_sec"],
             "exit_sec": o.get("exit_sec"),
@@ -172,14 +195,17 @@ def order_rows_from_ledger(orders: list[dict]) -> list[dict]:
             "pnl_usd": o.get("pnl_usd"),
             "payout_usd": _settlement_payout_usd(o, outcome),
             "final_pnl_usd": _settlement_pnl_usd(o, outcome),
-            "market_start_ts": mts, "run_id": o.get("run_id", ""),
+            "market_start_ts": mts, "session_id": o.get("session_id") or o.get("run_id", ""),
         })
-    rows.sort(key=lambda r: (r["market_start_ts"], r.get("entry_sec", 0)), reverse=True)
+    rows.sort(key=lambda r: (r["session_sort_ts"], r["market_start_ts"], r.get("entry_sec", 0)), reverse=True)
     return rows
 
 
-def order_rows_for_run(market_start_ts: int, orders: list[dict], run_id: str = "", outcome: str | None = None) -> list[dict]:
-    enriched = [{**o, "market_start_ts": market_start_ts, "run_id": run_id, "outcome": outcome} for o in orders]
+def order_rows_for_run(market_start_ts: int, orders: list[dict], session_id: str = "", session_started_at_utc: str = "", outcome: str | None = None) -> list[dict]:
+    enriched = [{
+        **o, "market_start_ts": market_start_ts, "session_id": session_id,
+        "session_started_at_utc": session_started_at_utc, "outcome": outcome,
+    } for o in orders]
     return order_rows_from_ledger(enriched)
 
 

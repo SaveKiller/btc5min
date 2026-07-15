@@ -2,15 +2,18 @@ import { initChart, relayoutChart, resizeChart, setCandles, updateCurrentCandle 
 import {
     applyButtonPreviews, layoutReplayScale, renderAccounts, renderHistory,
     renderOrders, renderOutcome, renderRoundPickerDays, renderRoundPickerHours, renderRoundPickerRounds,
-    renderStakeButtons, renderTick, setDisconnectBanner,
+    renderStakeButtons, renderTick, setDisconnectBanner, toggleHistorySession,
 } from "./render.js";
+
+const REPLAY_SPEED_KEY = "dashv2_replay_speed";
+const REPLAY_SPEEDS = [1, 2, 5];
 
 const state = {
     session: null, tick: null, orders: null, historyRows: [],
     accounts: [], activeAccountId: null, activeAccount: null,
     chartPrevious: [], chartCurrent: null, chartFreeView: false, scrubbing: false, wasPlaying: false,
     activeRoundTs: null, syncSizesOnNextOrders: false, loadedRoundDays: {},
-    roundDays: [], roundNav: [],
+    roundDays: [], roundNav: [], replaySpeed: loadStoredReplaySpeed(),
 };
 
 const socket = io({ transports: ["websocket", "polling"] });
@@ -28,9 +31,48 @@ function emitAck(event, payload = {}) {
 }
 
 
+function loadStoredReplaySpeed() {
+    const speed = Number(localStorage.getItem(REPLAY_SPEED_KEY));
+    return REPLAY_SPEEDS.includes(speed) ? speed : 1;
+}
+
+
+function renderReplaySpeedButtons(speed) {
+    document.querySelectorAll(".replay-speed-btn").forEach((btn) => {
+        const active = Number(btn.dataset.speed) === speed;
+        btn.classList.toggle("btn-primary", active);
+        btn.classList.toggle("btn-outline-secondary", !active);
+        btn.classList.toggle("active", active);
+    });
+}
+
+
+function renderPlaybackButtons(playing) {
+    const playBtn = document.getElementById("playBtn");
+    const pauseBtn = document.getElementById("pauseBtn");
+    playBtn.classList.toggle("btn-primary", playing);
+    playBtn.classList.toggle("btn-outline-secondary", !playing);
+    pauseBtn.classList.toggle("btn-primary", !playing);
+    pauseBtn.classList.toggle("btn-outline-secondary", playing);
+}
+
+
+function applyReplaySpeed(speed, { persist = true, notify = true } = {}) {
+    if (!REPLAY_SPEEDS.includes(speed)) return;
+    state.replaySpeed = speed;
+    renderReplaySpeedButtons(speed);
+    if (persist) localStorage.setItem(REPLAY_SPEED_KEY, String(speed));
+    if (notify) return emitAck("replay.speed", { speed });
+    return Promise.resolve();
+}
+
+
 socket.on("connect", () => {
     setDisconnectBanner(false);
-    emitAck("session.sync").catch(console.error);
+    renderReplaySpeedButtons(state.replaySpeed);
+    emitAck("session.sync")
+        .then(() => applyReplaySpeed(state.replaySpeed, { persist: false }))
+        .catch(console.error);
 });
 
 socket.on("disconnect", () => setDisconnectBanner(true));
@@ -189,6 +231,8 @@ socket.on("bootstrap", (payload) => {
 socket.on("session", (payload) => {
     const prev = state.session;
     state.session = payload;
+    if (payload.playing != null) renderPlaybackButtons(payload.playing);
+    if (payload.replay_speed != null) applyReplaySpeed(payload.replay_speed, { persist: false, notify: false });
     if (payload.active_account_id !== undefined) state.activeAccountId = payload.active_account_id;
     if (!payload.round_ended) document.getElementById("orderOutcome").textContent = "---";
     if (payload.loaded && payload.market_start_ts !== state.activeRoundTs) {
@@ -253,6 +297,9 @@ socket.on("error", (payload) => alert(payload.message || "error"));
 
 document.getElementById("playBtn").addEventListener("click", () => emitAck("replay.play").catch(alert));
 document.getElementById("pauseBtn").addEventListener("click", () => emitAck("replay.pause").catch(alert));
+document.querySelectorAll(".replay-speed-btn").forEach((btn) => {
+    btn.addEventListener("click", () => applyReplaySpeed(Number(btn.dataset.speed)).catch(alert));
+});
 document.getElementById("prevRoundBtn").addEventListener("click", () => loadAdjacentRound(-1));
 document.getElementById("nextRoundBtn").addEventListener("click", () => loadAdjacentRound(1));
 
@@ -317,7 +364,7 @@ document.getElementById("buyDownBtn").addEventListener("click", () => {
 
 document.getElementById("exportCsvBtn").addEventListener("click", () => {
     const rows = state.historyRows;
-    const header = ["Date","Time","Direction","Outcome","Size","Entry","Exit","Final","PnL"];
+    const header = ["Date","Time","Direction","Outcome","Size","Entry","Exit","Final","PnL","SessionId"];
     const lines = [header.join(",")];
     rows.forEach((r) => {
         const entryQ = r.entry_quote_c != null ? `${r.entry_quote_c}c` : "—";
@@ -326,7 +373,7 @@ document.getElementById("exportCsvBtn").addEventListener("click", () => {
         const exit = r.exit_sec != null ? `${exitQ} / ${r.exit_sec}s` : "";
         lines.push([
             r.date_utc, r.time_utc, r.direction, r.outcome ?? "", r.size_usd, entry, exit,
-            r.final_pnl_usd ?? "", r.pnl_usd ?? "",
+            r.final_pnl_usd ?? "", r.pnl_usd ?? "", r.session_id ?? "",
         ].join(","));
     });
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
@@ -334,6 +381,13 @@ document.getElementById("exportCsvBtn").addEventListener("click", () => {
     a.href = URL.createObjectURL(blob);
     a.download = "dashv2-history.csv";
     a.click();
+});
+
+document.getElementById("historyTableBody").addEventListener("click", (e) => {
+    const row = e.target.closest(".history-session-row");
+    if (!row) return;
+    toggleHistorySession(row.dataset.sessionId);
+    renderHistory(state.historyRows);
 });
 
 document.getElementById("accountSelect").addEventListener("change", (e) => {
@@ -355,9 +409,10 @@ document.getElementById("accountModalSaveBtn").addEventListener("click", saveAcc
 document.getElementById("candles-tab").addEventListener("shown.bs.tab", () => relayoutChart());
 
 renderStakeButtons();
+renderReplaySpeedButtons(state.replaySpeed);
 initChart(document.getElementById("chartContainer"));
 layoutReplayScale();
-window.addEventListener("resize", () => { layoutReplayScale(); resizeChart(); });
+window.addEventListener("resize", () => { layoutReplayScale(); relayoutChart(); });
 accountModal = new bootstrap.Modal(document.getElementById("accountModal"));
 renderOrders({ open: [] });
 

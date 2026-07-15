@@ -19,17 +19,25 @@ function formatRoundClockUtc(market_start_ts, sec) {
 }
 
 
-function money(v) {
+function money(v, decimals = 2) {
     if (v == null || Number.isNaN(v)) return "—";
-    const sign = v >= 0 ? "+" : "";
-    return `${sign}$${Math.abs(v).toFixed(2)}`;
+    const n = Number(v.toFixed(decimals));
+    if (n < 0) return `-$${Math.abs(n).toFixed(decimals)}`;
+    if (n > 0) return `+$${n.toFixed(decimals)}`;
+    return `$${n.toFixed(decimals)}`;
 }
 
 
 function pct(v) {
     if (v == null || Number.isNaN(v)) return "—";
-    const sign = v >= 0 ? "+" : "";
+    const sign = v > 0 ? "+" : "";
     return `${sign}${v.toFixed(1)}%`;
+}
+
+
+function signedStatClass(v) {
+    if (v == null || Number.isNaN(v) || v === 0) return "";
+    return v > 0 ? "account-stat-pos" : "account-stat-neg";
 }
 
 
@@ -367,14 +375,88 @@ function valCell(v, clsBase = "") {
 }
 
 
+function historyBetRow(r, hidden) {
+    const entryQ = r.entry_quote_c != null ? `${r.entry_quote_c}c` : "—";
+    const exitQ = r.exit_quote_c != null ? `${r.exit_quote_c}c` : "—";
+    const entry = `${entryQ} / ${r.entry_sec}s`;
+    const exit = r.exit_sec != null ? `${exitQ} / ${r.exit_sec}s` : "—";
+    const hiddenCls = hidden ? " history-bet-row-hidden" : "";
+    return `<tr class="history-bet-row${hiddenCls}" data-session-id="${r.session_id || ""}"><td></td><td></td><td>${r.date_utc}</td><td>${r.time_utc}</td><td>${sideBadge(r.direction)}</td><td>${sideBadge(r.outcome)}</td><td>$${r.size_usd.toFixed(2)}</td><td>${entry}</td><td>${exit}</td>${valCell(r.final_pnl_usd)}${valCell(r.pnl_usd)}</tr>`;
+}
+
+
+function sumField(rows, key) {
+    let total = 0;
+    let any = false;
+    for (const r of rows) {
+        const v = r[key];
+        if (v == null) continue;
+        total += v;
+        any = true;
+    }
+    return any ? total : null;
+}
+
+
+function groupHistoryRows(rows) {
+    const groups = new Map();
+    for (const r of rows) {
+        const sid = r.session_id || `${r.market_start_ts}:${r.date_utc}:${r.time_utc}:${groups.size}`;
+        if (!groups.has(sid)) groups.set(sid, []);
+        groups.get(sid).push(r);
+    }
+    const out = [];
+    for (const [sessionId, bets] of groups) {
+        bets.sort((a, b) => (b.entry_sec ?? 0) - (a.entry_sec ?? 0));
+        out.push({
+            sessionId,
+            market_start_ts: bets[0].market_start_ts,
+            session_date_utc: bets[0].session_date_utc,
+            session_time_utc: bets[0].session_time_utc,
+            session_started_at_utc: bets[0].session_started_at_utc || "",
+            session_sort_ts: bets[0].session_sort_ts || 0,
+            date_utc: bets[0].date_utc,
+            time_utc: bets[0].time_utc,
+            outcome: bets[0].outcome,
+            size_usd: bets.reduce((s, b) => s + b.size_usd, 0),
+            final_pnl_usd: sumField(bets, "final_pnl_usd"),
+            pnl_usd: sumField(bets, "pnl_usd"),
+            bets,
+        });
+    }
+    out.sort((a, b) => (b.session_sort_ts - a.session_sort_ts) || b.sessionId.localeCompare(a.sessionId));
+    return out;
+}
+
+
+const expandedHistorySessions = new Set();
+
+
+function historySessionRow(g) {
+    const expanded = expandedHistorySessions.has(g.sessionId);
+    const icon = expanded ? "−" : "+";
+    const betCount = g.bets.length;
+    const countLabel = betCount > 1 ? `<span class="history-session-count">${betCount}</span>` : "";
+    const sessionLabel = g.session_date_utc === "—" ? "—" : `${g.session_date_utc} ${g.session_time_utc}`;
+    return `<tr class="history-session-row${expanded ? " history-session-row-expanded" : ""}" data-session-id="${g.sessionId}"><td class="history-session-datetime">${sessionLabel}${countLabel}</td><td class="history-toggle-col"><span class="history-toggle-icon" aria-hidden="true">${icon}</span></td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td>$${g.size_usd.toFixed(2)}</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td>${valCell(g.final_pnl_usd, "history-session-val")}${valCell(g.pnl_usd, "history-session-val")}</tr>`;
+}
+
+
 export function renderHistory(rows) {
-    $("historyTableBody").innerHTML = rows.map((r) => {
-        const entryQ = r.entry_quote_c != null ? `${r.entry_quote_c}c` : "—";
-        const exitQ = r.exit_quote_c != null ? `${r.exit_quote_c}c` : "—";
-        const entry = `${entryQ} / ${r.entry_sec}s`;
-        const exit = r.exit_sec != null ? `${exitQ} / ${r.exit_sec}s` : "—";
-        return `<tr><td>${r.date_utc}</td><td>${r.time_utc}</td><td>${sideBadge(r.direction)}</td><td>${sideBadge(r.outcome)}</td><td>$${r.size_usd.toFixed(2)}</td><td>${entry}</td><td>${exit}</td>${valCell(r.final_pnl_usd)}${valCell(r.pnl_usd)}</tr>`;
-    }).join("");
+    const groups = groupHistoryRows(rows);
+    const html = [];
+    for (const g of groups) {
+        html.push(historySessionRow(g));
+        const hidden = !expandedHistorySessions.has(g.sessionId);
+        for (const r of g.bets) html.push(historyBetRow(r, hidden));
+    }
+    $("historyTableBody").innerHTML = html.join("");
+}
+
+
+export function toggleHistorySession(sessionId) {
+    if (expandedHistorySessions.has(sessionId)) expandedHistorySessions.delete(sessionId);
+    else expandedHistorySessions.add(sessionId);
 }
 
 
@@ -400,8 +482,9 @@ export function renderAccounts(state) {
 }
 
 
-function statBlock(label, value) {
-    return `<div><div class="account-stat-label">${label}</div><div class="account-stat-value">${value}</div></div>`;
+function statBlock(label, value, valueClass = "") {
+    const cls = valueClass ? `account-stat-value ${valueClass}` : "account-stat-value";
+    return `<div><div class="account-stat-label">${label}</div><div class="${cls}">${value}</div></div>`;
 }
 
 
@@ -412,18 +495,17 @@ export function renderAccountSummary(account) {
         return;
     }
     const note = account.note ? `<div class="mt-2 tiny text-muted-app">${account.note}</div>` : "";
+    const ordersValue = `${account.order_count}=${account.wins}+${account.losses}`;
     body.innerHTML = `
         <div class="account-summary-grid">
-            ${statBlock("Current balance", money(account.current_balance_usd))}
             ${statBlock("Initial balance", money(account.initial_balance_usd))}
-            ${statBlock("Realized PnL", money(account.realized_pnl_usd))}
-            ${statBlock("Gain %", pct(account.gain_pct))}
-            ${statBlock("Wins", String(account.wins))}
-            ${statBlock("Losses", String(account.losses))}
-            ${statBlock("Win rate", pct(account.win_rate_pct))}
-            ${statBlock("Orders", String(account.order_count))}
-            ${statBlock("Total staked", money(account.total_staked_usd))}
-            ${statBlock("Avg stake", money(account.avg_stake_usd))}
+            ${statBlock("Current balance", money(account.current_balance_usd))}
+            ${statBlock("ORDERS=W+L", ordersValue)}
+            ${statBlock("Total stake", money(account.total_staked_usd, 0))}
+            ${statBlock("Avg stake", money(account.avg_stake_usd, 0))}
+            ${statBlock("Realized PnL", money(account.realized_pnl_usd), signedStatClass(account.realized_pnl_usd))}
+            ${statBlock("Gain %", pct(account.gain_pct), signedStatClass(account.gain_pct))}
+            ${statBlock("Win rate", pct(account.win_rate_pct), signedStatClass(account.win_rate_pct))}
         </div>${note}`;
 }
 

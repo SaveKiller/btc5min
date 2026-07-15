@@ -72,8 +72,10 @@ class ReplayEngine:
         self.playing = False
         self.round_ended = False
         self.seq = 0
-        self.run_id: str | None = None
-        self._resume_after_scrub = False
+        self.session_id: str | None = None
+        self.session_started_at_utc: str | None = None
+        self.replay_speed = 1
+        self._next_tick_at = 0.0
         self._last_tick: dict | None = None
         self._prev_candles: list[dict] = []
 
@@ -86,9 +88,9 @@ class ReplayEngine:
                 self._handle_cmd(self.cmd_conn.recv())
             if self.playing and self.loaded and not self.round_ended:
                 now = time.monotonic()
-                if now >= next_tick_at:
+                if now >= self._next_tick_at:
                     self._advance_sec()
-                    next_tick_at = now + 1.0
+                    self._next_tick_at = now + (1.0 / self.replay_speed)
             time.sleep(0.02)
 
     def _bootstrap_payload(self) -> dict:
@@ -114,6 +116,7 @@ class ReplayEngine:
             if cmd == "rounds.list": result = self._cmd_rounds_list(payload)
             elif cmd == "replay.play": result = self._cmd_replay_play()
             elif cmd == "replay.pause": result = self._cmd_replay_pause()
+            elif cmd == "replay.speed": result = self._cmd_replay_speed(payload)
             elif cmd == "replay.seek": result = self._cmd_replay_seek(payload)
             elif cmd == "replay.preview": result = self._cmd_replay_preview(payload)
             elif cmd == "order.size": result = self._cmd_order_size(payload)
@@ -140,7 +143,8 @@ class ReplayEngine:
         self.sec = 300
         self.playing = True
         self.round_ended = False
-        self.run_id = uuid.uuid4().hex[:12]
+        self.session_id = uuid.uuid4().hex[:12]
+        self.session_started_at_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.seq = 0
         self.orders.reset(self.cfg["default_order_size_usd"], self.cfg["default_order_size_usd"])
         self._prev_candles = self.repo.previous_candles(mts, self.cfg["chart_previous_candles"])
@@ -164,7 +168,6 @@ class ReplayEngine:
         self.sec = sec
         self.playing = playing
         self.round_ended = False
-        self.run_id = uuid.uuid4().hex[:12]
         self.seq = 0
         self.orders.clear_positions()
         self._emit_session()
@@ -179,6 +182,7 @@ class ReplayEngine:
         if self.round_ended:
             return self._restart_round(playing=True, sec=300)
         self.playing = True
+        self._next_tick_at = time.monotonic()
         self._emit_session()
         return {"ok": True, "playing": True}
 
@@ -186,6 +190,15 @@ class ReplayEngine:
         self.playing = False
         self._emit_session()
         return {"ok": True, "playing": False}
+
+    def _cmd_replay_speed(self, payload: dict) -> dict:
+        speed = int(payload["speed"])
+        if speed not in (1, 2, 5):
+            raise Exception(f"invalid replay speed: {speed}")
+        self.replay_speed = speed
+        self._next_tick_at = time.monotonic() + (1.0 / self.replay_speed)
+        self._emit_session()
+        return {"ok": True, "replay_speed": speed}
 
     def _scrub_sec(self, target_sec: int) -> int:
         if target_sec < 0 or target_sec > 300:
@@ -397,7 +410,8 @@ class ReplayEngine:
             by_account.setdefault(aid, []).append(o)
         for aid, orders in by_account.items():
             append_settled_orders(
-                self.accounts_root, aid, self.loaded.market_start_ts, self.run_id or "", outcome, orders)
+                self.accounts_root, aid, self.loaded.market_start_ts, self.session_id or "",
+                self.session_started_at_utc or "", outcome, orders)
         self._emit_orders()
         self._emit_history()
         self._emit_accounts()
@@ -450,6 +464,7 @@ class ReplayEngine:
             self._emit_event("session", {
                 "loaded": False, "active_account_id": self.active_account_id,
                 "account_switch_locked": bool(self.orders.open_orders),
+                "replay_speed": self.replay_speed,
             })
             return
         dt = datetime.fromtimestamp(self.loaded.market_start_ts, tz=timezone.utc)
@@ -465,6 +480,7 @@ class ReplayEngine:
             "ptb_chainlink": self.loaded.ptb_chainlink, "tradable": tradable,
             "active_account_id": self.active_account_id,
             "account_switch_locked": bool(self.orders.open_orders),
+            "replay_speed": self.replay_speed,
         })
 
     def _emit_chart_full(self) -> None:
@@ -505,8 +521,11 @@ class ReplayEngine:
             data = load_account(self.accounts_root, self.active_account_id)
             rows = order_rows_from_ledger(data.get("orders", []))
         if self.loaded and not self.round_ended and self.orders.closed_orders:
-            live = order_rows_for_run(self.loaded.market_start_ts, self.orders.closed_orders)
+            live = order_rows_for_run(
+                self.loaded.market_start_ts, self.orders.closed_orders,
+                self.session_id or "", self.session_started_at_utc or "")
             rows = live + rows
+        rows.sort(key=lambda r: (r["session_sort_ts"], r["market_start_ts"], r.get("entry_sec", 0)), reverse=True)
         self._emit_event("history", {"rows": rows, "active_account_id": self.active_account_id})
 
     def _emit_event(self, name: str, payload: dict) -> None:
