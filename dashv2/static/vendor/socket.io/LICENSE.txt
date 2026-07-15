@@ -1,0 +1,1 @@
+Socket.IO client 4.7.5 — MIT License — https://github.com/socketio/socket.io-client

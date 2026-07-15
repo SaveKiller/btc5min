@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="it" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BT5 Replay Dashboard</title>
+  <link href="/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+  <link href="/vendor/bootstrap-icons/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="/css/dashboard.css" rel="stylesheet">
+</head>
+<body>
+<div id="disconnectBanner">Disconnesso dal server — riconnessione in corso…</div>
+<main class="app-shell">
+  <header class="app-panel toolbar mb-3 px-3 d-flex align-items-center gap-3 flex-wrap">
+    <div>
+      <div class="tiny text-muted-app">Replay timestamp</div>
+      <div class="fw-semibold" id="replayTimestamp">—</div>
+    </div>
+    <span class="divider d-none d-md-block"></span>
+    <div class="btn-group" role="group" aria-label="Replay controls">
+      <button class="btn btn-outline-secondary dropdown-toggle" id="loadRoundBtn" type="button" data-bs-toggle="dropdown" aria-label="Load round"><i class="bi bi-folder2-open"></i></button>
+      <ul class="dropdown-menu round-picker-menu" id="roundPickerMenu" data-bs-auto-close="true"></ul>
+      <button class="btn btn-primary" id="playBtn" type="button" aria-label="Play"><i class="bi bi-play-fill"></i></button>
+      <button class="btn btn-outline-secondary" id="pauseBtn" type="button" aria-label="Pause"><i class="bi bi-pause-fill"></i></button>
+    </div>
+    <div class="flex-grow-1 px-1 timeline-block" style="min-width:210px">
+      <div class="replay-scale tiny text-muted-app mb-1">
+        <span>300</span><span>280</span><span>260</span><span>240</span><span>220</span><span>200</span>
+        <span>180</span><span>160</span><span>140</span><span>120</span><span>100</span><span>80</span>
+        <span>60</span><span>40</span><span>20</span><span>0</span>
+      </div>
+      <div class="timeline-wrap">
+        <input type="range" class="form-range" id="timelineSlider" min="0" max="300" step="1" value="0">
+        <div class="timeline-sec-label" id="timelineSecLabel">—</div>
+      </div>
+    </div>
+    <div class="quote ms-xl-auto">
+      <div class="tiny text-muted-app text-xl-end">BTC/USD</div>
+      <div class="price text-xl-end" id="btcPrice">—</div>
+    </div>
+  </header>
+
+  <section class="workspace">
+    <div class="workspace-chart">
+      <article class="app-panel chart-panel">
+        <div class="panel-head d-flex justify-content-between align-items-center">
+          <span class="panel-title">BTC/USD · Candlestick</span>
+          <div class="btn-group btn-group-sm"><button class="btn btn-outline-secondary active" type="button">5m</button></div>
+        </div>
+        <div class="chart-wrap"><div id="chartContainer"></div></div>
+      </article>
+      <article class="app-panel mt-3 bottom-panel">
+        <div class="panel-head d-flex justify-content-between">
+          <span class="panel-title">Closed order history</span>
+          <button class="btn btn-sm btn-outline-secondary" id="exportCsvBtn" type="button">Export CSV</button>
+        </div>
+        <div class="table-responsive px-3 pb-2">
+          <table class="table table-sm mb-0 align-middle">
+            <thead><tr><th>Date</th><th>Time</th><th>Direction</th><th>Size</th><th>Entry Sec</th><th>Exit Sec</th><th>Entry / settle</th><th>Result</th><th class="text-end">PnL</th></tr></thead>
+            <tbody id="historyTableBody"></tbody>
+          </table>
+        </div>
+      </article>
+    </div>
+    <div class="workspace-orders">
+      <article class="app-panel order-book">
+        <div class="panel-head d-flex justify-content-between align-items-center gap-3">
+          <span class="panel-title">Orders</span>
+          <div class="d-flex align-items-center gap-3 ms-auto">
+            <span id="outcomeBadge" class="badge text-bg-warning order-outcome-badge"></span>
+            <div class="order-ptb text-end">
+              <div class="tiny text-muted-app">PTB</div>
+              <div class="order-ptb-value" id="refPtb">—</div>
+            </div>
+          </div>
+        </div>
+        <div class="p-3">
+          <section class="reference-ladder mb-4" aria-label="Price reference ladder">
+            <div class="reference-cell zero" id="refNeg">0</div>
+            <div class="reference-track" id="refNegTrack"><div class="fill neg" id="refNegFill"></div><div class="ticks"><span>-120</span><span>-90</span><span>-50</span><span>-20</span><span>0</span></div></div>
+            <div class="reference-cell time-remaining" id="refCountdown">—</div>
+            <div class="reference-track" id="refPosTrack"><div class="fill" id="refPosFill"></div><div class="ticks"><span>0</span><span>20</span><span>50</span><span>90</span><span>120</span></div></div>
+            <div class="reference-cell positive" id="refPos">0</div>
+          </section>
+          <div class="row g-4 mb-3">
+            <div class="col-6">
+              <section class="direction-panel h-100">
+                <button class="btn btn-down w-100 py-3 fw-bold direction-btn" id="buyDownBtn" type="button" disabled>
+                  <i class="bi bi-arrow-down-circle me-1"></i><span class="label-down">DOWN</span>
+                  <span class="ms-1" id="downAskLabel">—</span>
+                  <span class="direction-win-block opacity-75">
+                    <span id="downProfitLabel">—</span>
+                    <span class="direction-win-pct" id="downProfitPctLabel">—</span>
+                  </span>
+                </button>
+                <div class="signal-card mt-3" id="downSignals"></div>
+                <div class="size-block mt-3 border-secondary-subtle">
+                  <label class="form-label tiny text-muted-app mb-1">Size for DOWN (USD)</label>
+                  <div class="d-flex align-items-center gap-2 w-100 overflow-hidden">
+                    <div class="input-group input-group-sm size-input" style="width:135px;flex:0 0 135px">
+                      <span class="input-group-text">$</span>
+                      <input class="form-control fw-semibold" id="sizeDownInput" value="100">
+                    </div>
+                    <div class="stake d-flex gap-1 flex-grow-1" data-side="Down"></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <div class="col-6">
+              <section class="direction-panel h-100">
+                <button class="btn btn-up w-100 py-3 fw-bold direction-btn" id="buyUpBtn" type="button" disabled>
+                  <i class="bi bi-arrow-up-circle me-1"></i><span class="label-up">UP</span>
+                  <span class="ms-1" id="upAskLabel">—</span>
+                  <span class="direction-win-block opacity-75">
+                    <span id="upProfitLabel">—</span>
+                    <span class="direction-win-pct" id="upProfitPctLabel">—</span>
+                  </span>
+                </button>
+                <div class="signal-card mt-3" id="upSignals"></div>
+                <div class="size-block mt-3 border-secondary-subtle">
+                  <label class="form-label tiny text-muted-app mb-1">Size for UP (USD)</label>
+                  <div class="d-flex align-items-center gap-2 w-100 overflow-hidden">
+                    <div class="input-group input-group-sm size-input" style="width:135px;flex:0 0 135px">
+                      <span class="input-group-text">$</span>
+                      <input class="form-control fw-semibold" id="sizeUpInput" value="100">
+                    </div>
+                    <div class="stake d-flex gap-1 flex-grow-1" data-side="Up"></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+          <hr class="border-secondary-subtle mt-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="panel-title">Open orders</span>
+            <span class="badge rounded-pill text-bg-secondary" id="openOrdersCount">0</span>
+          </div>
+          <div id="openOrdersList"></div>
+        </div>
+      </article>
+    </div>
+  </section>
+</main>
+<script src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>
+<script src="/vendor/socket.io/socket.io.min.js"></script>
+<script src="/vendor/lightweight-charts/lightweight-charts.standalone.production.js"></script>
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

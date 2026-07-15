@@ -1,0 +1,1 @@
+Lightweight Charts 5.2.0 — Apache-2.0 — https://github.com/tradingview/lightweight-charts

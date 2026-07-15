@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="it" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BT5 Replay Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    :root { --canvas:#0d111a; --panel:#151d2b; --panel-2:#111925; --border:#344057; --muted:#94a3b8; --up:#22c55e; --down:#ef4444; --amber:#f59e0b; }
+    body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; font-variant-numeric:tabular-nums; }
+    .app-shell { max-width:1800px; margin:auto; padding:1rem; }
+    .app-panel { background:var(--panel); border:1px solid var(--border); border-radius:.65rem; box-shadow:0 .4rem 1.25rem rgba(0,0,0,.18); }
+    .panel-head { padding:.65rem .85rem; border-bottom:1px solid var(--border); background:rgba(255,255,255,.018); }
+    .panel-title { font-size:.76rem; letter-spacing:.08em; text-transform:uppercase; color:#b9c4d9; font-weight:700; }
+    .text-muted-app { color:var(--muted)!important; }
+    .toolbar { min-height:73px; }
+    .toolbar .divider { height:36px; width:1px; background:var(--border); }
+    .quote { min-width:155px; }
+    .quote .price { font-size:1.5rem; font-weight:700; line-height:1; }
+    .round-divider { display:inline-block; height:1.15em; vertical-align:-.18em; border-left:1px solid #61708a; }
+    .time-display { font-weight:700; font-size:1.28rem; letter-spacing:.025em; }
+    .workspace { display:flex; flex-wrap:nowrap; gap:1rem; margin-bottom:1rem; }
+    .workspace-chart { flex:1 1 auto; min-width:320px; }
+    .workspace-orders { flex:0 0 900px; width:900px; }
+    .chart-panel { min-height:490px; overflow:hidden; }
+    .chart-wrap { position:relative; height:435px; background:var(--panel-2); background-image:linear-gradient(rgba(112,129,160,.09) 1px,transparent 1px),linear-gradient(90deg,rgba(112,129,160,.09) 1px,transparent 1px); background-size:56px 45px; }
+    .watermark { position:absolute; left:50%; top:51%; transform:translate(-50%,-50%); color:#94a3b810; font-size:2.2rem; letter-spacing:.14em; font-weight:800; white-space:nowrap; }
+    .axis { position:absolute; right:12px; top:11px; bottom:10px; border-left:1px solid #526078; color:#8391aa; font-size:.72rem; display:flex; flex-direction:column; justify-content:space-between; padding-left:7px; }
+    .candle { position:absolute; width:18px; border-radius:2px; }
+    .candle:before { content:""; position:absolute; left:8px; width:2px; background:currentColor; z-index:0; }
+    .candle.up { color:var(--up); background:var(--up); }.candle.down { color:var(--down); background:var(--down); }
+    .c1{left:17%;top:145px;height:88px}.c1:before{top:-22px;height:130px}.c2{left:23%;top:166px;height:58px}.c2:before{top:-34px;height:108px}.c3{left:29%;top:124px;height:84px}.c3:before{top:-18px;height:132px}.c4{left:35%;top:102px;height:40px}.c4:before{top:-21px;height:77px}.c5{left:41%;top:130px;height:62px}.c5:before{top:-17px;height:95px}
+    .price-line { position:absolute; left:0; right:46px; top:183px; border-top:1px dashed #f0b742; }.price-tag { position:absolute; right:3px; top:-13px; font-size:.72rem; padding:3px 7px; background:#9a6b10; color:#fff; border-radius:3px; }
+    .ladder { min-height:490px; }.ladder-body { position:relative; height:435px; }.ladder-scale { position:absolute; inset:14px 12px 13px 18px; border-left:2px solid #64748b; display:flex; flex-direction:column; justify-content:space-between; padding-left:10px; font-size:.74rem; color:#c6d0df; }.ladder-bar { position:absolute; left:30px; top:132px; height:62px; width:18px; border-radius:4px; background:linear-gradient(#35d16b,#1b8b48); box-shadow:0 0 12px #22c55e55; }.ladder-zero { position:absolute; left:0; right:0; top:195px; border-top:2px solid var(--amber); }.ladder-zero span { position:absolute; right:7px; top:-13px; background:#5f440d; border:1px solid var(--amber); border-radius:3px; padding:2px 5px; font-size:.7rem; color:#ffd36e; }
+    .signal-card { background:#192335; border:1px solid #46536b; border-radius:.45rem; text-align:center; }
+    .signal-card .tiny, .signal-card .signal-value, .signal-card .model-details { text-align:center; }.signal-value { font-size:1.24rem; font-weight:700; }
+    .btn-up { --bs-btn-color:#dfffe9; --bs-btn-bg:#126b38; --bs-btn-border-color:#26c56b; --bs-btn-hover-bg:#168049; }.btn-down { --bs-btn-color:#ffe8e8; --bs-btn-bg:#8e272c; --bs-btn-border-color:#e44d55; --bs-btn-hover-bg:#a93037; }
+    .order-book { min-height:490px; }.order-row { background:#121a27; border:1px solid #3c4960; border-left:4px solid var(--up); }.order-row.down { border-left-color:var(--down); }
+    .stake .btn { min-width:52px; font-size:1rem; padding:.42rem .62rem; }
+    .size-input .form-control, .size-input .input-group-text { font-size:1.05rem; padding:.4rem .55rem; }
+    .direction-btn { font-size:1.42rem; padding:.32rem .42rem; display:flex; align-items:center; justify-content:center; gap:.22rem; line-height:1; }
+    .direction-btn .label-up { color:#9ff5bf; }
+    .direction-btn .label-down { color:#ffb3b7; }
+    .direction-panel { padding:0; }
+    .size-block { min-height:82px; overflow:hidden; }
+    .size-block .stake { min-width:0; overflow:hidden; }
+    .size-block .stake .btn { min-width:0; flex:1 1 0; padding-left:.28rem; padding-right:.28rem; white-space:nowrap; }
+    .model-split + .model-split { border-left:1px solid #46536b; }
+    .model-details { font-size:1.08rem; color:#d4dbe7; letter-spacing:.01em; }.metric { border-right:1px solid var(--border); }.metric:last-child { border-right:0; }
+    .bottom-panel { min-height:156px; }.table { --bs-table-bg:transparent; --bs-table-color:#d4dbe7; --bs-table-border-color:#344057; font-size:.8rem; }.table thead th { color:#92a2bb; font-size:.68rem; text-transform:uppercase; letter-spacing:.055em; font-weight:700; white-space:nowrap; }
+    .balance { font-size:1.65rem; font-weight:750; }.tiny { font-size:.72rem; }.form-range::-webkit-slider-thumb { background:#4f7cff; }.form-range::-moz-range-thumb { background:#4f7cff; }
+    @media (max-width:1199.98px) { .workspace { overflow-x:auto; padding-bottom:.35rem; } .chart-panel,.order-book { min-height:auto; } }
+  
+    .reference-ladder { display:grid; grid-template-columns:80px 1fr 130px 1fr 80px; gap:.5rem; align-items:center; width:100%; padding:.65rem .75rem 1.65rem; background:var(--panel-2); border:1px solid var(--border); border-radius:.5rem; }
+    .reference-cell { height:38px; display:flex; align-items:center; justify-content:center; text-align:center; border:1px solid var(--border); border-radius:.375rem; background:var(--bs-tertiary-bg); color:var(--bs-body-color); font-size:1.4rem; font-weight:600; }
+    .reference-cell.zero { color:var(--bs-danger); border-color:rgba(220,53,69,.55); }
+    .reference-cell.price { color:#8fa4ff; border-color:rgba(102,126,234,.58); }
+    .reference-cell.positive { color:var(--bs-success); border-color:rgba(25,135,84,.6); }
+    .reference-track { position:relative; height:20px; border:1px solid var(--border); border-radius:.375rem; background:var(--bs-tertiary-bg); }
+    .reference-track .fill { height:100%; width:30%; border-radius:.3rem 0 0 .3rem; background:var(--bs-success); opacity:.85; }
+    .reference-track .ticks { position:absolute; top:calc(100% + .18rem); left:0; right:0; display:flex; justify-content:space-between; color:var(--muted); font-size:.72rem; font-weight:600; white-space:nowrap; }
+</style>
+</head>
+<body>
+<main class="app-shell">
+  <header class="app-panel toolbar mb-3 px-3 d-flex align-items-center gap-3 flex-wrap">
+    <div><div class="tiny text-muted-app">Replay timestamp</div><div class="fw-semibold">13/07/2026 <span class="text-muted-app mx-1">|</span> 08:40:00</div></div><span class="divider d-none d-md-block"></span>
+    <div><div class="tiny text-muted-app">Round</div><div class="time-display">240 <span class="round-divider mx-3" aria-hidden="true"></span> 4:00</div></div><span class="divider d-none d-md-block"></span>
+    <div class="btn-group" role="group" aria-label="Replay controls"><button class="btn btn-outline-secondary" id="loadRoundBtn" type="button" aria-label="Load round"><i class="bi bi-folder2-open"></i></button><button class="btn btn-primary" id="playBtn" type="button" aria-label="Play"><i class="bi bi-play-fill"></i></button><button class="btn btn-outline-secondary" id="pauseBtn" type="button" aria-label="Pause"><i class="bi bi-pause-fill"></i></button></div><input type="file" id="roundFileInput" accept=".json,.csv,.txt,.zip,.bin" class="d-none">
+    <div class="flex-grow-1 px-1" style="min-width:210px"><div class="d-flex justify-content-between tiny text-muted-app mb-1 replay-scale"><span>300</span><span>280</span><span>260</span><span>240</span><span>220</span><span>200</span><span>180</span><span>160</span><span>140</span><span>120</span><span>100</span><span>80</span><span>60</span><span>40</span><span>20</span><span>0</span></div><input type="range" class="form-range" min="0" max="300" step="1" value="300"></div>
+    <div class="quote ms-xl-auto"><div class="tiny text-muted-app text-xl-end">BTC/USD</div><div class="price text-xl-end">63,120 $</div></div>
+  </header>
+
+  <section class="workspace">
+    <div class="workspace-chart"><article class="app-panel chart-panel"><div class="panel-head d-flex justify-content-between align-items-center"><span class="panel-title">BTC/USD · Candlestick</span><div class="btn-group btn-group-sm"><button class="btn btn-outline-secondary">5m</button><button class="btn btn-outline-secondary">1m</button><button class="btn btn-outline-secondary"><i class="bi bi-gear"></i></button></div></div><div class="chart-wrap"><div class="watermark">BTC/USD · REPLAY</div><div class="candle up c1"></div><div class="candle down c2"></div><div class="candle up c3"></div><div class="candle up c4"></div><div class="candle down c5"></div><div class="price-line"><span class="price-tag">63,078</span></div><div class="axis"><span>63,240</span><span>63,180</span><span>63,120</span><span>63,060</span><span>63,000</span></div><div class="position-absolute start-0 bottom-0 p-3 tiny text-muted-app">OHLC&nbsp; 63,082.4 / 63,156.9 / 63,071.2 / 63,120.0 &nbsp; · &nbsp; Volume 214.3 BTC</div></div></article>
+      <article class="app-panel mt-3"><div class="panel-head d-flex justify-content-between"><span class="panel-title">Closed order history</span><button class="btn btn-sm btn-outline-secondary">Export CSV</button></div><div class="table-responsive px-3"><table class="table table-sm mb-0 align-middle"><thead><tr><th>Date</th><th>Time</th><th>Direction</th><th>Size</th><th>Entry Sec</th><th>Entry / settle</th><th>Result</th><th class="text-end">PnL</th></tr></thead><tbody><tr><td>13/07/2026</td><td>08:35:00</td><td><span class="badge text-bg-success">UP</span></td><td>$50.00</td><td>42</td><td>62,998 / 63,051</td><td><span class="text-success">Won</span></td><td class="text-end text-success fw-semibold">+$10.64</td></tr><tr><td>13/07/2026</td><td>08:30:00</td><td><span class="badge text-bg-danger">DOWN</span></td><td>$20.00</td><td>117</td><td>63,112 / 63,158</td><td><span class="text-danger">Lost</span></td><td class="text-end text-danger fw-semibold">-$20.00</td></tr></tbody></table></div></article></div>
+    <div class="workspace-orders"><article class="app-panel order-book"><div class="panel-head"><span class="panel-title">Orders</span></div><div class="p-3">
+      <section class="reference-ladder mb-4" aria-label="Price reference ladder">
+        <div class="reference-cell zero">0</div>
+        <div class="reference-track"><div class="ticks"><span>-120</span><span>-90</span><span>-50</span><span>-20</span><span>0</span></div></div>
+        <div class="reference-cell price">63,078</div>
+        <div class="reference-track"><div class="fill"></div><div class="ticks"><span>0</span><span>20</span><span>50</span><span>90</span><span>120</span></div></div>
+        <div class="reference-cell positive">+32</div>
+      </section>
+      <div class="row g-4 mb-3"><div class="col-6"><section class="direction-panel h-100"><button class="btn btn-down w-100 py-3 fw-bold direction-btn"><i class="bi bi-arrow-down-circle me-1"></i><span class="label-down">DOWN</span> <span class="ms-1">11¢</span><span class="opacity-75 ms-1 border-start border-light border-opacity-25 ps-1">$220</span></button><div class="signal-card mt-3"><div class="row g-0"><div class="col-6 model-split p-2"><div class="tiny text-muted-app">Model A · n=340</div><div class="signal-value text-success">27% <span class="fs-6 text-muted-app">DOWN</span></div><div class="model-details">Rq 7&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Rs 5</div></div><div class="col-6 model-split p-2"><div class="tiny text-muted-app">Model B</div><div class="signal-value text-success">24% <span class="fs-6 text-muted-app">DOWN</span></div><div class="model-details">Rq 7&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Rs 5</div></div></div></div><div class="size-block mt-3 
+        border-secondary-subtle"><label class="form-label tiny text-muted-app mb-1">Size for DOWN (USD)</label><div class="d-flex align-items-center gap-2 w-100 overflow-hidden"><div class="input-group input-group-sm size-input" style="width:135px;flex:0 0 135px"><span class="input-group-text">$</span><input class="form-control fw-semibold" value="100"></div><div class="stake d-flex gap-1 flex-grow-1"><button class="btn btn-sm btn-outline-secondary">$1</button><button class="btn btn-sm btn-outline-secondary">$10</button><button class="btn btn-sm btn-outline-secondary">$20</button><button class="btn btn-sm btn-outline-secondary">$50</button><button class="btn btn-sm btn-outline-secondary">$100</button></div></div></div></section></div>
+        <div class="col-6"><section class="direction-panel h-100"><button class="btn btn-up w-100 py-3 fw-bold direction-btn"><i class="bi bi-arrow-up-circle me-1"></i><span class="label-up">UP</span> <span class="ms-1">89¢</span><span class="opacity-75 ms-1 border-start border-light border-opacity-25 ps-1">$10</span></button><div class="signal-card mt-3"><div class="row g-0"><div class="col-6 model-split p-2"><div class="tiny text-muted-app">Model A · n=340</div><div class="signal-value text-success">73% <span class="fs-6 text-muted-app">UP</span></div><div class="model-details">Rq 7&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Rs 5</div></div><div class="col-6 model-split p-2"><div class="tiny text-muted-app">Model B</div><div class="signal-value text-success">76% <span class="fs-6 text-muted-app">UP</span></div><div class="model-details">Rq 7&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Rs 5</div></div></div></div><div class="size-block mt-3 border-secondary-subtle"><label class="form-label tiny text-muted-app mb-1">Size for UP (USD)</label><div class="d-flex align-items-center gap-2 w-100 overflow-hidden"><div class="input-group input-group-sm size-input" style="width:135px;flex:0 0 135px"><span class="input-group-text">$</span><input class="form-control fw-semibold" value="100"></div><div class="stake d-flex gap-1 flex-grow-1"><button class="btn btn-sm btn-outline-secondary">$1</button><button class="btn btn-sm btn-outline-secondary">$10</button><button class="btn btn-sm btn-outline-secondary">$20</button><button class="btn btn-sm btn-outline-secondary">$50</button><button class="btn btn-sm btn-outline-secondary">$100</button></div></div></div></section></div></div><hr class="border-secondary-subtle mt-3"><div class="d-flex justify-content-between align-items-center mb-2"><span class="panel-title">Open orders</span><span class="badge rounded-pill text-bg-secondary">2</span></div><div class="order-row rounded p-2 mb-2 d-flex align-items-center justify-content-between"><div><strong class="text-success">UP</strong><span class="text-muted-app mx-2">·</span><span>$100.00</span><div class="tiny text-muted-app">Entry price $63,078 · Entry sec 74 · Quote 84c · Payout $112.36</div></div><span class="badge text-bg-success">+12.36</span></div><div class="order-row down rounded p-2 d-flex align-items-center justify-content-between"><div><strong class="text-danger">DOWN</strong><span class="text-muted-app mx-2">·</span><span>$20.00</span><div class="tiny text-muted-app">Entry price $63,122 · Entry sec 50 · Quote 88c · Payout $27.00</div></div><span class="badge text-bg-secondary">Pending</span></div>
+    </div></article></div>
+  </section>
+
+
+</main>
+<script>
+(() => {
+  const btn = document.getElementById('loadRoundBtn');
+  const input = document.getElementById('roundFileInput');
+  if (!btn || !input) return;
+  btn.addEventListener('click', () => input.click());
+  document.getElementById('playBtn')?.addEventListener('click', () => console.log('play'));
+  document.getElementById('pauseBtn')?.addEventListener('click', () => console.log('pause'));
+  input.addEventListener('change', () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    console.log('selected', file.name);
+  });
+})();
+</script>
+</body></html>

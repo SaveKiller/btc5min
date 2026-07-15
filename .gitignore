@@ -224,5 +224,6 @@ data/
 dash/node_modules/
 dash/dist/
 
-# Dashboard API venv (optional local)
-dash-api/.venv/
+# Dashboard V2 history runs (local replay JSON)
+dashv2/history/
+
