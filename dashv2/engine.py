@@ -9,6 +9,7 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 
 from dashv2 import ipc
+from dashv2.bots import list_bot_infos
 from dashv2.history import (
     account_summary, accounts_dir, append_settled_orders, compute_stats, create_account,
     list_accounts, load_account, load_active_account_id, order_rows_for_run, order_rows_from_ledger,
@@ -16,6 +17,13 @@ from dashv2.history import (
 )
 from dashv2.orders import OrderEngine
 from dashv2.rounds import LoadedRound, RoundRepository
+
+
+def _actor_from_payload(payload: dict) -> str:
+    actor = payload.get("actor", "user")
+    if actor not in ("user", "bot"):
+        raise Exception(f"invalid actor: {actor!r}")
+    return actor
 
 
 def _dwin_public(tick: dict) -> dict:
@@ -78,6 +86,12 @@ class ReplayEngine:
         self._next_tick_at = 0.0
         self._last_tick: dict | None = None
         self._prev_candles: list[dict] = []
+        self._round_advanced = False
+        self.selected_bot_id: str | None = None
+        self.bot_active = False
+        self.engine_mode = cfg["engine_mode"]
+        self.round_source = "replay" if self.engine_mode == "replay" else "live"
+        self.account_backend = "local" if self.engine_mode == "replay" else "polymarket"
 
     def run(self) -> None:
         self._emit_event("bootstrap", self._bootstrap_payload())
@@ -101,6 +115,9 @@ class ReplayEngine:
             "host": self.cfg["host"], "port": self.cfg["port"],
             "accounts": list_accounts(self.accounts_root),
             "active_account_id": self.active_account_id,
+            "engine_mode": self.engine_mode, "account_backend": self.account_backend,
+            "bots": list_bot_infos(), "selected_bot_id": self.selected_bot_id,
+            "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
         }
 
     def _handle_cmd(self, msg: dict) -> None:
@@ -129,6 +146,9 @@ class ReplayEngine:
             elif cmd == "account.create": result = self._cmd_account_create(payload)
             elif cmd == "account.rename": result = self._cmd_account_rename(payload)
             elif cmd == "account.update": result = self._cmd_account_update(payload)
+            elif cmd == "bot.list": result = self._cmd_bot_list()
+            elif cmd == "bot.select": result = self._cmd_bot_select(payload)
+            elif cmd == "bot.set_active": result = self._cmd_bot_set_active(payload)
             elif cmd == "session.sync": result = self._cmd_session_sync()
             elif cmd == "controller.claim": result = {"ok": True}
             elif cmd == "controller.release": result = {"ok": True}
@@ -148,6 +168,7 @@ class ReplayEngine:
         self.seq = 0
         self.orders.reset(self.cfg["default_order_size_usd"], self.cfg["default_order_size_usd"])
         self._prev_candles = self.repo.previous_candles(mts, self.cfg["chart_previous_candles"])
+        self._round_advanced = False
         result = {"ok": True, "market_start_ts": mts}
         def after():
             self._emit_session()
@@ -156,6 +177,7 @@ class ReplayEngine:
             self._emit_orders()
             self._emit_history()
             self._emit_accounts()
+            self._emit_bot_status()
         return result, after
 
     def _cmd_rounds_list(self, payload: dict) -> dict:
@@ -169,12 +191,14 @@ class ReplayEngine:
         self.playing = playing
         self.round_ended = False
         self.seq = 0
+        self._round_advanced = sec != 300
         self.orders.clear_positions()
         self._emit_session()
         self._emit_chart_full()
         self._emit_tick_at(self.sec)
         self._emit_orders()
         self._emit_history()
+        self._emit_bot_status()
         return {"ok": True, "sec": self.sec, "playing": playing, "restarted": True}
 
     def _cmd_replay_play(self) -> dict:
@@ -184,11 +208,13 @@ class ReplayEngine:
         self.playing = True
         self._next_tick_at = time.monotonic()
         self._emit_session()
+        self._emit_bot_status()
         return {"ok": True, "playing": True}
 
     def _cmd_replay_pause(self) -> dict:
         self.playing = False
         self._emit_session()
+        self._emit_bot_status()
         return {"ok": True, "playing": False}
 
     def _cmd_replay_speed(self, payload: dict) -> dict:
@@ -261,11 +287,14 @@ class ReplayEngine:
         if target_sec < 1: target_sec = 1
         self.orders.prune_seek(target_sec)
         self.sec = target_sec
+        if target_sec != 300:
+            self._round_advanced = True
         self._emit_session()
         self._emit_chart_current()
         self._emit_tick_at(self.sec)
         self._emit_orders()
         self._emit_history()
+        self._emit_bot_status()
         if resume:
             self.playing = True
             self._emit_session()
@@ -307,30 +336,43 @@ class ReplayEngine:
             raise Exception("no account selected")
         return self.active_account_id
 
+    def _require_bot_trading(self, actor: str) -> None:
+        if actor == "bot" and not self.bot_active:
+            raise Exception("bot inactive")
+
     def _cmd_order_place(self, payload: dict) -> dict:
         if not self.loaded or self.round_ended: raise Exception("trading blocked")
+        actor = _actor_from_payload(payload)
+        self._require_bot_trading(actor)
         account_id = self._require_active_account()
         tick, book = self._require_tick_book()
         side, size = payload["side"], float(payload["size_usd"])
-        order = self.orders.place(side, size, self.sec, tick, book, self.loaded.fee_rate, account_id)
+        order = self.orders.place(side, size, self.sec, tick, book, self.loaded.fee_rate, account_id, actor)
         self.orders.revalue_mtm(self.sec, tick, book, self.loaded.fee_rate)
-        self._emit_orders()
+        self._emit_orders(actor=actor)
+        self._emit_action(actor, "order.place", {"order_id": order["id"], "side": side, "size_usd": size})
         self._emit_session()
         return {"ok": True, "order": order}
 
     def _cmd_order_close(self, payload: dict) -> dict:
         if not self.loaded or self.round_ended: raise Exception("trading blocked")
+        actor = _actor_from_payload(payload)
+        self._require_bot_trading(actor)
         tick, book = self._require_tick_book()
         closed = self.orders.close(payload["order_id"], self.sec, tick, book, self.loaded.fee_rate)
-        self._emit_orders()
+        self._emit_orders(actor=actor)
         self._emit_history()
+        self._emit_action(actor, "order.close", {"order_id": closed["id"]})
         self._emit_session()
         return {"ok": True, "order": closed}
 
     def _cmd_order_cancel(self, payload: dict) -> dict:
         if not self.loaded or self.round_ended: raise Exception("trading blocked")
+        actor = _actor_from_payload(payload)
+        self._require_bot_trading(actor)
         removed = self.orders.cancel(payload["order_id"])
-        self._emit_orders()
+        self._emit_orders(actor=actor)
+        self._emit_action(actor, "order.cancel", {"order_id": removed["id"]})
         self._emit_session()
         return {"ok": True, "order": removed}
 
@@ -373,6 +415,42 @@ class ReplayEngine:
         self._emit_history()
         return {"ok": True, "account": account_summary(data)}
 
+    def _bot_attach_allowed(self) -> bool:
+        return not self.playing
+
+    def _cmd_bot_list(self) -> dict:
+        return {"ok": True, "bots": list_bot_infos(), "selected_bot_id": self.selected_bot_id,
+                "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active}
+
+    def _cmd_bot_select(self, payload: dict) -> dict:
+        bot_id = payload.get("bot_id")
+        if bot_id is not None:
+            if not self._bot_attach_allowed():
+                raise Exception("bot attach only allowed while paused")
+            known = {b["id"] for b in list_bot_infos()}
+            if bot_id not in known:
+                raise Exception(f"unknown bot: {bot_id}")
+            self.bot_active = True
+        elif not self._bot_attach_allowed():
+            raise Exception("bot detach only allowed while paused")
+        else:
+            self.bot_active = False
+        self.selected_bot_id = bot_id
+        self._emit_bot_status()
+        self._emit_session()
+        return {
+            "ok": True, "selected_bot_id": bot_id, "bot_attach_allowed": self._bot_attach_allowed(),
+            "bot_active": self.bot_active,
+        }
+
+    def _cmd_bot_set_active(self, payload: dict) -> dict:
+        if self.selected_bot_id is None:
+            raise Exception("no bot selected")
+        self.bot_active = bool(payload["active"])
+        self._emit_bot_status()
+        self._emit_session()
+        return {"ok": True, "bot_active": self.bot_active, "selected_bot_id": self.selected_bot_id}
+
     def _cmd_session_sync(self) -> dict:
         self._emit_event("bootstrap", self._bootstrap_payload())
         self._emit_session()
@@ -382,10 +460,12 @@ class ReplayEngine:
             self._emit_orders()
         self._emit_history()
         self._emit_accounts()
+        self._emit_bot_status()
         return {"ok": True}
 
     def _advance_sec(self) -> None:
         if self.sec <= 0: return
+        self._round_advanced = True
         if self.sec == 1:
             self._finish_round()
             return
@@ -411,7 +491,7 @@ class ReplayEngine:
         for aid, orders in by_account.items():
             append_settled_orders(
                 self.accounts_root, aid, self.loaded.market_start_ts, self.session_id or "",
-                self.session_started_at_utc or "", outcome, orders)
+                self.session_started_at_utc or "", outcome, orders, self.round_source)
         self._emit_orders()
         self._emit_history()
         self._emit_accounts()
@@ -420,6 +500,7 @@ class ReplayEngine:
             "final_chainlink": final_btc, "settled_orders": settled,
         })
         self._emit_session()
+        self._emit_bot_status()
 
     def _require_tick_book(self):
         if not self.loaded: raise Exception("no round loaded")
@@ -464,7 +545,9 @@ class ReplayEngine:
             self._emit_event("session", {
                 "loaded": False, "active_account_id": self.active_account_id,
                 "account_switch_locked": bool(self.orders.open_orders),
-                "replay_speed": self.replay_speed,
+                "replay_speed": self.replay_speed, "engine_mode": self.engine_mode,
+                "account_backend": self.account_backend, "selected_bot_id": self.selected_bot_id,
+                "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
             })
             return
         dt = datetime.fromtimestamp(self.loaded.market_start_ts, tz=timezone.utc)
@@ -480,7 +563,9 @@ class ReplayEngine:
             "ptb_chainlink": self.loaded.ptb_chainlink, "tradable": tradable,
             "active_account_id": self.active_account_id,
             "account_switch_locked": bool(self.orders.open_orders),
-            "replay_speed": self.replay_speed,
+            "replay_speed": self.replay_speed, "engine_mode": self.engine_mode,
+            "account_backend": self.account_backend, "selected_bot_id": self.selected_bot_id,
+            "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
         })
 
     def _emit_chart_full(self) -> None:
@@ -493,9 +578,21 @@ class ReplayEngine:
         current = self.repo.current_candle(self.loaded, self.sec)
         self._emit_event("chart", {"current": current, "full_reset": False})
 
-    def _emit_orders(self) -> None:
+    def _emit_orders(self, actor: str | None = None) -> None:
         snap = self.orders.snapshot()
+        if actor is not None:
+            snap = {**snap, "actor": actor}
         self._emit_event("orders", snap)
+
+    def _emit_action(self, actor: str, cmd: str, detail: dict) -> None:
+        self._emit_event("action", {"actor": actor, "cmd": cmd, "detail": detail, "sec": self.sec})
+
+    def _emit_bot_status(self) -> None:
+        self._emit_event("bot.status", {
+            "selected_bot_id": self.selected_bot_id, "bots": list_bot_infos(),
+            "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
+            "loaded": self.selected_bot_id is not None,
+        })
 
     def _account_payload(self) -> dict | None:
         if self.active_account_id is None:
@@ -513,6 +610,7 @@ class ReplayEngine:
             "accounts": list_accounts(self.accounts_root),
             "active_account_id": self.active_account_id,
             "active": self._account_payload(),
+            "account_backend": self.account_backend,
         })
 
     def _emit_history(self) -> None:
@@ -533,4 +631,12 @@ class ReplayEngine:
 
 
 def run_data_process(cfg: dict, cmd_conn: Connection, evt_conn: Connection) -> None:
-    ReplayEngine(cfg, cmd_conn, evt_conn).run()
+    mode = cfg["engine_mode"]
+    if mode == "replay":
+        ReplayEngine(cfg, cmd_conn, evt_conn).run()
+        return
+    if mode == "live":
+        from dashv2.live_engine import LiveEngine
+        LiveEngine(cfg, cmd_conn, evt_conn).run()
+        return
+    raise Exception(f"unknown engine_mode: {mode}")

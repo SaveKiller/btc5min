@@ -27,7 +27,7 @@ class TestSeekAndHistory(unittest.TestCase):
         eng = OrderEngine(100, 100)
         tick = {"chainlink_btc": 90000.0, "partial": False, "gap": False, "up_ask": 0.55, "up_bid": 0.53, "down_ask": 0.45, "down_bid": 0.43}
         book = _book()
-        order = eng.place("Up", 10.0, 200, tick, book, 0.02, ACCOUNT_ID)
+        order = eng.place("Up", 10.0, 200, tick, book, 0.02, ACCOUNT_ID, "user")
         eng.cancel(order["id"])
         self.assertEqual(eng.open_orders, [])
         self.assertEqual(eng.closed_orders, [])
@@ -36,7 +36,7 @@ class TestSeekAndHistory(unittest.TestCase):
         eng = OrderEngine(100, 100)
         tick = {"chainlink_btc": 90000.0, "partial": False, "gap": False, "up_ask": 0.55, "up_bid": 0.53, "down_ask": 0.45, "down_bid": 0.43}
         book = _book()
-        eng.place("Up", 10.0, 200, tick, book, 0.02, ACCOUNT_ID)
+        eng.place("Up", 10.0, 200, tick, book, 0.02, ACCOUNT_ID, "user")
         eng.close(eng.open_orders[0]["id"], 150, tick, book, 0.02)
         self.assertEqual(len(eng.open_orders), 0)
         eng.prune_seek(180)
@@ -47,7 +47,7 @@ class TestSeekAndHistory(unittest.TestCase):
         eng = OrderEngine(100, 100)
         tick = {"chainlink_btc": 90000.0, "partial": False, "gap": False, "up_ask": 0.55, "up_bid": 0.53, "down_ask": 0.45, "down_bid": 0.43}
         book = _book()
-        eng.place("Up", 10.0, 200, tick, book, 0.02, ACCOUNT_ID)
+        eng.place("Up", 10.0, 200, tick, book, 0.02, ACCOUNT_ID, "user")
         eng.prune_seek(100)
         self.assertEqual(len(eng.open_orders), 1)
 
@@ -55,7 +55,7 @@ class TestSeekAndHistory(unittest.TestCase):
         eng = OrderEngine(100, 100)
         tick = {"chainlink_btc": 90000.0, "partial": False, "gap": False, "up_ask": 0.55, "up_bid": 0.53, "down_ask": 0.45, "down_bid": 0.43}
         book = _book()
-        eng.place("Up", 10.0, 200, tick, book, 0.02, ACCOUNT_ID)
+        eng.place("Up", 10.0, 200, tick, book, 0.02, ACCOUNT_ID, "user")
         eng.prune_seek(250)
         self.assertEqual(len(eng.open_orders), 0)
 
@@ -87,7 +87,7 @@ class TestSeekAndHistory(unittest.TestCase):
                 "best_ask_c": 55, "exit_price": 1.0, "payout_if_win_usd": 180.0, "profit_if_win_usd": 80.0,
                 "pnl_usd": 80.0, "result": "won", "close_type": "settlement",
             }]
-            append_settled_orders(root, aid, 12345, "sess1", "2026-07-15T13:35:00Z", "Up", orders)
+            append_settled_orders(root, aid, 12345, "sess1", "2026-07-15T13:35:00Z", "Up", orders, "replay")
             loaded = load_account(root, aid)
             stats = compute_stats(loaded)
             self.assertEqual(stats["wins"], 1)
@@ -202,7 +202,7 @@ class TestSeekAndHistory(unittest.TestCase):
             "majority_side": "Up",
         }
         book = BookSnapshot([], [(0.99, 1000)], [], [(0.02, 1000)], 0.98, 0.99, 0.01, 0.02)
-        order = eng.place("Up", 100.0, 120, tick, book, 0.02, ACCOUNT_ID)
+        order = eng.place("Up", 100.0, 120, tick, book, 0.02, ACCOUNT_ID, "user")
         eng.revalue_mtm(100, tick, book, 0.02)
         self.assertFalse(eng.open_orders[0]["mtm_available"])
         self.assertAlmostEqual(eng.open_orders[0]["mtm_usd"], order["profit_if_win_usd"])

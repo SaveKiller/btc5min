@@ -97,11 +97,14 @@ function marketsForHourUtc(hourUtc) {
 export function renderRoundPickerDays(days, onDaySelect) {
     const menu = $("roundPickerMenu");
     menu.classList.remove("round-picker-rounds", "round-picker-hours");
-    menu.innerHTML = days.map((d) => `
+    const total = days.reduce((n, d) => n + d.count, 0);
+    menu.innerHTML = `
+        <li><h6 class="dropdown-header">Rounds: ${total}</h6></li>
+        ${days.map((d) => `
         <li><button class="dropdown-item round-day-btn" type="button" data-day="${d.day_utc}">
             ${d.day_utc}<span class="text-muted-app ms-1">(${d.count})</span>
             <i class="bi bi-chevron-right float-end opacity-50"></i>
-        </button></li>`).join("");
+        </button></li>`).join("")}`;
     menu.querySelectorAll(".round-day-btn").forEach((btn) => {
         btn.addEventListener("click", (e) => {
             e.preventDefault();
@@ -324,11 +327,17 @@ function orderDetailPnl(o) {
 }
 
 
+function sourceBadge(source) {
+    const src = source === "bot" ? "bot" : "user";
+    return `<span class="badge history-side-badge order-source-badge">${src}</span>`;
+}
+
+
 function orderRowHtml(o) {
     const sideCls = o.side === "Up" ? "order-side-up" : "order-side-down";
     const rowCls = o.side === "Down" ? "order-row down" : "order-row";
     const { text: mtm, cls: badgeCls } = orderMtmBadge(o);
-    return `<div class="${rowCls} rounded p-2 mb-2 d-flex align-items-center justify-content-between" data-order-id="${o.id}"><div><strong class="${sideCls}">${o.side.toUpperCase()}</strong><span class="text-muted-app mx-2">·</span><span>$${o.size_usd.toFixed(2)}</span><div class="text-muted-app order-detail-line"><span class="order-detail-static">${orderDetailStatic(o)}</span><span class="order-detail-pnl">${orderDetailPnl(o)}</span></div></div><div class="d-flex align-items-center gap-2"><span class="badge history-side-badge order-mtm-badge ${badgeCls}">${mtm}</span><button class="btn btn-sm btn-outline-secondary cancel-order-btn" data-id="${o.id}" type="button">Cancel</button><button class="btn btn-sm btn-outline-light close-order-btn" data-id="${o.id}" type="button" ${o.close_enabled ? "" : "disabled"}>Close</button></div></div>`;
+    return `<div class="${rowCls} rounded p-2 mb-2 d-flex align-items-center justify-content-between" data-order-id="${o.id}"><div><strong class="${sideCls}">${o.side.toUpperCase()}</strong><span class="text-muted-app mx-2">·</span>${sourceBadge(o.source)}<span class="text-muted-app mx-2">·</span><span>$${o.size_usd.toFixed(2)}</span><div class="text-muted-app order-detail-line"><span class="order-detail-static">${orderDetailStatic(o)}</span><span class="order-detail-pnl">${orderDetailPnl(o)}</span></div></div><div class="d-flex align-items-center gap-2"><span class="badge history-side-badge order-mtm-badge ${badgeCls}">${mtm}</span><button class="btn btn-sm btn-outline-secondary cancel-order-btn" data-id="${o.id}" type="button">Cancel</button><button class="btn btn-sm btn-outline-light close-order-btn" data-id="${o.id}" type="button" ${o.close_enabled ? "" : "disabled"}>Close</button></div></div>`;
 }
 
 
@@ -384,7 +393,7 @@ function historyBetRow(r, hidden) {
     const entry = `${entryQ} / ${r.entry_sec}s`;
     const exit = r.exit_sec != null ? `${exitQ} / ${r.exit_sec}s` : "—";
     const hiddenCls = hidden ? " history-bet-row-hidden" : "";
-    return `<tr class="history-bet-row${hiddenCls}" data-session-id="${r.session_id || ""}"><td></td><td></td><td>${r.date_utc}</td><td>${r.time_utc}</td><td>${sideBadge(r.direction)}</td><td>${sideBadge(r.outcome)}</td><td>$${r.size_usd.toFixed(2)}</td><td>${entry}</td><td>${exit}</td>${valCell(r.final_pnl_usd)}${valCell(r.pnl_usd)}</tr>`;
+    return `<tr class="history-bet-row${hiddenCls}" data-session-id="${r.session_id || ""}"><td></td><td></td><td>${r.date_utc}</td><td>${r.time_utc}</td><td>${sourceBadge(r.source)}</td><td>${sideBadge(r.direction)}</td><td>${sideBadge(r.outcome)}</td><td>$${r.size_usd.toFixed(2)}</td><td>${entry}</td><td>${exit}</td>${valCell(r.final_pnl_usd)}${valCell(r.pnl_usd)}</tr>`;
 }
 
 
@@ -441,7 +450,7 @@ function historySessionRow(g) {
     const betCount = g.bets.length;
     const countLabel = betCount > 1 ? `<span class="history-session-count">${betCount}</span>` : "";
     const sessionLabel = g.session_date_utc === "—" ? "—" : `${g.session_date_utc} ${g.session_time_utc}`;
-    return `<tr class="history-session-row${expanded ? " history-session-row-expanded" : ""}" data-session-id="${g.sessionId}"><td class="history-session-datetime">${sessionLabel}${countLabel}</td><td class="history-toggle-col"><span class="history-toggle-icon" aria-hidden="true">${icon}</span></td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td>$${g.size_usd.toFixed(2)}</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td>${valCell(g.final_pnl_usd, "history-session-val")}${valCell(g.pnl_usd, "history-session-val")}</tr>`;
+    return `<tr class="history-session-row${expanded ? " history-session-row-expanded" : ""}" data-session-id="${g.sessionId}"><td class="history-session-datetime">${sessionLabel}${countLabel}</td><td class="history-toggle-col"><span class="history-toggle-icon" aria-hidden="true">${icon}</span></td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td>$${g.size_usd.toFixed(2)}</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td>${valCell(g.final_pnl_usd, "history-session-val")}${valCell(g.pnl_usd, "history-session-val")}</tr>`;
 }
 
 
@@ -482,6 +491,25 @@ export function renderAccounts(state) {
     $("editAccountBtn").disabled = !hasActive;
     $("exportCsvBtn").disabled = !hasActive;
     renderAccountSummary(state.activeAccount);
+    renderBotSelect(state);
+}
+
+
+export function renderBotSelect(state) {
+    const bots = state.bots || [];
+    const selected = state.selectedBotId || "";
+    const attachOk = state.session?.bot_attach_allowed ?? state.botAttachAllowed ?? true;
+    const select = $("botSelect");
+    select.disabled = !attachOk;
+    select.innerHTML = [`<option value="">None</option>`]
+        .concat(bots.map((b) => `<option value="${b.id}"${b.id === selected ? " selected" : ""}>${b.name}</option>`))
+        .join("");
+    const sw = $("botActiveSwitch");
+    sw.disabled = !selected;
+    sw.checked = !!(selected && state.botActive);
+    const label = $("botStatusLabel");
+    if (!selected) label.textContent = "";
+    else label.textContent = state.botActive ? "READY" : "PAUSED";
 }
 
 

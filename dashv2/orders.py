@@ -44,15 +44,17 @@ class OrderEngine:
             "roi_if_win": roi, "payout_if_win_usd": payout, "profit_if_win_usd": payout - size_usd,
         }
 
-    def place(self, side: str, size_usd: float, sec: int, tick: dict, book: BookSnapshot, fee_rate: float, account_id: str) -> dict:
+    def place(self, side: str, size_usd: float, sec: int, tick: dict, book: BookSnapshot, fee_rate: float, account_id: str, source: str) -> dict:
+        if source not in ("user", "bot"):
+            raise Exception(f"invalid order source: {source!r}")
         preview = self.preview(side, size_usd, sec, tick, book, fee_rate)
         order = {
-            "id": uuid4().hex[:12], "account_id": account_id, "side": side, "entry_sec": sec, "size_usd": size_usd,
-            "shares": preview["shares"], "entry_btc": tick["chainlink_btc"], "best_ask": preview["avg_price"],
-            "best_ask_c": preview["best_ask_c"], "avg_entry_price": preview["avg_price"],
-            "entry_fee_usd": preview["fee_usd"], "payout_if_win_usd": preview["payout_if_win_usd"],
-            "profit_if_win_usd": preview["profit_if_win_usd"], "mtm_usd": None, "mtm_available": False,
-            "close_enabled": False,
+            "id": uuid4().hex[:12], "account_id": account_id, "source": source, "side": side, "entry_sec": sec,
+            "size_usd": size_usd, "shares": preview["shares"], "entry_btc": tick["chainlink_btc"],
+            "best_ask": preview["avg_price"], "best_ask_c": preview["best_ask_c"],
+            "avg_entry_price": preview["avg_price"], "entry_fee_usd": preview["fee_usd"],
+            "payout_if_win_usd": preview["payout_if_win_usd"], "profit_if_win_usd": preview["profit_if_win_usd"],
+            "mtm_usd": None, "mtm_available": False, "close_enabled": False,
         }
         self.open_orders.append(order)
         return order

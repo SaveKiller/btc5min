@@ -134,14 +134,15 @@ def update_account(accounts_root: Path, account_id: str, name: str, initial_bala
     return data
 
 
-def append_settled_orders(accounts_root: Path, account_id: str, market_start_ts: int, session_id: str, session_started_at_utc: str, outcome: str, orders: list[dict]) -> dict:
+def append_settled_orders(accounts_root: Path, account_id: str, market_start_ts: int, session_id: str, session_started_at_utc: str, outcome: str, orders: list[dict], round_source: str) -> dict:
     data = load_account(accounts_root, account_id)
     for o in orders:
         if o.get("close_type") not in ("manual", "settlement"):
             continue
         entry = {
             **o, "market_start_ts": market_start_ts, "session_id": session_id,
-            "session_started_at_utc": session_started_at_utc, "outcome": outcome, "saved_at_utc": _utc_now_iso(),
+            "session_started_at_utc": session_started_at_utc, "outcome": outcome,
+            "round_source": round_source, "saved_at_utc": _utc_now_iso(),
         }
         data["orders"].append(entry)
     data["updated_at_utc"] = _utc_now_iso()
@@ -188,7 +189,8 @@ def order_rows_from_ledger(orders: list[dict]) -> list[dict]:
             "session_date_utc": session_date, "session_time_utc": session_time,
             "session_started_at_utc": o.get("session_started_at_utc") or o.get("saved_at_utc") or "",
             "session_sort_ts": _session_sort_ts(o),
-            "direction": o["side"], "outcome": outcome,
+            "direction": o["side"], "outcome": outcome, "source": o.get("source", "user"),
+            "round_source": o.get("round_source", "replay"),
             "size_usd": o["size_usd"], "entry_sec": o["entry_sec"],
             "exit_sec": o.get("exit_sec"),
             "entry_quote_c": _entry_quote_c(o), "exit_quote_c": _exit_quote_c(o),

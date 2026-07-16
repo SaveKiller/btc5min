@@ -11,6 +11,7 @@ const REPLAY_SPEEDS = [1, 2, 5];
 const state = {
     session: null, tick: null, orders: null, historyRows: [],
     accounts: [], activeAccountId: null, activeAccount: null,
+    bots: [], selectedBotId: null, botAttachAllowed: true, botActive: false,
     chartPrevious: [], chartCurrent: null, chartFreeView: false, scrubbing: false, wasPlaying: false,
     activeRoundTs: null, syncSizesOnNextOrders: false, loadedRoundDays: {},
     roundDays: [], roundNav: [], replaySpeed: loadStoredReplaySpeed(),
@@ -222,6 +223,10 @@ socket.on("bootstrap", (payload) => {
     state.accounts = payload.accounts || [];
     state.activeAccountId = payload.active_account_id ?? null;
     state.activeAccount = state.accounts.find((a) => a.id === state.activeAccountId) || null;
+    state.bots = payload.bots || [];
+    state.selectedBotId = payload.selected_bot_id ?? null;
+    state.botAttachAllowed = payload.bot_attach_allowed !== false;
+    state.botActive = payload.bot_active === true;
     showRoundDays();
     updateRoundNavButtons();
     applyOrderSizes({ size_up_usd: payload.default_order_size_usd, size_down_usd: payload.default_order_size_usd });
@@ -234,6 +239,9 @@ socket.on("session", (payload) => {
     if (payload.playing != null) renderPlaybackButtons(payload.playing);
     if (payload.replay_speed != null) applyReplaySpeed(payload.replay_speed, { persist: false, notify: false });
     if (payload.active_account_id !== undefined) state.activeAccountId = payload.active_account_id;
+    if (payload.selected_bot_id !== undefined) state.selectedBotId = payload.selected_bot_id;
+    if (payload.bot_attach_allowed !== undefined) state.botAttachAllowed = payload.bot_attach_allowed;
+    if (payload.bot_active !== undefined) state.botActive = payload.bot_active === true;
     if (!payload.round_ended) document.getElementById("orderOutcome").textContent = "---";
     if (payload.loaded && payload.market_start_ts !== state.activeRoundTs) {
         state.activeRoundTs = payload.market_start_ts;
@@ -293,6 +301,18 @@ socket.on("round_end", (payload) => {
 });
 
 socket.on("error", (payload) => alert(payload.message || "error"));
+
+socket.on("bot.status", (payload) => {
+    if (payload.bots) state.bots = payload.bots;
+    if (payload.selected_bot_id !== undefined) state.selectedBotId = payload.selected_bot_id;
+    if (payload.bot_attach_allowed !== undefined) state.botAttachAllowed = payload.bot_attach_allowed;
+    if (payload.bot_active !== undefined) state.botActive = payload.bot_active === true;
+    if (payload.reason === "disconnected" || payload.reason?.startsWith?.("crashed")) {
+        state.selectedBotId = null;
+        state.botActive = false;
+    }
+    renderAccounts(state);
+});
 
 
 document.getElementById("playBtn").addEventListener("click", () => emitAck("replay.play").catch(alert));
@@ -364,7 +384,7 @@ document.getElementById("buyDownBtn").addEventListener("click", () => {
 
 document.getElementById("exportCsvBtn").addEventListener("click", () => {
     const rows = state.historyRows;
-    const header = ["Date","Time","Direction","Outcome","Size","Entry","Exit","Final","PnL","SessionId"];
+    const header = ["Date","Time","Who","Direction","Outcome","Size","Entry","Exit","Final","PnL","SessionId"];
     const lines = [header.join(",")];
     rows.forEach((r) => {
         const entryQ = r.entry_quote_c != null ? `${r.entry_quote_c}c` : "—";
@@ -372,7 +392,7 @@ document.getElementById("exportCsvBtn").addEventListener("click", () => {
         const entry = `${entryQ} / ${r.entry_sec}s`;
         const exit = r.exit_sec != null ? `${exitQ} / ${r.exit_sec}s` : "";
         lines.push([
-            r.date_utc, r.time_utc, r.direction, r.outcome ?? "", r.size_usd, entry, exit,
+            r.date_utc, r.time_utc, r.source || "user", r.direction, r.outcome ?? "", r.size_usd, entry, exit,
             r.final_pnl_usd ?? "", r.pnl_usd ?? "", r.session_id ?? "",
         ].join(","));
     });
@@ -393,6 +413,27 @@ document.getElementById("historyTableBody").addEventListener("click", (e) => {
 document.getElementById("accountSelect").addEventListener("change", (e) => {
     const accountId = e.target.value || null;
     emitAck("account.select", { account_id: accountId }).catch(alert);
+});
+
+document.getElementById("botSelect").addEventListener("change", (e) => {
+    const botId = e.target.value || null;
+    emitAck("bot.select", { bot_id: botId }).then((res) => {
+        state.selectedBotId = res.selected_bot_id ?? null;
+        state.botAttachAllowed = res.bot_attach_allowed !== false;
+        state.botActive = res.bot_active === true;
+        renderAccounts(state);
+    }).catch(alert);
+});
+
+document.getElementById("botActiveSwitch").addEventListener("change", (e) => {
+    const active = e.target.checked;
+    emitAck("bot.set_active", { active }).then((res) => {
+        state.botActive = res.bot_active === true;
+        renderAccounts(state);
+    }).catch((err) => {
+        e.target.checked = state.botActive;
+        alert(err);
+    });
 });
 
 document.getElementById("newAccountBtn").addEventListener("click", () => openAccountModal("create"));

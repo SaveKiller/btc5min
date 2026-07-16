@@ -80,10 +80,21 @@
                 <span class="tiny text-muted-app" id="accountCountLabel">0 accounts</span>
               </div>
               <div class="p-3 d-flex flex-wrap align-items-center gap-2">
+                <label class="tiny text-muted-app mb-0" for="accountSelect">Account</label>
                 <select class="form-select form-select-sm account-select" id="accountSelect" aria-label="Select account"></select>
                 <button class="btn btn-sm btn-primary" id="newAccountBtn" type="button">NEW</button>
                 <button class="btn btn-sm btn-outline-secondary" id="renameAccountBtn" type="button" disabled>RENAME</button>
                 <button class="btn btn-sm btn-outline-secondary" id="editAccountBtn" type="button" disabled>EDIT</button>
+              </div>
+              <div class="px-3 pb-3 d-flex flex-wrap align-items-center gap-2">
+                <label class="tiny text-muted-app mb-0" for="botSelect">Bot</label>
+                <select class="form-select form-select-sm account-select" id="botSelect" aria-label="Select bot" style="max-width:14rem">
+                  <option value="">None</option>
+                </select>
+                <div class="form-check form-switch mb-0">
+                  <input class="form-check-input" type="checkbox" role="switch" id="botActiveSwitch" disabled>
+                </div>
+                <span class="tiny text-muted-app" id="botStatusLabel"></span>
               </div>
             </article>
             <article class="app-panel account-summary-panel mb-2" id="accountSummaryPanel">
@@ -99,7 +110,7 @@
               </div>
               <div class="table-responsive account-history-scroll flex-grow-1 px-3 pb-2">
                 <table class="table table-sm mb-0 align-middle">
-                  <thead><tr><th>Session</th><th class="history-toggle-col"></th><th>Date</th><th>Time</th><th>Direction</th><th>Outcome</th><th>Size</th><th>Entry</th><th>Exit</th><th class="text-end">Final</th><th class="text-end">PnL</th></tr></thead>
+                  <thead><tr><th>Session</th><th class="history-toggle-col"></th><th>Date</th><th>Time</th><th>Who</th><th>Direction</th><th>Outcome</th><th>Size</th><th>Entry</th><th>Exit</th><th class="text-end">Final</th><th class="text-end">PnL</th></tr></thead>
                   <tbody id="historyTableBody"></tbody>
                 </table>
               </div>

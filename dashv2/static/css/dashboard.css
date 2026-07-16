@@ -163,6 +163,7 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .round-hour-markets { flex:1 1 auto; margin-left:2.25rem; opacity:.5; white-space:nowrap; }
 .round-hour-chevron { margin-left:auto; flex:0 0 auto; opacity:.5; }
 .round-picker-menu .disabled { opacity:.45; pointer-events:none; }
+.order-source-badge { text-transform:uppercase; letter-spacing:.04em; background:#2a3548; color:#9fb0c7; }
 @media (max-width:1199.98px) {
   .workspace { overflow-x:auto; padding-bottom:.35rem; }
   .workspace-right { flex:0 0 760px; width:760px; }
