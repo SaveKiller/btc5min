@@ -1,0 +1,708 @@
+# dashV2 — Architettura di riferimento
+
+Documento canonico sull’architettura della dashboard replay (`dashv2/`).  
+Destinato a guidare estensioni future (strategie automatiche, modalità live, nuovi pannelli UI, nuovi account/ledger, ecc.).
+
+In caso di conflitto tra questo documento e `AGENTS.md`, prevale il codice; aggiornare questo file quando l’architettura cambia in modo strutturale.
+
+---
+
+## 1. Cos’è dashV2 e a cosa serve
+
+**dashV2** è la webapp di **replay interattivo** dei round del mercato Polymarket **BTC Up or Down 5m**, salvati in locale sotto `data/` come coppia `.bin` + `.txt`.
+
+Permette di:
+
+1. Caricare un round storico in memoria.
+2. Riprodurre la timeline a **1 Hz** (o x2 / x5) lungo l’asse `sec` (secondi mancanti a scadenza: 300 → 0).
+3. Vedere in sync: prezzo BTC Chainlink, delta vs PTB, quote Up/Down, ladder, volatilità, rischio Rq/Rs, DWinA/B, candele 5m causali.
+4. Piazzare ordini simulati sul book CLOB del tick corrente (BUY walk ask + fee), chiuderli (SELL walk bid) o lasciarli andare a settlement a sec 0.
+5. Persistere i risultati su un **ledger per account** in JSON sotto `dashv2/history/accounts/`.
+
+### Perché esiste (vs dash V1)
+
+La V1 (`dash/` + `dash-api/`) separava web server e API in due stack; la comunicazione e il lifecycle erano più fragili.  
+La V2 nasce da un disegno esplicito (vedi `docs/dash-prompt-v2.md`):
+
+- **un solo entrypoint** (`python -m dashv2`);
+- **due processi** con ruoli netti (bridge UI vs motore dati);
+- **pipe unidirezionali** per IPC veloce e isolato;
+- UI statica offline (no CDN obbligatori), layout da mockup v38;
+- **anti-spoiler** rigoroso fino a sec 0.
+
+### Roadmap implicita (non ancora implementata)
+
+Il disegno a due processi è pensato per evoluzioni in cui il processo dati resta la fonte di verità anche se cambia la sorgente:
+
+| Fase | Sorgente dati | Note |
+|------|---------------|------|
+| **Oggi** | File round locali | Replay da `.bin`/`.txt` |
+| **Futuro** | Strategie automatiche sullo stesso motore | Decisioni nel processo dati; UI solo osservatore/controller |
+| **Futuro** | Live Polymarket (WS/API) | Stesso protocollo eventi verso il browser; cambia solo come `ReplayEngine` ottiene i tick |
+
+---
+
+## 2. Principi architetturali
+
+Questi vincoli **non** vanno indeboliti senza aggiornare esplicitamente questo documento e i test.
+
+| # | Principio | Implicazione pratica |
+|---|-----------|----------------------|
+| P1 | **Due processi, fail-fast** | Se server o data muore, l’altro viene terminato (`__main__.py`). |
+| P2 | **Server = bridge puro** | `server.py` non carica round, non simula ordini, non avanza il clock. |
+| P3 | **Engine = unica fonte di verità** | Stato replay, ordini, account, settlement: solo in `ReplayEngine`. |
+| P4 | **Pipe unidirezionali** | Cmd solo server→data; evt (response + event) solo data→server. |
+| P5 | **Un solo controller browser** | Secondo client Socket.IO rifiutato in `connect`. |
+| P6 | **Anti-spoiler** | Picker senza outcome; outcome UI solo a `round_end` / sec 0. |
+| P7 | **Causalità timeline** | Chart e scrub non espongono tick futuri rispetto a `sec` di replay. |
+| P8 | **Fee CLOB reale** | Walk su book del tick + `fee_rate` header `.bin`; **non** usare `gain%` del `.txt`. |
+| P9 | **Riuso `src/`** | Nessun reader binario duplicato; `read_round`, walk CLOB, risk da moduli core. |
+| P10 | **Config fail-hard** | Chiavi obbligatorie in `setup.json`; niente default silenziosi (`config.py`). |
+| P11 | **Spawn, non fork** | `multiprocessing.set_start_method("spawn", force=True)` (Windows + isolamento pulito). |
+
+---
+
+## 3. Vista d’insieme
+
+```
+                    ┌─────────────────────────────────────┐
+                    │  Browser (static/js)                │
+                    │  Socket.IO client ↔ DOM / chart     │
+                    └─────────────────┬───────────────────┘
+                                      │ Socket.IO
+                                      │ (comandi + ack, eventi push)
+                    ┌─────────────────▼───────────────────┐
+                    │  Processo SERVER  (dashv2-server)   │
+                    │  Flask + SocketIO                   │
+                    │  ServerBridge — zero business logic │
+                    └───────────┬─────────────▲───────────┘
+                                │             │
+                     Pipe CMD   │             │  Pipe EVT
+                     (unidirez.)│             │  (unidirez.)
+                     request    │             │  response + event
+                                ▼             │
+                    ┌───────────┴─────────────┴───────────┐
+                    │  Processo DATA  (dashv2-data)       │
+                    │  ReplayEngine                       │
+                    │  rounds / orders / history / src/*  │
+                    └─────────────────────────────────────┘
+                                      │
+                                      ▼
+                         data/*.bin + *.txt
+                         dashv2/history/accounts/*.json
+```
+
+Avvio: `dashv2.bat` oppure `python -m dashv2` dalla root repo → URL da `setup.json` (default `http://127.0.0.1:8780/`).
+
+Dipendenze Python: `pip install -r dashv2/requirements.txt` (Flask-SocketIO, eventlet/threading).  
+Frontend: nessun build step; HTML/CSS/JS + vendor locali sotto `dashv2/static/`.
+
+---
+
+## 4. Bootstrap e lifecycle dei processi
+
+File: [`dashv2/__main__.py`](../dashv2/__main__.py)
+
+### Sequenza di avvio
+
+1. `mp.set_start_method("spawn", force=True)`.
+2. `load_config()` da `dashv2/setup.json` (path risolti, `history_dir` creato se manca, `data_dir` deve esistere).
+3. Creazione di **due** `mp.Pipe(duplex=False)`:
+   - `data_recv_cmd` ← `server_send_cmd` (comandi verso i dati);
+   - `server_recv_evt` ← `data_send_evt` (response ed eventi verso il server).
+4. Avvio `Process(target=run_data_process, name="dashv2-data")`.
+5. Avvio `Process(target=run_server_process, name="dashv2-server")`.
+6. Il processo padre entra in un loop di watchdog ogni 0.5 s: se uno dei due non è `alive`, chiama `_shutdown()` (terminate + join timeout 3 s) e `sys.exit(0)`.
+7. SIGINT / SIGTERM → stesso `_shutdown`.
+
+### Perché spawn + due pipe
+
+- **spawn**: su Windows è l’unico metodo affidabile; evita stato ereditato da fork e rende i processi indipendenti (utile se in futuro il data process vive più a lungo o viene riavviato).
+- **Due pipe unidirezionali**: direzione del flusso esplicita; niente contesa half-duplex su un unico canale; il demux response/event avviene solo sul lato server nella pipe EVT.
+
+### Cosa **non** fa il processo padre
+
+Non inoltra messaggi, non conosce Socket.IO, non tocca i round. È solo launcher + fail-fast.
+
+---
+
+## 5. Protocollo IPC (`dashv2/ipc.py`)
+
+Tutti i messaggi tra i due processi sono **dict JSON-serializzabili** (pickle via `multiprocessing.connection`).
+
+### Envelope
+
+| `kind` | Campi | Direzione |
+|--------|-------|-----------|
+| `request` | `request_id`, `cmd`, `payload` | server → data (pipe CMD) |
+| `response` | `request_id`, `payload` **oppure** `error` | data → server (pipe EVT) |
+| `event` | `name`, `payload` | data → server (pipe EVT) |
+
+Factory: `make_request`, `make_response`, `make_error`, `make_event`.  
+Predicate: `is_response`, `is_event`.
+
+### Regole importanti
+
+1. **Response ed event condividono la stessa pipe EVT.** Il server demultiplexa in `_evt_reader_loop`:
+   - response → sblocca il `threading.Event` del `request_id` pendente;
+   - event → `socketio.emit(name, payload, to=controller_sid)`.
+2. Ogni request ha un `request_id` (UUID hex) usato per correlare la response.
+3. Il data process **non** scrive sulla pipe CMD; il server **non** scrive sulla pipe EVT.
+4. Errori di comando: `make_error(request_id, message)` → il bridge li traduce in Exception / ack `{error: ...}` / evento `error` (solo per `round.load` async).
+
+### Pattern speciale: `round.load`
+
+Il load di un round può essere I/O pesante. Per non bloccare il thread Socket.IO:
+
+1. Il browser emette `round.load`.
+2. Il bridge risponde subito con ack `{ok: true}` e lancia un thread che chiama `_request_to_data(..., timeout=120)`.
+3. L’engine, in `_handle_cmd`, per `round.load` invia **prima** la response IPC, **poi** esegue `after()` che emette session/chart/tick/orders/history/accounts.
+4. Se il load fallisce, il bridge emette l’evento Socket.IO `error` (non un ack di errore, perché l’ack era già andato).
+
+---
+
+## 6. Processo SERVER — `ServerBridge`
+
+File: [`dashv2/server.py`](../dashv2/server.py)  
+Entry: `run_server_process(cfg, cmd_conn, evt_conn)`.
+
+### Responsabilità
+
+| Fa | Non fa |
+|----|--------|
+| Serve `static/` (route `/` → `index.html`) | Caricare / parsare round |
+| Socket.IO verso il browser | Avanzare il clock replay |
+| Tradurre emit client → `ipc.make_request` sulla pipe CMD | Simulare ordini / fee |
+| Tradurre response/event dalla pipe EVT → ack / emit | Anti-spoiler business |
+| Enforce un solo controller | Persistenza history |
+
+### Stack
+
+- Flask con `static_folder=dashv2/static`, `static_url_path=""`.
+- `SocketIO(..., cors_allowed_origins=[], async_mode="threading")`.
+- Thread daemon `_evt_reader_loop` che fa `evt_conn.poll(0.1)` in loop.
+
+### Controller session
+
+- Alla prima `connect`: salva `request.sid` in `_controller_sid`.
+- Se `_controller_sid` è già valorizzato: `return False` (connessione rifiutata).
+- Alla `disconnect` del controller: azzera sid e tenta best-effort `replay.pause` (eccezioni swallow).
+- Ogni handler comando: se `request.sid != _controller_sid` → `{error: "not controller"}`.
+
+### Timeout
+
+| Costante | Valore | Uso |
+|----------|--------|-----|
+| `_ACK_TIMEOUT_SEC` | 30 | Comandi sincroni |
+| `_ROUND_LOAD_TIMEOUT_SEC` | 120 | Solo `round.load` async |
+
+Timeout IPC → `Exception("ipc timeout waiting for {cmd}")` → ack `{error: "..."}` (o evento `error` per load).
+
+### Comandi Socket.IO bindati
+
+Registrati in `_register_socketio` (tutti tranne `round.load` usano `_request_to_data` sincrono):
+
+```
+round.load, rounds.list,
+replay.play, replay.pause, replay.speed, replay.seek, replay.preview,
+order.size, order.preview, order.place, order.close, order.cancel,
+account.list, account.select, account.create, account.rename, account.update,
+session.sync
+```
+
+Stub engine `controller.claim` / `controller.release` esistono ma **non** sono esposti dal server (il controller è gestito solo lato Socket.IO).
+
+### Linee guida per estendere il server
+
+- Nuovo comando UI → aggiungere il nome alla lista in `_register_socketio` **e** l’handler in `ReplayEngine._handle_cmd`.
+- Non mettere logica di dominio nel bridge: al massimo routing, timeout, policy controller.
+- Nuovi eventi push: bastano `make_event` dall’engine; il bridge li inoltra già senza whitelist.
+
+---
+
+## 7. Processo DATA — `ReplayEngine`
+
+File: [`dashv2/engine.py`](../dashv2/engine.py)  
+Entry: `run_data_process` → `ReplayEngine(cfg, cmd_conn, evt_conn).run()`.
+
+### Stato interno (campi rilevanti)
+
+| Campo | Ruolo |
+|-------|--------|
+| `repo` | `RoundRepository` (indice + load) |
+| `orders` | `OrderEngine` (posizioni in memoria) |
+| `accounts_root` | `history_dir/accounts` |
+| `active_account_id` | account selezionato (`_state.json`) |
+| `loaded` | `LoadedRound \| None` |
+| `sec` | secondi a scadenza (asse replay) |
+| `playing` | clock attivo |
+| `round_ended` | settlement già eseguito |
+| `seq` | monotono su ogni tick pubblico (anche preview scrub) |
+| `session_id` / `session_started_at_utc` | run corrente (nuovo a ogni `round.load`) |
+| `replay_speed` | 1, 2 o 5 |
+| `_next_tick_at` | `time.monotonic()` del prossimo advance |
+| `_prev_candles` | candele precedenti calcolate al load |
+| `_last_tick` | ultimo tick pubblico |
+
+### Loop principale (`run`)
+
+All’avvio: eventi `bootstrap` + `accounts`.
+
+Poi loop infinito:
+
+1. Drain comandi: `while cmd_conn.poll(0): _handle_cmd(recv())`.
+2. Se `playing` e round caricato e non ended: se `monotonic() >= _next_tick_at` → `_advance_sec()` e riprogramma `_next_tick_at = now + 1.0/replay_speed`.
+3. `sleep(0.02)` (poll ~50 Hz; tick effettivi a 1/speed Hz).
+
+### Advance e fine round
+
+- `_advance_sec`: se `sec == 1` → `_finish_round()`; altrimenti `sec -= 1`, emette tick + chart current + session.
+- `_finish_round`:
+  1. `playing=False`, `round_ended=True`, `sec=0`.
+  2. `orders.settle_open(outcome, 0, final_chainlink)`.
+  3. Append di **tutti** i `closed_orders` (manual + settlement) al ledger dell’account (`append_settled_orders`).
+  4. Emit `orders`, `history`, `accounts`, `round_end`, `session`.
+
+### Lifecycle di un round
+
+```
+round.load
+  → loaded, sec=300, playing=True, nuova session_id, reset orders
+  → response IPC, poi eventi UI
+play / speed / seek / preview / place / close / cancel
+  → mutano stato o emettono preview
+sec arriva a 0 (play o seek)
+  → _finish_round → persistenza ledger + round_end
+play dopo ended
+  → _restart_round (stesso loaded, clear positions, stesso session_id non rinnovato)
+```
+
+Note:
+
+- **Seek a 0** durante un round non ended chiama `_finish_round` (settlement reale).
+- **Seek post-end** con `sec!=0` fa `_restart_round` (nuova “partita” sullo stesso file).
+- **Scrub** (`replay.preview`): emette `session`/`tick`/`chart`/`orders` con `"preview": true` **senza** mutare `self.sec` / `playing` / posizioni reali (solo `seq` avanza). Usato dallo slider durante il drag.
+
+### Tradable / gate trading
+
+- Tick pubblico: `tradable` se non partial/gap e BTC non stale-null.
+- Session: `tradable` richiede anche `active_account_id` e `not round_ended` e `sec >= 1`.
+- `order.place` / `close` / `cancel`: bloccati se `round_ended` o tick non tradable; place richiede account attivo.
+- Switch account bloccato se ci sono open orders (`account_switch_locked`).
+
+### Helper tick pubblico
+
+- `_public_tick`: proietta il tick interno nel payload browser (quote in centesimi, risk per lato, DWin).
+- `_dwin_public`: DWinA/B orientati al **segno del delta** (`dwin_ref_side`); il client inverte con `100-pct` per il lato opposto.
+
+---
+
+## 8. Round repository — `rounds.py`
+
+### Indice
+
+`RoundRepository._scan()`:
+
+- glob `data_dir/**/bin/btc5m_*.bin`;
+- chiave `market_start_ts` dal filename; dedupe (primo visto vince, scan per mtime desc);
+- `valid` solo se esiste la coppia `.txt` (`txt_path_for_bin`);
+- entry: `RoundIndexEntry(market_start_ts, label, day_utc, valid, reason)`.
+
+API picker (anti-spoiler):
+
+- `list_days()` → `{day_utc, count}`;
+- `list_picker_day(day)` / `list_picker()` → **solo** ts, label, valid, reason (**mai** outcome, path, prezzi finali);
+- `list_nav_ts()` → lista ts validi ordinati (prev/next UI).
+
+### `LoadedRound`
+
+Struttura in memoria dopo `load(mts)`:
+
+| Campo | Contenuto |
+|-------|-----------|
+| header fields | `fee_rate`, `ptb_chainlink`, `outcome_*`, `final_chainlink`, start/end ts |
+| `ticks_by_sec` | dict `sec →` campi UI/trading (quote, delta, vol, side_risk, dwin, flags) |
+| `books_by_sec` | dict `sec → BookSnapshot` |
+| `all_secs` | `set(range(1, 301))` |
+
+### Merge bin + txt
+
+1. `read_round(bin)` → header, ndarray ticks, list books (`src.binary_format`).
+2. `parse_txt_data_rows(txt)` → vol + DWinA/B (e rq/rs parsati ma **non** usati nel tick dashboard).
+3. `compute_side_risks(ticks, ptb)` da `src.risk` → Rq/Rs **per lato** (live-safe dal bin).
+4. Per ogni riga: `sec = floor(secs_to_expiry + 0.5)`; merge; partial se quote NaN → `gap=True`; stale Chainlink se `(recv_ts_ms - chainlink_recv_ms) > stall_reconnect_sec * 1000` → `delta_usd=None`, `chainlink_btc=None`.
+
+### Candele
+
+- `previous_candles(mts, count)`: slot `mts - 300*(i+1)`; OHLC da BTC del round precedente; **buchi restano buchi** (no fill).
+- `current_candle(loaded, sec)`: solo tick con `s >= sec` (asse countdown: presente + passato); open = PTB; se nessun prezzo → flat su PTB.
+
+---
+
+## 9. Ordini — `orders.py`
+
+Classe `OrderEngine`: stato **solo in RAM** finché non arriva `_finish_round`.
+
+### BUY
+
+`preview` / `place` → `market_buy_walk(asks, size_usd, fee_rate, quote_ask=best_ask)` (`src.clob_api`).  
+Fee Polymarket per livello inclusa nel budget.  
+Ordine aperto: id, account_id, side, entry_sec, size, shares, entry BTC/price/fee, payout/profit if win, campi MTM.
+
+### MTM e Close (SELL)
+
+`_mtm`:
+
+1. Se mercato “deciso” (`_settlement_pnl_if_certain`: mid vincente ≥ 0.97, perdente ≤ 0.05, …) → stima PnL ma `mtm_available=False` (Close disabilitato: non c’è liquidità bid utile).
+2. Altrimenti `market_sell_walk(bids, shares, fee_rate)` → `mtm_available=True`, Close abilitato.
+3. Fallimento walk → `mtm_usd=None`.
+
+`close`: richiede `mtm_available`; `close_type="manual"`, `result="closed"`.
+
+### Cancel
+
+Rimuove da `open_orders` **senza** passare da closed/history.
+
+### Settlement
+
+`settle_open(outcome, sec, final_btc)`: won se `outcome == side`; exit 1.0/0.0; fee exit 0; `close_type="settlement"`.
+
+### Seek causale — `prune_seek(sec)`
+
+Asse countdown: `sec` alto = inizio round, `sec` basso = fine.
+
+- Tiene open solo ordini con `entry_sec >= sec` (già piazzati “nel passato” del cursore).
+- Close manuali con `exit_sec < sec` (chiusura ancora nel “futuro” rispetto al nuovo cursore) → **riaperti**.
+- Settlement chiusi restano in closed.
+
+### Scrub
+
+`preview_snapshot`: MTM ipotetico senza mutare lo stato reale (usato da `replay.preview`).
+
+---
+
+## 10. History / account ledger — `history.py`
+
+### Layout filesystem
+
+```
+dashv2/history/          # history_dir da setup.json (gitignored tipicamente)
+  accounts/
+    _state.json          # { active_account_id, saved_at_utc }
+    account_<id>.json    # un file per account
+```
+
+`SCHEMA_VERSION = 1`. Scrittura atomica: `.tmp` + `os.replace`.
+
+### Schema account
+
+```json
+{
+    "schema_version": 1,
+    "id": "<12 hex>",
+    "name": "...",
+    "note": "...",
+    "initial_balance_usd": 10000.0,
+    "created_at_utc": "...Z",
+    "updated_at_utc": "...Z",
+    "orders": [ /* ledger entries immutabili in append */ ]
+}
+```
+
+Ogni entry appendata a fine round porta: campi ordine + `market_start_ts`, `session_id`, `session_started_at_utc`, `outcome`, `saved_at_utc`. Solo `close_type in ("manual", "settlement")`.
+
+### Quando si scrive su disco
+
+**Solo** in `_finish_round` via `append_settled_orders`.  
+I close manuali durante il round restano in `OrderEngine.closed_orders` fino al settlement, poi entrano nel ledger insieme agli settled.
+
+### History verso UI (`_emit_history`)
+
+1. Righe dal ledger dell’account attivo (`order_rows_from_ledger`).
+2. Se round caricato e **non** ended: prepend delle closed live della sessione corrente (`order_rows_for_run` con `outcome=None` → anti-spoiler su outcome colonna).
+3. Sort per session / market / entry_sec.
+
+Esiste `visible_orders(...)` (nasconde ledger dello stesso `market_start_ts` finché il round non è settled) ed è **testata**, ma oggi **non** è collegata in `_emit_history`. L’anti-spoiler effettivo sulla history è: outcome nascosto nelle righe live fino a `round_end`; il ledger di sessioni precedenti dello stesso round resta visibile.
+
+### Stats account
+
+`compute_stats`: balance = initial + Σ pnl; win_rate su wins+losses; usata in `account_summary` e evento `accounts`.
+
+---
+
+## 11. Parser indicatori txt — `txt_rows.py`
+
+`parse_txt_data_rows(txt_path) → dict[sec, dict]`.
+
+| Campo estratto | Uso in dashboard |
+|----------------|------------------|
+| `vol` (`VW N`) | Signal card volatilità |
+| `dwin_a`, `dwin_b_pct` | Signal DWin (orientati in engine) |
+| `rq`, `rs` | Parsati ma **non** usati: Rq/Rs UI vengono da `compute_side_risks` sul bin |
+
+Non estrae quote/delta/gain/btc (arrivano dal bin).
+
+---
+
+## 12. Protocollo Socket.IO (browser ↔ server)
+
+Il browser non parla mai direttamente con il processo data.  
+I nomi comando Socket.IO coincidono con `cmd` IPC.
+
+### Comandi (client → server)
+
+Ack sincrono tranne `round.load` (ack immediato `{ok:true}`, errori via evento `error`).
+
+| Comando | Payload tipico | Response tipica |
+|---------|----------------|-----------------|
+| `round.load` | `{market_start_ts}` | `{ok: true}` (async) |
+| `rounds.list` | `{day_utc}` | `{ok, rounds:[{market_start_ts,label,valid,reason}]}` |
+| `replay.play` | `{}` | `{ok, playing}` o `{ok, sec, playing, restarted}` |
+| `replay.pause` | `{}` | `{ok, playing:false}` |
+| `replay.speed` | `{speed:1\|2\|5}` | `{ok, replay_speed}` |
+| `replay.seek` | `{sec, resume?}` | `{ok, sec, playing?}` |
+| `replay.preview` | `{sec}` | `{ok, sec}` (+ eventi `preview:true`) |
+| `order.size` | `{side, size_usd}` | `{ok}` |
+| `order.preview` | `{size_up_usd, size_down_usd}` | `{ok, previews:{Up,Down}}` |
+| `order.place` | `{side, size_usd}` | `{ok, order}` |
+| `order.close` | `{order_id}` | `{ok, order}` |
+| `order.cancel` | `{order_id}` | `{ok, order}` |
+| `account.list` | `{}` | `{ok, accounts, active_account_id}` |
+| `account.select` | `{account_id}` | `{ok, active_account_id}` |
+| `account.create` | `{name, initial_balance_usd, note?}` | `{ok, account}` |
+| `account.rename` | `{account_id, name}` | `{ok, account}` |
+| `account.update` | `{account_id, name, initial_balance_usd, note?}` | `{ok, account}` |
+| `session.sync` | `{}` | `{ok}` + re-push eventi |
+
+Errori: `{error: string}` in ack, oppure evento `error` per load fallito.
+
+### Eventi (server → client)
+
+| Evento | Quando | Payload essenziale |
+|--------|--------|-------------------|
+| `bootstrap` | avvio / sync | `round_days`, `round_nav`, size default, host/port, accounts |
+| `session` | ogni mutazione clock/account | `loaded`, `sec`, `progress`, `playing`, `round_ended`, `ptb`, `tradable`, `replay_speed`, `preview?` |
+| `tick` | ogni secondo / scrub | BTC, delta, quote, vol, risk Up/Down, DWin, `previews`, `seq` |
+| `chart` | load (full) o advance (current) | `previous?`, `current`, `full_reset`, `preview?` |
+| `orders` | dopo place/close/MTM | sizes, `open[]`, `closed[]`, `preview?` |
+| `history` | ledger + live closed | `rows[]`, `active_account_id` |
+| `accounts` | CRUD / settle | lista + `active` con stats |
+| `round_end` | sec 0 | `outcome`, `final_chainlink`, `settled_orders` |
+| `error` | load fallito (async) | `{message}` |
+
+### Asse temporale UI
+
+- Engine: `sec` = secondi a scadenza (300 → 0).
+- Slider: `progress = 300 - sec` (0 a sinistra = inizio, 300 a destra = fine).
+- Countdown string: `"{sec} | M:SS"`.
+
+---
+
+## 13. Frontend
+
+Nessun bundler. Moduli ES in `static/js/`, vendor offline in `static/vendor/`.
+
+| File | Ruolo |
+|------|--------|
+| `static/index.html` | DOM: header replay, tabs left (CANDLES / ACCOUNTS), pannello ordini right, modal account |
+| `static/css/dashboard.css` | Stile (token/misure mockup v38) |
+| `static/js/app.js` | Stato client, Socket.IO, binding controlli, CSV export |
+| `static/js/render.js` | Aggiornamento DOM (tick, ladder, ordini, picker, history, accounts) |
+| `static/js/chart.js` | Lightweight Charts v5 — candele 5m |
+
+### Stato client (`app.js`)
+
+Campi tipici: `session`, `tick`, `orders`, `historyRows`, `accounts` / `activeAccount*`, `chartPrevious` / `chartCurrent`, `scrubbing`, `replaySpeed`, `roundDays` / `roundNav`, ecc.
+
+Su `connect`: `session.sync` + sync speed da `localStorage` (`dashv2_replay_speed`).
+
+Slider: `pointerdown` → pause; `input` → `replay.preview`; `pointerup` → `replay.seek` + eventuale resume.
+
+`round.load` è fire-and-forget (no promise ack); errori via evento `error`.
+
+### Dove modificare cosa (UI)
+
+| Area | File |
+|------|------|
+| Header / play / timeline / BTC | `index.html` + `render.js` (`renderTick`) + `app.js` |
+| Chart | `chart.js` + eventi `chart` da engine |
+| Ladder / signal / BUY | `render.js` + previews da tick/order |
+| Open orders / Close / Cancel | `render.js` (`renderOrders`) |
+| History / CSV / session groups | `render.js` (`renderHistory`) + `app.js` |
+| Accounts | `render.js` + comandi `account.*` |
+| Stile | `dashboard.css` |
+
+---
+
+## 14. Configurazione
+
+File: [`dashv2/setup.json`](../dashv2/setup.json) caricato da [`dashv2/config.py`](../dashv2/config.py).
+
+Chiavi obbligatorie (`_REQUIRED`):
+
+| Chiave | Significato |
+|--------|-------------|
+| `data_dir` | Path relativo a `dashv2/` verso i round (es. `../data`) |
+| `history_dir` | Path relativo ledger (es. `history`) |
+| `host` / `port` | Bind HTTP |
+| `chart_previous_candles` | Quante candele 5m precedenti caricare |
+| `default_order_size_usd` | Size iniziale Up/Down |
+| `stall_reconnect_sec` | Soglia stale Chainlink (allineata al collector) |
+
+Chiave mancante o `data_dir` assente → eccezione immediata.
+
+---
+
+## 15. Dipendenze da `src/` (codice condiviso)
+
+| Modulo | Uso | Perché |
+|--------|-----|--------|
+| `src.binary_format` | `read_round`, `OUTCOME_NAMES`, `txt_path_for_bin` | Formato `.bin` v6 canonico |
+| `src.book` | `BookSnapshot` | Livelli ask/bid per walk |
+| `src.clob_api` | `majority_side`, `market_buy_walk`, `market_sell_walk` | Stessa fee/walk del collector |
+| `src.risk` | `compute_side_risks` | Rq/Rs per lato, live-safe |
+| `src.delta_win` | `parse_vol_txt` (via txt_rows) | Token volatilità |
+| `src.setup` | `VOLATILITY_WINDOWS_SEC`, `DELTA_WIN_TXT_COLUMNS` | Schema colonne txt |
+
+**Regola:** se cambia la semantica del book o delle fee nel collector, la dashboard eredita automaticamente il comportamento — non duplicare formule in `dashv2/`.
+
+---
+
+## 16. Mappa file
+
+| Percorso | Ruolo |
+|----------|--------|
+| `dashv2/__main__.py` | Launcher spawn + watchdog fail-fast |
+| `dashv2/server.py` | Bridge Flask-SocketIO |
+| `dashv2/engine.py` | Motore replay / comandi / eventi |
+| `dashv2/ipc.py` | Envelope request/response/event |
+| `dashv2/rounds.py` | Indice, load merge, candele |
+| `dashv2/orders.py` | Simulazione CLOB |
+| `dashv2/history.py` | Account ledger JSON |
+| `dashv2/txt_rows.py` | Parse indicatori dal `.txt` |
+| `dashv2/config.py` + `setup.json` | Config fail-hard |
+| `dashv2/static/**` | UI |
+| `dashv2/tests/**` | Unit test |
+| `dashv2.bat` | Launcher Windows |
+| `docs/dash-prompt-v2.md` | Intent originale V2 |
+| `docs/traccia.txt` | Backlog UI/feature |
+
+---
+
+## 17. Test e smoke
+
+```text
+python -m unittest discover -s dashv2/tests
+```
+
+| File | Copertura |
+|------|-----------|
+| `test_ipc.py` | Envelope |
+| `test_ipc_pipe.py` | Direzione pipe response |
+| `test_rounds.py` | Indice, picker anti-spoiler, load (se `data/` presente) |
+| `test_clob_walk.py` | BUY/SELL walk |
+| `test_seek_history.py` | prune_seek, cancel, account CRUD, payout/outcome rows, visible_orders |
+| `test_dwin_public.py` | Proiezione DWin nel tick pubblico |
+| `test_side_risk.py` | Risk per lato in tick |
+
+Smoke manuale: `dashv2.bat` → load → play → seek → BUY → close o settlement → history/CSV.
+
+Non esiste oggi un test e2e Socket.IO/browser.
+
+---
+
+## 18. Guida all’estensione
+
+### Aggiungere un comando
+
+1. Handler in `ReplayEngine._handle_cmd` (+ metodo `_cmd_*`).
+2. Nome nella lista `_register_socketio` in `server.py`.
+3. Binding in `app.js` (`emitAck` o fire-and-forget).
+4. Test unitario sul motore se la logica è non banale.
+5. Aggiornare la tabella protocollo in questo documento.
+
+### Aggiungere un evento push
+
+1. `_emit_event("nome", payload)` dall’engine nei punti giusti del lifecycle.
+2. `socket.on("nome", ...)` in `app.js` + render.
+3. Nessuna modifica al bridge (inoltra già tutto).
+
+### Aggiungere stato di dominio
+
+- Vive nel processo **data** (`ReplayEngine` o modulo dedicato tipo `orders`/`history`).
+- Esporre snapshot via eventi; mutazioni solo via comandi.
+- Non tenere una seconda copia “ufficiale” nel browser o nel server.
+
+### Modalità live / strategie (direzione futura)
+
+Il contratto da preservare:
+
+```
+Browser  ↔  ServerBridge (invariato)  ↔  Data process (nuova sorgente tick)
+```
+
+Idealmente il data process continua a emettere gli stessi eventi (`tick`, `session`, `orders`, …) così il frontend e il bridge restano stabili. Cambia solo come si popola `LoadedRound` / lo stream secondario.
+
+### Anti-spoiler in nuove feature
+
+Qualsiasi UI che espone liste di round, history, nomi file, tooltip, chart “futuro”, deve rispettare:
+
+- niente outcome / final price / path finché `round_ended` è false per il round attivo;
+- picker solo tramite `list_picker*`;
+- chart solo causale (`current_candle` già enforce).
+
+### Cose da non fare
+
+- Mettere business logic in `server.py`.
+- Far parlare il browser con il data process senza passare dal bridge.
+- Usare `majority_gain` / `gain%` del txt come PnL ordini.
+- Riempire buchi nelle previous candles.
+- Introdurre default silenziosi in `setup.json` / `config.py`.
+- Permettere multi-controller senza un disegno esplicito di multi-sessione.
+
+---
+
+## 19. Diagramma sequenza — load + tick + ordine
+
+```
+Browser          ServerBridge              ReplayEngine
+   |                  |                         |
+   |-- round.load --->|                         |
+   |<-- ack ok -------|                         |
+   |                  |-- request round.load -->|
+   |                  |                         | load bin+txt
+   |                  |<-- response ok ---------|
+   |                  |<-- event session -------|
+   |<-- session ------|<-- event chart ---------|
+   |<-- chart --------|<-- event tick ----------|
+   |<-- tick ---------|<-- event orders --------|
+   |                  |         ...             |
+   |                  |    (clock 1/speed Hz)   |
+   |                  |<-- event tick ----------|
+   |<-- tick ---------|                         |
+   |-- order.place -->|                         |
+   |                  |-- request place ------->|
+   |                  |<-- response + orders ---|
+   |<-- ack + orders -|                         |
+   |                  |         ...             |
+   |                  |<-- event round_end -----|
+   |<-- round_end ----|   (ledger su disco)     |
+```
+
+---
+
+## 20. Checklist rapida per review di una PR dashv2
+
+- [ ] Business logic solo in processo data / moduli `rounds|orders|history`?
+- [ ] Nuovi comandi registrati sia in server che in engine?
+- [ ] Eventi nuovi documentati e consumati dal client senza assumere stato server-side?
+- [ ] Anti-spoiler rispettato (picker, history, chart)?
+- [ ] Ordini usano walk CLOB + `fee_rate`, non gain% txt?
+- [ ] Seek/scrub restano causali (`prune_seek` / `preview`)?
+- [ ] Config: nessuna chiave nuova senza aggiornare `_REQUIRED` e `setup.json`?
+- [ ] Test unitari per la parte di dominio toccata?
+- [ ] Questo documento aggiornato se cambia il contratto IPC o i ruoli dei processi?
+
+---
+
+*Ultimo allineamento al codice: stato stabile dashV2 con account ledger, replay speed, scrub preview, history a sessioni.*
