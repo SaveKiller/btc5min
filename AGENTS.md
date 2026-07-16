@@ -41,6 +41,30 @@ Interfaccia web per **replay** dei round salvati in `data/`: timeline 1 Hz, char
 
 **Dipendenze Python:** `pip install -r dashv2/requirements.txt` (Flask-SocketIO, eventlet). Nessuna build frontend: HTML/CSS/JS serviti da `dashv2/static/`.
 
+### Restart automatico (obbligo agente)
+
+Il launcher (`dashv2/__main__.py`) poll ogni **2 s** il file sentinella **`data/restart`** (path = `data_dir/restart` da `dashv2/setup.json`).
+
+Comportamento del launcher:
+
+1. All’avvio, **prima** di spawnare server/data: se `restart` esiste → lo elimina (niente doppio boot).
+2. In loop: se trova `restart` → lo cancella, termina i due processi, `os.execv` di `python -m dashv2` (reload completo codice + config).
+
+**Cosa deve fare l’agente** dopo modifiche che richiedono riavvio del processo Python:
+
+- Creare un file **vuoto** `data/restart` (es. `New-Item` / `touch` / scrittura vuota).
+- Non chiedere all’utente di chiudere la finestra e rilanciare il batch.
+- Serve per: `dashv2/*.py`, `dashv2/bots/*`, `dashv2/setup.json`, e in generale qualsiasi cambio backend già caricato in memoria.
+- **Non** creare la sentinella per sole modifiche a `dashv2/static/**` (HTML/CSS/JS): basta refresh browser.
+- Non commitare `data/restart` (la cartella `data/` è già gitignored).
+
+**Obbligo in ogni risposta dopo una modifica:** dichiarare esplicitamente cosa serve all’utente, una di:
+
+- **refresh browser** — solo static (`dashv2/static/**`)
+- **restart server** — solo backend (sentinella `data/restart` già creata dall’agente)
+- **entrambi** — backend + static (sentinella + refresh)
+- **niente** — docs/test/file non runtime, o cambio già attivo senza reload
+
 ### Architettura
 
 Due processi `multiprocessing` con `spawn`, avviati da `[dashv2/__main__.py](dashv2/__main__.py)`; comunicazione tramite due pipe unidirezionali (`[dashv2/ipc.py](dashv2/ipc.py)`: envelope `request` / `response` / `event`). Fail-fast: se un processo termina, l’altro viene killato.
