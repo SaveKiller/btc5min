@@ -313,9 +313,14 @@ function orderMtmBadge(o) {
 }
 
 
-function orderDetailLine(o) {
-    const win = o.profit_if_win_usd != null ? ` · Win $${o.profit_if_win_usd.toFixed(2)}` : "";
-    return `Entry $${o.entry_btc?.toFixed(0) ?? "—"} · Sec ${o.entry_sec} · Quote ${o.best_ask_c}c${win}`;
+function orderDetailStatic(o) {
+    return `Entry $${o.entry_btc?.toFixed(0) ?? "—"} · Sec ${o.entry_sec} · Quote ${o.best_ask_c}c`;
+}
+
+
+function orderDetailPnl(o) {
+    if (o.profit_if_win_usd == null) return "";
+    return ` · Win $${o.profit_if_win_usd.toFixed(2)}`;
 }
 
 
@@ -323,7 +328,7 @@ function orderRowHtml(o) {
     const sideCls = o.side === "Up" ? "order-side-up" : "order-side-down";
     const rowCls = o.side === "Down" ? "order-row down" : "order-row";
     const { text: mtm, cls: badgeCls } = orderMtmBadge(o);
-    return `<div class="${rowCls} rounded p-2 mb-2 d-flex align-items-center justify-content-between" data-order-id="${o.id}"><div><strong class="${sideCls}">${o.side.toUpperCase()}</strong><span class="text-muted-app mx-2">·</span><span>$${o.size_usd.toFixed(2)}</span><div class="text-muted-app order-detail-line">${orderDetailLine(o)}</div></div><div class="d-flex align-items-center gap-2"><span class="badge history-side-badge order-mtm-badge ${badgeCls}">${mtm}</span><button class="btn btn-sm btn-outline-secondary cancel-order-btn" data-id="${o.id}" type="button">Cancel</button><button class="btn btn-sm btn-outline-light close-order-btn" data-id="${o.id}" type="button" ${o.close_enabled ? "" : "disabled"}>Close</button></div></div>`;
+    return `<div class="${rowCls} rounded p-2 mb-2 d-flex align-items-center justify-content-between" data-order-id="${o.id}"><div><strong class="${sideCls}">${o.side.toUpperCase()}</strong><span class="text-muted-app mx-2">·</span><span>$${o.size_usd.toFixed(2)}</span><div class="text-muted-app order-detail-line"><span class="order-detail-static">${orderDetailStatic(o)}</span><span class="order-detail-pnl">${orderDetailPnl(o)}</span></div></div><div class="d-flex align-items-center gap-2"><span class="badge history-side-badge order-mtm-badge ${badgeCls}">${mtm}</span><button class="btn btn-sm btn-outline-secondary cancel-order-btn" data-id="${o.id}" type="button">Cancel</button><button class="btn btn-sm btn-outline-light close-order-btn" data-id="${o.id}" type="button" ${o.close_enabled ? "" : "disabled"}>Close</button></div></div>`;
 }
 
 
@@ -332,8 +337,6 @@ function patchOrderRow(row, o) {
     const badge = row.querySelector(".order-mtm-badge");
     badge.textContent = mtm;
     badge.className = `badge history-side-badge order-mtm-badge ${badgeCls}`;
-    const detail = row.querySelector(".order-detail-line");
-    if (detail) detail.textContent = orderDetailLine(o);
     const btn = row.querySelector(".close-order-btn");
     btn.disabled = !o.close_enabled;
 }

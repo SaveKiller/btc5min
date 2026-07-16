@@ -6,6 +6,8 @@ let chartContainer = null;
 let candleCount = 0;
 let currentRoundCandleTime = null;
 let chartViewFree = false;
+let chartAutoscaleLockPending = false;
+let autoscaleLockScheduled = false;
 let layoutQueued = false;
 
 
@@ -21,6 +23,19 @@ function enableFreeInteraction() {
         handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
     });
     chart.timeScale().applyOptions({ fixLeftEdge: false, fixRightEdge: false, rightOffset: 0, minBarSpacing: 2 });
+}
+
+
+function scheduleAutoscaleLock() {
+    if (autoscaleLockScheduled) return;
+    autoscaleLockScheduled = true;
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            autoscaleLockScheduled = false;
+            chartAutoscaleLockPending = false;
+            candleSeries?.priceScale().applyOptions({ autoScale: false });
+        });
+    });
 }
 
 
@@ -42,8 +57,14 @@ function applyChartLayout() {
         queueChartLayout();
         return;
     }
-    if (chartViewFree) fitRoundStartViewport();
-    else candleSeries.priceScale().applyOptions({ autoScale: true });
+    if (chartViewFree) {
+        if (fitRoundStartViewport()) {
+            chartViewFree = false;
+            scheduleAutoscaleLock();
+        }
+        return;
+    }
+    if (chartAutoscaleLockPending) scheduleAutoscaleLock();
 }
 
 
@@ -81,6 +102,8 @@ export function setCandles(previous, current, opts = {}) {
     candleCount = data.length;
     currentRoundCandleTime = current?.time ?? null;
     chartViewFree = !!opts.freeView;
+    chartAutoscaleLockPending = !opts.freeView;
+    candleSeries.priceScale().applyOptions({ autoScale: true });
     candleSeries.setData(data.map((c) => ({
         time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
     })));
