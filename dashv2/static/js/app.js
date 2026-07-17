@@ -107,10 +107,12 @@ function applyOrderSizes(payload) {
 }
 
 function requestPreviews() {
-    if (!state.session?.loaded || state.session.round_ended) return;
+    if (!state.session?.loaded || state.session.round_ended || state.scrubbing) return;
+    if (state.tick?.preview) return;
     const size_up_usd = Number(document.getElementById("sizeUpInput").value) || 0;
     const size_down_usd = Number(document.getElementById("sizeDownInput").value) || 0;
     emitAck("order.preview", { size_up_usd, size_down_usd }).then((res) => {
+        if (state.scrubbing || state.tick?.preview) return;
         applyButtonPreviews(state.tick, res.previews);
     }).catch(() => {});
 }
@@ -261,7 +263,12 @@ socket.on("session", (payload) => {
     renderTick(state);
 });
 
-socket.on("tick", (payload) => { state.tick = payload; renderTick(state); requestPreviews(); });
+socket.on("tick", (payload) => {
+    state.tick = payload;
+    renderTick(state);
+    // I tick di scrub già includono previews al sec corretto; order.preview usererebbe self.sec reale.
+    if (!payload.preview) requestPreviews();
+});
 
 socket.on("orders", (payload) => {
     state.orders = payload;
