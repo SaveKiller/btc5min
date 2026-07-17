@@ -393,7 +393,7 @@ function historyBetRow(r, hidden) {
     const entry = `${entryQ} / ${r.entry_sec}s`;
     const exit = r.exit_sec != null ? `${exitQ} / ${r.exit_sec}s` : "—";
     const hiddenCls = hidden ? " history-bet-row-hidden" : "";
-    return `<tr class="history-bet-row${hiddenCls}" data-session-id="${r.session_id || ""}"><td></td><td></td><td>${r.date_utc}</td><td>${r.time_utc}</td><td>${sourceBadge(r.source)}</td><td>${sideBadge(r.direction)}</td><td>${sideBadge(r.outcome)}</td><td>$${r.size_usd.toFixed(2)}</td><td>${entry}</td><td>${exit}</td>${valCell(r.final_pnl_usd)}${valCell(r.pnl_usd)}</tr>`;
+    return `<tr class="history-bet-row${hiddenCls}" data-session-id="${r.session_id || ""}"><td></td><td></td><td></td><td></td><td>${sourceBadge(r.source)}</td><td>${sideBadge(r.direction)}</td><td>${sideBadge(r.outcome)}</td><td>$${r.size_usd.toFixed(2)}</td><td>${entry}</td><td>${exit}</td>${valCell(r.final_pnl_usd)}${valCell(r.pnl_usd)}</tr>`;
 }
 
 
@@ -450,7 +450,7 @@ function historySessionRow(g) {
     const betCount = g.bets.length;
     const countLabel = betCount > 1 ? `<span class="history-session-count">${betCount}</span>` : "";
     const sessionLabel = g.session_date_utc === "—" ? "—" : `${g.session_date_utc} ${g.session_time_utc}`;
-    return `<tr class="history-session-row${expanded ? " history-session-row-expanded" : ""}" data-session-id="${g.sessionId}"><td class="history-session-datetime">${sessionLabel}${countLabel}</td><td class="history-toggle-col"><span class="history-toggle-icon" aria-hidden="true">${icon}</span></td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td>$${g.size_usd.toFixed(2)}</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td>${valCell(g.final_pnl_usd, "history-session-val")}${valCell(g.pnl_usd, "history-session-val")}</tr>`;
+    return `<tr class="history-session-row${expanded ? " history-session-row-expanded" : ""}" data-session-id="${g.sessionId}"><td class="history-session-datetime">${sessionLabel}${countLabel}</td><td class="history-toggle-col"><span class="history-toggle-icon" aria-hidden="true">${icon}</span></td><td>${g.date_utc}</td><td>${g.time_utc}</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td>$${g.size_usd.toFixed(2)}</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td>${valCell(g.final_pnl_usd, "history-session-val")}${valCell(g.pnl_usd, "history-session-val")}</tr>`;
 }
 
 
