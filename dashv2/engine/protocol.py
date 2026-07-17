@@ -58,5 +58,6 @@ class EnginePlugin(Protocol):
 #     dedicato (es. history.export) implementato dal plugin
 #
 # Bot / strategy (stato di selezione nel plugin attivo)
-#   - bot.list / bot.select / bot.set_active — stato selected + active
+#   - bot.list / bot.set_active — stato active strategies + master switch
+#   - strategy.list / create / rename / delete / load / unload — catalogo JSON + active set
 #   - Emit: bot.status (lo shell non gestisce strategy; solo il bot process)

@@ -50,6 +50,7 @@ function signedStatClass(v) {
 
 
 const TIMELINE_THUMB_PX = 16;
+const BAND_EDGE_PAD_PX = 12;
 
 
 function timelineThumbLeft(pct) {
@@ -69,14 +70,16 @@ export function layoutReplayScale() {
         span.style.left = timelineThumbLeft(pct);
         bySec.set(sec, { pct, half: span.offsetWidth / 2 });
     });
-    scale.querySelectorAll(".replay-scale-band").forEach((band) => {
+    document.querySelectorAll(".replay-scale-band").forEach((band) => {
         const from = bySec.get(Number(band.dataset.from));
         const until = bySec.get(Number(band.dataset.until));
         const inclusive = band.dataset.inclusive === "1";
         const spanPct = until.pct - from.pct;
         const endHalf = inclusive ? until.half : -until.half;
-        band.style.left = `calc(${from.pct * 100}% + ${(0.5 - from.pct) * TIMELINE_THUMB_PX}px - ${from.half}px)`;
-        band.style.width = `calc(${spanPct * 100}% + ${(from.pct - until.pct) * TIMELINE_THUMB_PX}px + ${from.half + endHalf}px)`;
+        const startPad = from.pct === 0 ? BAND_EDGE_PAD_PX : 0;
+        const endPad = inclusive ? BAND_EDGE_PAD_PX : 0;
+        band.style.left = `calc(${from.pct * 100}% + ${(0.5 - from.pct) * TIMELINE_THUMB_PX}px - ${from.half + startPad}px)`;
+        band.style.width = `calc(${spanPct * 100}% + ${(from.pct - until.pct) * TIMELINE_THUMB_PX}px + ${from.half + endHalf + startPad + endPad}px)`;
     });
 }
 
@@ -94,6 +97,7 @@ function updateTimelineSecLabel(sec, progress) {
     const label = $("timelineSecLabel");
     label.textContent = String(sec);
     applySecBandClass(label, sec);
+    applySecBandClass(slider, sec);
     const min = Number(slider.min);
     const max = Number(slider.max);
     const pct = (progress - min) / (max - min);
@@ -252,6 +256,9 @@ function riskForSide(sideLabel, tick) {
 function sideRiskHtml(rq, rs) {
     const rqNum = typeof rq === "number" ? rq : null;
     const rsNum = typeof rs === "number" ? rs : null;
+    if (rqNum === 9 && rsNum === 9) {
+        return `<div class="side-risk side-risk-blank px-2 pb-2" aria-hidden="true">Rq 9&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Rs 9</div>`;
+    }
     const rqTxt = rqNum != null ? String(rqNum) : "—";
     const rsTxt = rsNum != null ? String(rsNum) : "—";
     if (rqNum == null || rsNum == null) {
@@ -296,7 +303,9 @@ export function renderTick(state) {
         applySecBandClass(secEl, session.sec);
         $("orderRoundTime").textContent = formatRoundClockUtc(session.market_start_ts, session.sec);
         if (!session.round_ended) $("orderOutcome").textContent = "---";
-        $("refCountdown").textContent = formatMmSs(session.sec);
+        const countdown = $("refCountdown");
+        countdown.textContent = formatMmSs(session.sec);
+        applySecBandClass(countdown, session.sec);
     }
     if (tick?.chainlink_btc != null) {
         const btc = Math.round(tick.chainlink_btc).toLocaleString("en-US");
@@ -522,25 +531,71 @@ export function renderAccounts(state) {
     $("editAccountBtn").disabled = !hasActive;
     $("exportCsvBtn").disabled = !hasActive;
     renderAccountSummary(state.activeAccount);
-    renderBotSelect(state);
+    renderBotPanel(state);
 }
 
 
-export function renderBotSelect(state) {
-    const bots = state.bots || [];
-    const selected = state.selectedBotId || "";
-    const attachOk = state.session?.bot_attach_allowed ?? state.botAttachAllowed ?? true;
-    const select = $("botSelect");
-    select.disabled = !attachOk;
-    select.innerHTML = [`<option value="">None</option>`]
-        .concat(bots.map((b) => `<option value="${b.id}"${b.id === selected ? " selected" : ""}>${b.name}</option>`))
-        .join("");
+export function renderBotPanel(state) {
     const sw = $("botActiveSwitch");
-    sw.disabled = !selected;
-    sw.checked = !!(selected && state.botActive);
-    const label = $("botStatusLabel");
-    if (!selected) label.textContent = "";
-    else label.textContent = state.botActive ? "READY" : "PAUSED";
+    sw.disabled = false;
+    sw.checked = !!state.botActive;
+    $("botStatusLabel").textContent = state.botActive ? "READY" : "PAUSED";
+
+    const activeIds = state.activeStrategyIds || [];
+    const byId = Object.fromEntries((state.strategies || []).map((s) => [s.id, s]));
+    const activeQueue = $("botActiveList");
+    if (!activeIds.length) {
+        activeQueue.innerHTML = `<span class="strategy-empty">No active strategies.</span>`;
+    } else {
+        activeQueue.innerHTML = activeIds.map((id) => {
+            const s = byId[id] || { id, name: id };
+            return `<span class="bot-active-label" data-id="${s.id}">
+                <span class="bot-active-label-name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
+                <span class="bot-active-label-sep" aria-hidden="true"></span>
+                <button type="button" class="bot-active-label-x" data-unload="${s.id}" title="Remove from bot" aria-label="Remove ${escapeHtml(s.name)}"><i class="bi bi-x-lg" aria-hidden="true"></i></button>
+            </span>`;
+        }).join("");
+    }
+
+    const type = state.strategyType || "deterministic";
+    const typeSelect = $("strategyTypeSelect");
+    if (typeSelect.value !== type) typeSelect.value = type;
+    const catalog = (state.strategies || []).filter((s) => s.type === type);
+    const selectedId = state.selectedStrategyId;
+    const catalogList = $("strategyCatalogList");
+    if (!catalog.length) {
+        catalogList.innerHTML = `<li class="strategy-empty">No ${escapeHtml(type)} strategies.</li>`;
+    } else {
+        catalogList.innerHTML = catalog.map((s) => {
+            const sel = s.id === selectedId ? " selected" : "";
+            const isActive = activeIds.includes(s.id);
+            const desc = (s.description || "").trim();
+            const tip = desc || "Double-click to toggle in bot";
+            const descHtml = desc
+                ? `<span class="desc">${escapeHtml(desc)}</span>`
+                : "";
+            return `<li class="strategy-catalog-item${sel}" data-id="${s.id}" title="${escapeHtml(tip)}">
+                <div class="meta">
+                    <div class="title-row">
+                        <span class="name">${escapeHtml(s.name)}</span>
+                        <span class="stype">${escapeHtml(s.type).toUpperCase()}</span>
+                    </div>
+                    ${descHtml}
+                </div>
+                <button type="button" class="btn-strat-add" data-action="load" data-id="${s.id}" title="Add to bot" aria-label="Add" ${isActive ? "disabled" : ""}><i class="bi bi-plus-lg" aria-hidden="true"></i></button>
+            </li>`;
+        }).join("");
+    }
+    const hasSel = !!selectedId && catalog.some((s) => s.id === selectedId);
+    $("strategyEditBtn").disabled = !hasSel;
+    $("strategyDeleteBtn").disabled = !hasSel;
+}
+
+
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
 }
 
 

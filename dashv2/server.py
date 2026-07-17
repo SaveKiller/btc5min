@@ -26,8 +26,9 @@ _HUMAN_CMDS = frozenset({
     "round.load", "rounds.list", "replay.play", "replay.pause", "replay.speed",
     "replay.seek", "replay.preview", "order.size", "order.preview", "order.place",
     "order.close", "order.cancel", "account.list", "account.select", "account.create",
-    "account.rename", "account.update", "bot.list", "bot.select", "bot.set_active",
-    "session.sync", "consult.send",
+    "account.rename", "account.update", "bot.list", "bot.set_active",
+    "strategy.list", "strategy.create", "strategy.update", "strategy.delete",
+    "strategy.load", "strategy.unload", "session.sync", "consult.send",
 })
 
 
@@ -46,7 +47,7 @@ class ServerBridge:
         self._bot_sid: str | None = None
         self._sid_role: dict[str, str] = {}
         self._bot_active = False
-        self._selected_strategy_id: str | None = None
+        self._active_strategy_ids: list[str] = []
         self._register_routes()
         self._register_socketio()
         threading.Thread(target=self._evt_reader_loop, daemon=True).start()
@@ -67,12 +68,13 @@ class ServerBridge:
             if sid:
                 self.socketio.emit(name, payload, to=sid)
 
-    def _forward_strategy_load(self, strategy_id: str | None) -> None:
+    def _forward_strategy_sync(self, strategy_ids: list[str] | None) -> None:
         """Stato già in engine; push esplicito al processo bot."""
-        self._selected_strategy_id = strategy_id
+        ids = list(strategy_ids or [])
+        self._active_strategy_ids = ids
         if self._bot_sid is None:
             return
-        self.socketio.emit("strategy.load", {"strategy_id": strategy_id}, to=self._bot_sid)
+        self.socketio.emit("strategy.sync", {"strategy_ids": ids}, to=self._bot_sid)
 
     def _resync_bot_strategy(self) -> None:
         """Al (ri)connect del bot: riallinea strategy dallo stato engine."""
@@ -82,7 +84,7 @@ class ServerBridge:
             print(f"bot resync failed: {e}", flush=True)
             return
         self._bot_active = bool(st.get("bot_active"))
-        self._forward_strategy_load(st.get("selected_bot_id"))
+        self._forward_strategy_sync(st.get("active_strategy_ids") or [])
 
     def _register_socketio(self) -> None:
         @self.socketio.on("connect")
@@ -117,9 +119,9 @@ class ServerBridge:
                 self._bot_sid = None
                 print("bot client disconnected", flush=True)
                 self._broadcast("bot.status", {
-                    "loaded": self._selected_strategy_id is not None, "reason": "disconnected",
-                    "selected_bot_id": self._selected_strategy_id, "bot_active": self._bot_active,
-                    "bot_connected": False,
+                    "loaded": bool(self._active_strategy_ids), "reason": "disconnected",
+                    "active_strategy_ids": list(self._active_strategy_ids),
+                    "bot_active": self._bot_active, "bot_connected": False,
                 })
 
         @self.socketio.on("consult.send")
@@ -159,11 +161,10 @@ class ServerBridge:
                 return {"ok": True}
             try:
                 result = self._request_to_data(_cmd, payload or {}, timeout=_ACK_TIMEOUT_SEC, actor=actor)
-                if _cmd == "bot.select":
+                if _cmd == "bot.set_active":
                     self._bot_active = bool(result.get("bot_active"))
-                    self._forward_strategy_load(result.get("selected_bot_id"))
-                elif _cmd == "bot.set_active":
-                    self._bot_active = bool(result.get("bot_active"))
+                elif _cmd in ("strategy.load", "strategy.unload", "strategy.delete"):
+                    self._forward_strategy_sync(result.get("active_strategy_ids") or [])
                 return result
             except Exception as e:
                 return {"error": str(e)}
@@ -217,8 +218,8 @@ class ServerBridge:
             name, payload = msg["name"], msg.get("payload") or {}
             if name == "bot.status" and "bot_active" in payload:
                 self._bot_active = bool(payload["bot_active"])
-                if "selected_bot_id" in payload:
-                    self._selected_strategy_id = payload.get("selected_bot_id")
+                if "active_strategy_ids" in payload:
+                    self._active_strategy_ids = list(payload.get("active_strategy_ids") or [])
             self._broadcast(name, payload)
 
 

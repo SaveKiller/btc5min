@@ -9,7 +9,6 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 
 from dashv2 import ipc
-from dashv2.bots import list_bot_infos
 from dashv2.history import (
     account_summary, accounts_dir, append_settled_orders, compute_stats, create_account,
     list_accounts, load_account, load_active_account_id, order_rows_for_run, order_rows_from_ledger,
@@ -17,6 +16,10 @@ from dashv2.history import (
 )
 from dashv2.orders import OrderEngine
 from dashv2.rounds import LoadedRound, RoundRepository
+from dashv2.strategies import (
+    create_strategy, delete_strategy, list_strategies, load_active_ids, load_strategy,
+    save_active_ids, strategies_dir, strategy_summary, update_strategy,
+)
 
 
 def _actor_from_payload(payload: dict) -> str:
@@ -79,6 +82,8 @@ class ReplayEngine:
         self.orders = OrderEngine(cfg["default_order_size_usd"], cfg["default_order_size_usd"])
         self.accounts_root = accounts_dir(Path(cfg["history_dir"]))
         self.active_account_id: str | None = load_active_account_id(self.accounts_root)
+        self.strategies_root = strategies_dir(Path(cfg["history_dir"]))
+        self.active_strategy_ids: list[str] = load_active_ids(self.strategies_root)
         self.loaded: LoadedRound | None = None
         self.sec = 300
         self.playing = False
@@ -91,7 +96,6 @@ class ReplayEngine:
         self._last_tick: dict | None = None
         self._prev_candles: list[dict] = []
         self._round_advanced = False
-        self.selected_bot_id: str | None = None
         self.bot_active = False
         self.engine_plugin = "replay"
         self.round_source = "replay"
@@ -120,7 +124,8 @@ class ReplayEngine:
             "accounts": list_accounts(self.accounts_root),
             "active_account_id": self.active_account_id,
             "engine_plugin": self.engine_plugin, "account_backend": self.account_backend,
-            "bots": list_bot_infos(), "selected_bot_id": self.selected_bot_id,
+            "strategies": list_strategies(self.strategies_root),
+            "active_strategy_ids": list(self.active_strategy_ids),
             "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
         }
 
@@ -151,8 +156,13 @@ class ReplayEngine:
             elif cmd == "account.rename": result = self._cmd_account_rename(payload)
             elif cmd == "account.update": result = self._cmd_account_update(payload)
             elif cmd == "bot.list": result = self._cmd_bot_list()
-            elif cmd == "bot.select": result = self._cmd_bot_select(payload)
             elif cmd == "bot.set_active": result = self._cmd_bot_set_active(payload)
+            elif cmd == "strategy.list": result = self._cmd_strategy_list(payload)
+            elif cmd == "strategy.create": result = self._cmd_strategy_create(payload)
+            elif cmd == "strategy.update": result = self._cmd_strategy_update(payload)
+            elif cmd == "strategy.delete": result = self._cmd_strategy_delete(payload)
+            elif cmd == "strategy.load": result = self._cmd_strategy_load(payload)
+            elif cmd == "strategy.unload": result = self._cmd_strategy_unload(payload)
             elif cmd == "session.sync": result = self._cmd_session_sync()
             elif cmd == "controller.claim": result = {"ok": True}
             elif cmd == "controller.release": result = {"ok": True}
@@ -422,45 +432,91 @@ class ReplayEngine:
     def _bot_attach_allowed(self) -> bool:
         return not self.playing
 
+    def _persist_active_ids(self) -> None:
+        save_active_ids(self.strategies_root, self.active_strategy_ids)
+
     def _strategies_snapshot(self) -> list[dict]:
-        if self.selected_bot_id is None:
-            return []
-        return [{"id": self.selected_bot_id, "active": self.bot_active}]
+        out: list[dict] = []
+        for sid in self.active_strategy_ids:
+            data = load_strategy(self.strategies_root, sid)
+            out.append({**strategy_summary(data), "active": True})
+        return out
+
+    def _emit_strategies(self) -> None:
+        self._emit_event("strategies", {
+            "strategies": list_strategies(self.strategies_root),
+            "active_strategy_ids": list(self.active_strategy_ids),
+        })
 
     def _cmd_bot_list(self) -> dict:
-        return {"ok": True, "bots": list_bot_infos(), "selected_bot_id": self.selected_bot_id,
-                "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
-                "strategies": self._strategies_snapshot()}
-
-    def _cmd_bot_select(self, payload: dict) -> dict:
-        """Seleziona una strategy shim (plugin *_bot.py); il server fa forward strategy.load al bot."""
-        bot_id = payload.get("bot_id")
-        if bot_id is not None:
-            if not self._bot_attach_allowed():
-                raise Exception("bot attach only allowed while paused")
-            known = {b["id"] for b in list_bot_infos()}
-            if bot_id not in known:
-                raise Exception(f"unknown bot: {bot_id}")
-            self.bot_active = True
-        elif not self._bot_attach_allowed():
-            raise Exception("bot detach only allowed while paused")
-        else:
-            self.bot_active = False
-        self.selected_bot_id = bot_id
-        self._emit_bot_status()
-        self._emit_session()
         return {
-            "ok": True, "selected_bot_id": bot_id, "bot_attach_allowed": self._bot_attach_allowed(),
-            "bot_active": self.bot_active, "strategies": self._strategies_snapshot(),
+            "ok": True, "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
+            "strategies": self._strategies_snapshot(), "active_strategy_ids": list(self.active_strategy_ids),
+            "catalog": list_strategies(self.strategies_root),
         }
 
     def _cmd_bot_set_active(self, payload: dict) -> dict:
-        if self.selected_bot_id is None:
-            raise Exception("no bot selected")
         self.bot_active = bool(payload["active"])
         self._emit_bot_status()
         self._emit_session()
-        return {"ok": True, "bot_active": self.bot_active, "selected_bot_id": self.selected_bot_id}
+        return {"ok": True, "bot_active": self.bot_active}
+
+    def _cmd_strategy_list(self, payload: dict) -> dict:
+        stype = payload.get("type")
+        return {
+            "ok": True, "strategies": list_strategies(self.strategies_root, stype),
+            "active_strategy_ids": list(self.active_strategy_ids),
+        }
+
+    def _cmd_strategy_create(self, payload: dict) -> dict:
+        data = create_strategy(
+            self.strategies_root, payload["name"], payload["type"], payload["description"])
+        self._emit_strategies()
+        return {"ok": True, "strategy": strategy_summary(data)}
+
+    def _cmd_strategy_update(self, payload: dict) -> dict:
+        data = update_strategy(
+            self.strategies_root, payload["strategy_id"], payload["name"], payload["description"])
+        self._emit_strategies()
+        self._emit_bot_status()
+        return {"ok": True, "strategy": strategy_summary(data)}
+
+    def _cmd_strategy_delete(self, payload: dict) -> dict:
+        sid = payload["strategy_id"]
+        if sid in self.active_strategy_ids:
+            self.active_strategy_ids = [x for x in self.active_strategy_ids if x != sid]
+            self._persist_active_ids()
+        delete_strategy(self.strategies_root, sid)
+        self._emit_strategies()
+        self._emit_bot_status()
+        return {"ok": True, "active_strategy_ids": list(self.active_strategy_ids)}
+
+    def _cmd_strategy_load(self, payload: dict) -> dict:
+        sid = payload["strategy_id"]
+        load_strategy(self.strategies_root, sid)
+        if sid in self.active_strategy_ids:
+            raise Exception(f"strategy already active: {sid}")
+        self.active_strategy_ids.append(sid)
+        self._persist_active_ids()
+        self._emit_strategies()
+        self._emit_bot_status()
+        return {
+            "ok": True, "active_strategy_ids": list(self.active_strategy_ids),
+            "strategies": self._strategies_snapshot(),
+        }
+
+    def _cmd_strategy_unload(self, payload: dict) -> dict:
+        sid = payload["strategy_id"]
+        if sid not in self.active_strategy_ids:
+            raise Exception(f"strategy not active: {sid}")
+        self.active_strategy_ids = [x for x in self.active_strategy_ids if x != sid]
+        self._persist_active_ids()
+        self._emit_strategies()
+        self._emit_bot_status()
+        return {
+            "ok": True, "active_strategy_ids": list(self.active_strategy_ids),
+            "strategies": self._strategies_snapshot(),
+        }
 
     def _cmd_session_sync(self) -> dict:
         self._emit_event("bootstrap", self._bootstrap_payload())
@@ -471,6 +527,7 @@ class ReplayEngine:
             self._emit_orders()
         self._emit_history()
         self._emit_accounts()
+        self._emit_strategies()
         self._emit_bot_status()
         return {"ok": True}
 
@@ -557,8 +614,9 @@ class ReplayEngine:
                 "loaded": False, "active_account_id": self.active_account_id,
                 "account_switch_locked": bool(self.orders.open_orders),
                 "replay_speed": self.replay_speed, "engine_plugin": self.engine_plugin,
-                "account_backend": self.account_backend, "selected_bot_id": self.selected_bot_id,
+                "account_backend": self.account_backend,
                 "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
+                "active_strategy_ids": list(self.active_strategy_ids),
             })
             return
         dt = datetime.fromtimestamp(self.loaded.market_start_ts, tz=timezone.utc)
@@ -575,8 +633,9 @@ class ReplayEngine:
             "active_account_id": self.active_account_id,
             "account_switch_locked": bool(self.orders.open_orders),
             "replay_speed": self.replay_speed, "engine_plugin": self.engine_plugin,
-            "account_backend": self.account_backend, "selected_bot_id": self.selected_bot_id,
+            "account_backend": self.account_backend,
             "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
+            "active_strategy_ids": list(self.active_strategy_ids),
         })
 
     def _emit_chart_full(self) -> None:
@@ -600,10 +659,10 @@ class ReplayEngine:
 
     def _emit_bot_status(self) -> None:
         self._emit_event("bot.status", {
-            "selected_bot_id": self.selected_bot_id, "bots": list_bot_infos(),
             "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
             "strategies": self._strategies_snapshot(),
-            "loaded": self.selected_bot_id is not None,
+            "active_strategy_ids": list(self.active_strategy_ids),
+            "loaded": bool(self.active_strategy_ids),
         })
 
     def _account_payload(self) -> dict | None:

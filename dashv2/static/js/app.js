@@ -1,17 +1,21 @@
 import { initChart, relayoutChart, resizeChart, setCandles, updateCurrentCandle } from "./chart.js";
 import {
-    applyButtonPreviews, layoutReplayScale, renderAccounts, renderEnginePlugin, renderHistory,
+    applyButtonPreviews, layoutReplayScale, renderAccounts, renderBotPanel, renderEnginePlugin, renderHistory,
     renderOrders, renderOutcome, renderRoundPickerDays, renderRoundPickerHours, renderRoundPickerRounds,
     renderStakeButtons, renderTick, setDisconnectBanner, toggleHistorySession,
 } from "./render.js";
 
 const REPLAY_SPEED_KEY = "dashv2_replay_speed";
 const REPLAY_SPEEDS = [1, 2, 5];
+const LEFT_TAB_KEY = "dashv2_left_tab";
+const LEFT_TAB_IDS = ["candles-tab", "accounts-tab", "bot-tab"];
+const DEFAULT_LEFT_TAB = "accounts-tab";
 
 const state = {
     session: null, tick: null, orders: null, historyRows: [],
     accounts: [], activeAccountId: null, activeAccount: null,
-    bots: [], selectedBotId: null, botAttachAllowed: true, botActive: false,
+    strategies: [], activeStrategyIds: [], selectedStrategyId: null,
+    strategyType: "deterministic", botAttachAllowed: true, botActive: false,
     chartPrevious: [], chartCurrent: null, chartFreeView: false, scrubbing: false, wasPlaying: false,
     activeRoundTs: null, syncSizesOnNextOrders: false, loadedRoundDays: {},
     roundDays: [], roundNav: [], replaySpeed: loadStoredReplaySpeed(),
@@ -19,6 +23,7 @@ const state = {
 
 const socket = io({ transports: ["websocket", "polling"] });
 let accountModal = null;
+let strategyModal = null;
 
 
 function emitAck(event, payload = {}) {
@@ -35,6 +40,18 @@ function emitAck(event, payload = {}) {
 function loadStoredReplaySpeed() {
     const speed = Number(localStorage.getItem(REPLAY_SPEED_KEY));
     return REPLAY_SPEEDS.includes(speed) ? speed : 1;
+}
+
+
+function loadStoredLeftTab() {
+    const tabId = localStorage.getItem(LEFT_TAB_KEY);
+    return LEFT_TAB_IDS.includes(tabId) ? tabId : DEFAULT_LEFT_TAB;
+}
+
+
+function persistLeftTab(tabId) {
+    if (!LEFT_TAB_IDS.includes(tabId)) return;
+    localStorage.setItem(LEFT_TAB_KEY, tabId);
 }
 
 
@@ -213,6 +230,34 @@ function saveAccountModal() {
     req.then(() => accountModal.hide()).catch(alert);
 }
 
+function openStrategyModal(mode, strategy = null) {
+    document.getElementById("strategyModalMode").value = mode;
+    document.getElementById("strategyModalId").value = strategy?.id || "";
+    document.getElementById("strategyModalName").value = strategy?.name || "";
+    document.getElementById("strategyModalDescription").value = strategy?.description || "";
+    document.getElementById("strategyModalTitle").textContent = mode === "create" ? "New strategy" : "Edit strategy";
+    strategyModal.show();
+}
+
+function saveStrategyModal() {
+    const mode = document.getElementById("strategyModalMode").value;
+    const name = document.getElementById("strategyModalName").value.trim();
+    const description = document.getElementById("strategyModalDescription").value;
+    const strategyId = document.getElementById("strategyModalId").value;
+    if (!name) return alert("Name required");
+    let req;
+    if (mode === "create") {
+        req = emitAck("strategy.create", { name, type: state.strategyType, description });
+    } else {
+        req = emitAck("strategy.update", { strategy_id: strategyId, name, description });
+    }
+    req.then((res) => {
+        if (res.strategy) state.selectedStrategyId = res.strategy.id;
+        strategyModal.hide();
+        renderBotPanel(state);
+    }).catch(alert);
+}
+
 function selectLeftTab(tabId) {
     const el = document.getElementById(tabId);
     if (el) bootstrap.Tab.getOrCreateInstance(el).show();
@@ -225,8 +270,8 @@ socket.on("bootstrap", (payload) => {
     state.accounts = payload.accounts || [];
     state.activeAccountId = payload.active_account_id ?? null;
     state.activeAccount = state.accounts.find((a) => a.id === state.activeAccountId) || null;
-    state.bots = payload.bots || [];
-    state.selectedBotId = payload.selected_bot_id ?? null;
+    state.strategies = payload.strategies || [];
+    state.activeStrategyIds = payload.active_strategy_ids || [];
     state.botAttachAllowed = payload.bot_attach_allowed !== false;
     state.botActive = payload.bot_active === true;
     renderEnginePlugin(payload.engine_plugin);
@@ -243,9 +288,9 @@ socket.on("session", (payload) => {
     if (payload.playing != null) renderPlaybackButtons(payload.playing);
     if (payload.replay_speed != null) applyReplaySpeed(payload.replay_speed, { persist: false, notify: false });
     if (payload.active_account_id !== undefined) state.activeAccountId = payload.active_account_id;
-    if (payload.selected_bot_id !== undefined) state.selectedBotId = payload.selected_bot_id;
     if (payload.bot_attach_allowed !== undefined) state.botAttachAllowed = payload.bot_attach_allowed;
     if (payload.bot_active !== undefined) state.botActive = payload.bot_active === true;
+    if (payload.active_strategy_ids) state.activeStrategyIds = payload.active_strategy_ids;
     if (!payload.round_ended) document.getElementById("orderOutcome").textContent = "---";
     if (payload.loaded && payload.market_start_ts !== state.activeRoundTs) {
         state.activeRoundTs = payload.market_start_ts;
@@ -312,15 +357,19 @@ socket.on("round_end", (payload) => {
 socket.on("error", (payload) => alert(payload.message || "error"));
 
 socket.on("bot.status", (payload) => {
-    if (payload.bots) state.bots = payload.bots;
-    if (payload.selected_bot_id !== undefined) state.selectedBotId = payload.selected_bot_id;
     if (payload.bot_attach_allowed !== undefined) state.botAttachAllowed = payload.bot_attach_allowed;
     if (payload.bot_active !== undefined) state.botActive = payload.bot_active === true;
+    if (payload.active_strategy_ids) state.activeStrategyIds = payload.active_strategy_ids;
     if (payload.reason === "disconnected" || payload.reason?.startsWith?.("crashed")) {
-        state.selectedBotId = null;
         state.botActive = false;
     }
-    renderAccounts(state);
+    renderBotPanel(state);
+});
+
+socket.on("strategies", (payload) => {
+    if (payload.strategies) state.strategies = payload.strategies;
+    if (payload.active_strategy_ids) state.activeStrategyIds = payload.active_strategy_ids;
+    renderBotPanel(state);
 });
 
 
@@ -424,26 +473,90 @@ document.getElementById("accountSelect").addEventListener("change", (e) => {
     emitAck("account.select", { account_id: accountId }).catch(alert);
 });
 
-document.getElementById("botSelect").addEventListener("change", (e) => {
-    const botId = e.target.value || null;
-    emitAck("bot.select", { bot_id: botId }).then((res) => {
-        state.selectedBotId = res.selected_bot_id ?? null;
-        state.botAttachAllowed = res.bot_attach_allowed !== false;
-        state.botActive = res.bot_active === true;
-        renderAccounts(state);
-    }).catch(alert);
-});
-
 document.getElementById("botActiveSwitch").addEventListener("change", (e) => {
     const active = e.target.checked;
     emitAck("bot.set_active", { active }).then((res) => {
         state.botActive = res.bot_active === true;
-        renderAccounts(state);
+        renderBotPanel(state);
     }).catch((err) => {
         e.target.checked = state.botActive;
         alert(err);
     });
 });
+
+document.getElementById("strategyTypeSelect").addEventListener("change", (e) => {
+    state.strategyType = e.target.value;
+    state.selectedStrategyId = null;
+    renderBotPanel(state);
+});
+
+document.getElementById("strategyNewBtn").addEventListener("click", () => openStrategyModal("create"));
+
+document.getElementById("strategyEditBtn").addEventListener("click", () => {
+    const id = state.selectedStrategyId;
+    if (!id) return;
+    const cur = state.strategies.find((s) => s.id === id);
+    if (!cur) return;
+    openStrategyModal("edit", cur);
+});
+
+document.getElementById("strategyDeleteBtn").addEventListener("click", () => {
+    const id = state.selectedStrategyId;
+    if (!id) return;
+    emitAck("strategy.delete", { strategy_id: id }).then(() => {
+        state.selectedStrategyId = null;
+        renderBotPanel(state);
+    }).catch(alert);
+});
+
+document.getElementById("strategyModalSaveBtn").addEventListener("click", saveStrategyModal);
+
+document.getElementById("strategyCatalogList").addEventListener("click", (e) => {
+    const actionBtn = e.target.closest("[data-action]");
+    if (actionBtn) {
+        e.stopPropagation();
+        const id = actionBtn.dataset.id;
+        state.selectedStrategyId = id;
+        if (actionBtn.dataset.action === "load") activateStrategy(id);
+        return;
+    }
+    const item = e.target.closest(".strategy-catalog-item");
+    if (!item) return;
+    state.selectedStrategyId = item.dataset.id;
+    renderBotPanel(state);
+});
+
+document.getElementById("strategyCatalogList").addEventListener("dblclick", (e) => {
+    if (e.target.closest("[data-action]")) return;
+    const item = e.target.closest(".strategy-catalog-item");
+    if (!item) return;
+    const id = item.dataset.id;
+    state.selectedStrategyId = id;
+    if (state.activeStrategyIds.includes(id)) deactivateStrategy(id);
+    else activateStrategy(id);
+});
+
+document.getElementById("botActiveList").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-unload]");
+    if (!btn) return;
+    deactivateStrategy(btn.dataset.unload);
+});
+
+function activateStrategy(id) {
+    if (state.activeStrategyIds.includes(id)) return;
+    emitAck("strategy.load", { strategy_id: id }).then((res) => {
+        state.activeStrategyIds = res.active_strategy_ids || [];
+        renderBotPanel(state);
+    }).catch(alert);
+}
+
+function deactivateStrategy(id) {
+    if (!state.activeStrategyIds.includes(id)) return;
+    emitAck("strategy.unload", { strategy_id: id }).then((res) => {
+        state.activeStrategyIds = res.active_strategy_ids || [];
+        renderBotPanel(state);
+    }).catch(alert);
+}
 
 document.getElementById("newAccountBtn").addEventListener("click", () => openAccountModal("create"));
 document.getElementById("renameAccountBtn").addEventListener("click", () => {
@@ -456,7 +569,10 @@ document.getElementById("editAccountBtn").addEventListener("click", () => {
 });
 document.getElementById("accountModalSaveBtn").addEventListener("click", saveAccountModal);
 
-document.getElementById("candles-tab").addEventListener("shown.bs.tab", () => relayoutChart());
+document.getElementById("leftTabs").addEventListener("shown.bs.tab", (e) => {
+    persistLeftTab(e.target.id);
+    if (e.target.id === "candles-tab") relayoutChart();
+});
 
 renderStakeButtons();
 renderReplaySpeedButtons(state.replaySpeed);
@@ -464,7 +580,9 @@ initChart(document.getElementById("chartContainer"));
 layoutReplayScale();
 window.addEventListener("resize", () => { layoutReplayScale(); relayoutChart(); });
 accountModal = new bootstrap.Modal(document.getElementById("accountModal"));
+strategyModal = new bootstrap.Modal(document.getElementById("strategyModal"));
 renderOrders({ open: [] });
+selectLeftTab(loadStoredLeftTab());
 
 document.getElementById("openOrdersList").addEventListener("click", (e) => {
     const cancelBtn = e.target.closest(".cancel-order-btn");

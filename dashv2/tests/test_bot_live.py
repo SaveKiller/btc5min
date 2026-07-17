@@ -1,4 +1,4 @@
-"""Test actor/source, bot attach, ACL server helpers, random bot, live stub."""
+"""Test actor/source, bot attach, ACL server helpers, strategies JSON, live stub."""
 
 from __future__ import annotations
 
@@ -7,14 +7,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from dashv2.bots import list_bot_infos, load_bot
-from dashv2.bots.random_bot import RandomBot, create_bot
+from dashv2.bots import list_bot_infos
 from dashv2.config import load_config
 from dashv2.engine import ReplayEngine, _actor_from_payload
 from dashv2.engine.plugins.live import LiveEngine
 from dashv2.history import append_settled_orders, create_account, order_rows_from_ledger
 from dashv2.orders import OrderEngine
 from dashv2.server import _BOT_CMDS, _HUMAN_CMDS
+from dashv2.strategies import create_strategy, list_strategies, load_active_ids, strategies_dir
 from src.book import BookSnapshot
 
 
@@ -69,67 +69,57 @@ class TestBotAttach(unittest.TestCase):
         eng.evt_conn.send = MagicMock()
         return eng
 
-    def test_attach_allowed_without_round(self):
+    def test_set_active_without_strategies(self):
         eng = self._engine()
-        self.assertTrue(eng._bot_attach_allowed())
-        res = eng._cmd_bot_select({"bot_id": "random"})
-        self.assertEqual(res["selected_bot_id"], "random")
+        res = eng._cmd_bot_set_active({"active": True})
         self.assertTrue(res["bot_active"])
-        self.assertEqual(res["strategies"], [{"id": "random", "active": True}])
-
-    def test_detach_clears_strategies_snapshot(self):
-        eng = self._engine()
-        eng._cmd_bot_select({"bot_id": "random"})
-        res = eng._cmd_bot_select({"bot_id": None})
-        self.assertIsNone(res["selected_bot_id"])
-        self.assertEqual(res["strategies"], [])
-        self.assertFalse(res["bot_active"])
-
-    def test_attach_blocked_while_playing(self):
-        eng = self._engine()
-        eng.loaded = MagicMock()
-        eng.sec = 250
-        eng.playing = True
-        self.assertFalse(eng._bot_attach_allowed())
-        with self.assertRaises(Exception):
-            eng._cmd_bot_select({"bot_id": "random"})
-
-    def test_attach_allowed_while_paused_mid_round(self):
-        eng = self._engine()
-        eng.loaded = MagicMock()
-        eng.sec = 250
-        eng.playing = False
-        eng._round_advanced = True
-        self.assertTrue(eng._bot_attach_allowed())
-        res = eng._cmd_bot_select({"bot_id": "random"})
-        self.assertEqual(res["selected_bot_id"], "random")
-
-    def test_attach_allowed_after_round_end(self):
-        eng = self._engine()
-        eng.loaded = MagicMock()
-        eng.sec = 0
-        eng.playing = False
-        eng.round_ended = True
-        self.assertTrue(eng._bot_attach_allowed())
-        res = eng._cmd_bot_select({"bot_id": "random"})
-        self.assertEqual(res["selected_bot_id"], "random")
-
-    def test_set_active_toggles_and_blocks_bot_orders(self):
-        eng = self._engine()
-        eng._cmd_bot_select({"bot_id": "random"})
-        self.assertTrue(eng.bot_active)
-        res = eng._cmd_bot_set_active({"active": False})
-        self.assertFalse(res["bot_active"])
+        eng._require_bot_trading("bot")
+        eng._cmd_bot_set_active({"active": False})
         with self.assertRaises(Exception):
             eng._require_bot_trading("bot")
-        eng._require_bot_trading("user")
-        eng._cmd_bot_set_active({"active": True})
-        eng._require_bot_trading("bot")
 
-    def test_set_active_requires_selected_bot(self):
+    def test_load_unload_strategy(self):
         eng = self._engine()
+        created = eng._cmd_strategy_create({"name": "Alpha", "type": "deterministic", "description": "test"})
+        sid = created["strategy"]["id"]
+        res = eng._cmd_strategy_load({"strategy_id": sid})
+        self.assertEqual(res["active_strategy_ids"], [sid])
+        self.assertEqual(load_active_ids(eng.strategies_root), [sid])
         with self.assertRaises(Exception):
-            eng._cmd_bot_set_active({"active": True})
+            eng._cmd_strategy_load({"strategy_id": sid})
+        res = eng._cmd_strategy_unload({"strategy_id": sid})
+        self.assertEqual(res["active_strategy_ids"], [])
+
+    def test_load_allowed_while_playing(self):
+        eng = self._engine()
+        created = eng._cmd_strategy_create({"name": "Beta", "type": "inferential", "description": ""})
+        sid = created["strategy"]["id"]
+        eng.playing = True
+        res = eng._cmd_strategy_load({"strategy_id": sid})
+        self.assertEqual(res["active_strategy_ids"], [sid])
+
+    def test_delete_removes_from_active(self):
+        eng = self._engine()
+        created = eng._cmd_strategy_create({"name": "Gamma", "type": "agentic", "description": "x"})
+        sid = created["strategy"]["id"]
+        eng._cmd_strategy_load({"strategy_id": sid})
+        eng._cmd_strategy_delete({"strategy_id": sid})
+        self.assertEqual(eng.active_strategy_ids, [])
+        self.assertEqual(list_strategies(eng.strategies_root), [])
+
+
+class TestStrategiesRepo(unittest.TestCase):
+    def test_create_list_update_by_type(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = strategies_dir(Path(td))
+            a = create_strategy(root, "A", "deterministic", "alpha desc")
+            create_strategy(root, "B", "inferential", "")
+            self.assertEqual(len(list_strategies(root)), 2)
+            self.assertEqual(len(list_strategies(root, "deterministic")), 1)
+            from dashv2.strategies import update_strategy
+            updated = update_strategy(root, a["id"], "A2", "new desc")
+            self.assertEqual(updated["name"], "A2")
+            self.assertEqual(updated["description"], "new desc")
 
 
 class TestServerAcl(unittest.TestCase):
@@ -139,21 +129,16 @@ class TestServerAcl(unittest.TestCase):
         self.assertIn("order.place", _BOT_CMDS)
         self.assertIn("bot.set_active", _HUMAN_CMDS)
         self.assertNotIn("bot.set_active", _BOT_CMDS)
+        self.assertIn("strategy.create", _HUMAN_CMDS)
+        self.assertIn("strategy.update", _HUMAN_CMDS)
+        self.assertNotIn("bot.select", _HUMAN_CMDS)
+        self.assertNotIn("strategy.rename", _HUMAN_CMDS)
 
 
-class TestRandomBot(unittest.TestCase):
-    def test_discovery_and_tick_action(self):
+class TestBotDiscovery(unittest.TestCase):
+    def test_no_random_plugin(self):
         infos = list_bot_infos()
-        self.assertTrue(any(b["id"] == "random" for b in infos))
-        bot = load_bot("random")
-        self.assertIsInstance(bot, RandomBot)
-        tick = {"tradable": True}
-        session = {"tradable": True, "round_ended": False}
-        # seed 42: deterministic enough to get some places over many ticks
-        actions = []
-        for _ in range(50):
-            actions.extend(bot.on_tick(tick, session, {"open": []}))
-        self.assertTrue(any(a["cmd"] == "order.place" for a in actions))
+        self.assertFalse(any(b["id"] == "random" for b in infos))
 
 
 class TestLiveStub(unittest.TestCase):
