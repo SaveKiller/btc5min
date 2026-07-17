@@ -96,7 +96,8 @@ Se il task richiede comandi/eventi Socket.IO, ACL human/bot, payload o asse temp
 - **Ladder delta / countdown / PTB**: `render.js` (`renderTick`)
 - **Pulsanti BUY Up/Down, size, signal card** (vol, Rq, Rs, DWin): `index.html` + `render.js` (`applyButtonPreviews`, signal) + `orders.py` / `engine.py` (`_public_tick`, `_orient_dwin`)
 - **Open orders + Close / Cancel**: `render.js` (`renderOrders`) + `orders.py`
-- **Accounts + Bot Active**: `render.js` + comandi `account.*` / `bot.*`
+- **Accounts**: `render.js` + comandi `account.*`
+- **Bot / Strategy**: tab BOT — `render.js` (`renderBotSelect`) + comandi `bot.*`
 - **Closed order history + Export CSV**: `render.js` (`renderHistory`) + `history.py`; CSV generato lato client in `app.js`
 - **Stile / responsive**: `dashboard.css`
 

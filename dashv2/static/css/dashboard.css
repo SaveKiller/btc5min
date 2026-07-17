@@ -1,4 +1,4 @@
-:root { --canvas:#0d111a; --panel:#151d2b; --panel-2:#111925; --border:#344057; --muted:#94a3b8; --up:#22c55e; --down:#ef4444; --amber:#f59e0b; }
+:root { --canvas:#0d111a; --panel:#151d2b; --panel-2:#111925; --border:#344057; --muted:#94a3b8; --up:#22c55e; --down:#ef4444; --amber:#f59e0b; --sec-green:#7ae89a; --sec-azure:#7ec4f7; --sec-warn:#f5d547; --sec-critical:#e85d6a; }
 html, body { height:100%; }
 body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; font-variant-numeric:tabular-nums; }
 .app-shell { max-width:1800px; margin:auto; padding:1rem; height:100%; display:flex; flex-direction:column; box-sizing:border-box; }
@@ -37,6 +37,7 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .chart-wrap { position:relative; min-height:0; background:var(--panel-2); }
 #chartContainer { width:100%; height:100%; }
 .accounts-stack { min-height:0; overflow:hidden; }
+.bot-stack { min-height:0; overflow:hidden; }
 .account-manage-panel, .account-summary-panel { flex-shrink:0; }
 .account-select { min-width:180px; max-width:280px; }
 .account-summary-grid { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:.65rem; }
@@ -55,8 +56,16 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .signal-card .tiny, .signal-card .signal-value, .signal-card .model-details, .signal-card .side-risk { text-align:center; }
 .signal-value { font-size:1.6rem; font-weight:700; line-height:1.15; }
 .signal-side-label { font-size:1.25rem; font-weight:600; }
-.btn-up { --bs-btn-color:#dfffe9; --bs-btn-bg:#126b38; --bs-btn-border-color:#26c56b; --bs-btn-hover-bg:#168049; }
-.btn-down { --bs-btn-color:#ffe8e8; --bs-btn-bg:#8e272c; --bs-btn-border-color:#e44d55; --bs-btn-hover-bg:#a93037; }
+.btn-up {
+  --bs-btn-color:#dfffe9; --bs-btn-bg:#0a3a22; --bs-btn-border-color:#1a6b3e;
+  --bs-btn-hover-color:#dfffe9; --bs-btn-hover-bg:#126b38; --bs-btn-hover-border-color:#26c56b;
+  --bs-btn-active-bg:#168049; --bs-btn-active-border-color:#26c56b;
+}
+.btn-down {
+  --bs-btn-color:#ffe8e8; --bs-btn-bg:#4a1418; --bs-btn-border-color:#7a2a30;
+  --bs-btn-hover-color:#ffe8e8; --bs-btn-hover-bg:#8e272c; --bs-btn-hover-border-color:#e44d55;
+  --bs-btn-active-bg:#a93037; --bs-btn-active-border-color:#e44d55;
+}
 .order-row { background:#121a27; border:1px solid #3c4960; border-left:4px solid rgba(34,197,94,.6); }
 .order-detail-line { font-size:calc(.72rem + 5pt); line-height:1.35; }
 .order-row.down { border-left-color:rgba(239,68,68,.6); }
@@ -109,8 +118,23 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .timeline-block { padding-bottom:.15rem; margin:0 30px; }
 .timeline-wrap { position:relative; }
 .replay-scale { position:relative; height:1.45rem; font-size:1.1rem; font-weight:600; }
-.replay-scale span { position:absolute; transform:translateX(-50%); white-space:nowrap; }
-.timeline-sec-label { position:absolute; top:calc(100% - .1rem); transform:translateX(-50%); min-width:2.5rem; padding:.12rem .45rem; border:1px solid var(--border); border-radius:.375rem; background:var(--panel-2); font-weight:700; font-size:1.15rem; line-height:1.1; text-align:center; pointer-events:none; white-space:nowrap; }
+.replay-scale-bands { position:absolute; inset:0; pointer-events:none; z-index:0; }
+.replay-scale-band { position:absolute; top:0; bottom:0; }
+.replay-scale-band.sec-white { background:rgba(255,255,255,.08); border-radius:.25rem 0 0 .25rem; }
+.replay-scale-band.sec-green { background:rgba(122,232,154,.14); }
+.replay-scale-band.sec-azure { background:rgba(126,196,247,.14); }
+.replay-scale-band.sec-warn { background:rgba(245,213,71,.14); }
+.replay-scale-band.sec-critical { background:rgba(232,93,106,.14); border-radius:0 .25rem .25rem 0; }
+.replay-scale span { position:absolute; transform:translateX(-50%); white-space:nowrap; color:#fff; z-index:1; }
+.replay-scale span.sec-green { color:var(--sec-green); }
+.replay-scale span.sec-azure { color:var(--sec-azure); }
+.replay-scale span.sec-warn { color:var(--sec-warn); }
+.replay-scale span.sec-critical { color:var(--sec-critical); }
+.timeline-sec-label { position:absolute; top:calc(100% - .1rem); transform:translateX(-50%); min-width:2.5rem; padding:.12rem .45rem; border:1px solid var(--border); border-radius:.375rem; background:var(--panel-2); color:#fff; font-weight:700; font-size:1.15rem; line-height:1.1; text-align:center; pointer-events:none; white-space:nowrap; }
+.timeline-sec-label.sec-green { color:var(--sec-green); border-color:rgba(122,232,154,.45); }
+.timeline-sec-label.sec-azure { color:var(--sec-azure); border-color:rgba(126,196,247,.45); }
+.timeline-sec-label.sec-warn { color:var(--sec-warn); border-color:rgba(245,213,71,.45); }
+.timeline-sec-label.sec-critical { color:var(--sec-critical); border-color:rgba(232,93,106,.45); }
 .order-head-divider { height:1.6rem; width:1px; background:var(--border); flex:0 0 auto; }
 .order-head-stat { min-width:4.5rem; }
 .order-head-stat-time { min-width:7.5rem; }
@@ -119,8 +143,10 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .order-head-stat-value.delta-neg { color:var(--down); }
 #orderOutcome { color:var(--amber); }
 #orderSecToEnd { color:#fff; }
-#orderSecToEnd.sec-warn { color:#f5d547; }
-#orderSecToEnd.sec-critical { color:#e85d6a; }
+#orderSecToEnd.sec-green { color:var(--sec-green); }
+#orderSecToEnd.sec-azure { color:var(--sec-azure); }
+#orderSecToEnd.sec-warn { color:var(--sec-warn); }
+#orderSecToEnd.sec-critical { color:var(--sec-critical); }
 .reference-ladder { display:grid; grid-template-columns:80px 1fr 90px 1fr 80px; gap:.5rem; align-items:center; width:100%; padding:.65rem .75rem 1.65rem; background:var(--panel-2); border:1px solid var(--border); border-radius:.5rem; }
 .reference-cell { height:38px; display:flex; align-items:center; justify-content:center; text-align:center; border:1px solid var(--border); border-radius:.375rem; background:var(--bs-tertiary-bg); color:var(--bs-body-color); font-size:1.4rem; font-weight:600; }
 .reference-cell.time-remaining { font-size:1.5rem; font-weight:700; letter-spacing:.03em; }

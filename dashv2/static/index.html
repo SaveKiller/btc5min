@@ -35,10 +35,17 @@
     <span class="divider d-none d-md-block" aria-hidden="true"></span>
     <div class="toolbar-timeline flex-grow-1 d-flex align-items-center gap-2 min-w-0">
       <div class="timeline-block flex-grow-1 min-w-0">
-        <div class="replay-scale text-muted-app mb-1">
-          <span>300</span><span>280</span><span>260</span><span>240</span><span>220</span><span>200</span>
-          <span>180</span><span>160</span><span>140</span><span>120</span><span>100</span><span>80</span>
-          <span>60</span><span>40</span><span>20</span><span>0</span>
+        <div class="replay-scale mb-1">
+          <div class="replay-scale-bands" aria-hidden="true">
+            <div class="replay-scale-band sec-white" data-from="300" data-until="240"></div>
+            <div class="replay-scale-band sec-green" data-from="240" data-until="180"></div>
+            <div class="replay-scale-band sec-azure" data-from="180" data-until="120"></div>
+            <div class="replay-scale-band sec-warn" data-from="120" data-until="60"></div>
+            <div class="replay-scale-band sec-critical" data-from="60" data-until="0" data-inclusive="1"></div>
+          </div>
+          <span>300</span><span>280</span><span>260</span><span class="sec-green">240</span><span class="sec-green">220</span><span class="sec-green">200</span>
+          <span class="sec-azure">180</span><span class="sec-azure">160</span><span class="sec-azure">140</span><span class="sec-warn">120</span><span class="sec-warn">100</span><span class="sec-warn">80</span>
+          <span class="sec-critical">60</span><span class="sec-critical">40</span><span class="sec-critical">20</span><span class="sec-critical">0</span>
         </div>
         <div class="timeline-wrap">
           <input type="range" class="form-range" id="timelineSlider" min="0" max="300" step="1" value="0">
@@ -60,6 +67,9 @@
         </li>
         <li class="nav-item" role="presentation">
           <button class="nav-link active" id="accounts-tab" data-bs-toggle="tab" data-bs-target="#accountsPane" type="button" role="tab" aria-controls="accountsPane" aria-selected="true">ACCOUNTS</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="bot-tab" data-bs-toggle="tab" data-bs-target="#botPane" type="button" role="tab" aria-controls="botPane" aria-selected="false">BOT</button>
         </li>
       </ul>
       <div class="tab-content workspace-tab-content flex-grow-1 min-h-0">
@@ -86,16 +96,6 @@
                 <button class="btn btn-sm btn-outline-secondary" id="renameAccountBtn" type="button" disabled>RENAME</button>
                 <button class="btn btn-sm btn-outline-secondary" id="editAccountBtn" type="button" disabled>EDIT</button>
               </div>
-              <div class="px-3 pb-3 d-flex flex-wrap align-items-center gap-2">
-                <label class="tiny text-muted-app mb-0" for="botSelect">Bot</label>
-                <select class="form-select form-select-sm account-select" id="botSelect" aria-label="Select bot" style="max-width:14rem">
-                  <option value="">None</option>
-                </select>
-                <div class="form-check form-switch mb-0">
-                  <input class="form-check-input" type="checkbox" role="switch" id="botActiveSwitch" disabled>
-                </div>
-                <span class="tiny text-muted-app" id="botStatusLabel"></span>
-              </div>
             </article>
             <article class="app-panel account-summary-panel mb-2" id="accountSummaryPanel">
               <div class="panel-head"><span class="panel-title">Account summary</span></div>
@@ -113,6 +113,35 @@
                   <thead><tr><th>Session</th><th class="history-toggle-col"></th><th>Date</th><th>Time</th><th>Who</th><th>Direction</th><th>Outcome</th><th>Size</th><th>Entry</th><th>Exit</th><th class="text-end">Final</th><th class="text-end">PnL</th></tr></thead>
                   <tbody id="historyTableBody"></tbody>
                 </table>
+              </div>
+            </article>
+          </div>
+        </div>
+        <div class="tab-pane fade h-100" id="botPane" role="tabpanel" aria-labelledby="bot-tab" tabindex="0">
+          <div class="bot-stack h-100 d-flex flex-column">
+            <article class="app-panel bot-manage-panel mb-2">
+              <div class="panel-head">
+                <span class="panel-title">Bot and strategy management</span>
+              </div>
+              <div class="p-3 d-flex flex-wrap align-items-center gap-2">
+                <label class="tiny text-muted-app mb-0" for="botSelect">Strategy</label>
+                <select class="form-select form-select-sm account-select" id="botSelect" aria-label="Select strategy" style="max-width:14rem">
+                  <option value="">None</option>
+                </select>
+                <div class="form-check form-switch mb-0">
+                  <input class="form-check-input" type="checkbox" role="switch" id="botActiveSwitch" disabled>
+                  <label class="form-check-label tiny text-muted-app" for="botActiveSwitch">Active</label>
+                </div>
+                <span class="tiny text-muted-app" id="botStatusLabel"></span>
+              </div>
+              <div class="px-3 pb-3">
+                <p class="tiny text-muted-app mb-0">Il processo bot è sempre attivo. Qui carichi una strategy (shim attuale) e attivi/disattivi i trade.</p>
+              </div>
+            </article>
+            <article class="app-panel flex-grow-1 min-h-0">
+              <div class="panel-head"><span class="panel-title">Strategies</span></div>
+              <div class="p-3">
+                <p class="text-muted-app mb-0 tiny">Gestione multi-strategy in arrivo (load/unload, active per strategy).</p>
               </div>
             </article>
           </div>

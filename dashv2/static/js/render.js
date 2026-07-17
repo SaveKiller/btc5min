@@ -61,11 +61,31 @@ export function layoutReplayScale() {
     const scale = document.querySelector(".replay-scale");
     if (!scale) return;
     const max = Number($("timelineSlider").max);
-    scale.querySelectorAll("span").forEach((span) => {
+    const spans = [...scale.querySelectorAll(":scope > span")];
+    const bySec = new Map();
+    spans.forEach((span) => {
         const sec = Number(span.textContent);
         const pct = (max - sec) / max;
         span.style.left = timelineThumbLeft(pct);
+        bySec.set(sec, { pct, half: span.offsetWidth / 2 });
     });
+    scale.querySelectorAll(".replay-scale-band").forEach((band) => {
+        const from = bySec.get(Number(band.dataset.from));
+        const until = bySec.get(Number(band.dataset.until));
+        const inclusive = band.dataset.inclusive === "1";
+        const spanPct = until.pct - from.pct;
+        const endHalf = inclusive ? until.half : -until.half;
+        band.style.left = `calc(${from.pct * 100}% + ${(0.5 - from.pct) * TIMELINE_THUMB_PX}px - ${from.half}px)`;
+        band.style.width = `calc(${spanPct * 100}% + ${(from.pct - until.pct) * TIMELINE_THUMB_PX}px + ${from.half + endHalf}px)`;
+    });
+}
+
+
+function applySecBandClass(el, sec) {
+    el.classList.toggle("sec-green", sec <= 240 && sec > 180);
+    el.classList.toggle("sec-azure", sec <= 180 && sec > 120);
+    el.classList.toggle("sec-warn", sec <= 120 && sec > 60);
+    el.classList.toggle("sec-critical", sec <= 60);
 }
 
 
@@ -73,6 +93,7 @@ function updateTimelineSecLabel(sec, progress) {
     const slider = $("timelineSlider");
     const label = $("timelineSecLabel");
     label.textContent = String(sec);
+    applySecBandClass(label, sec);
     const min = Number(slider.min);
     const max = Number(slider.max);
     const pct = (progress - min) / (max - min);
@@ -272,8 +293,7 @@ export function renderTick(state) {
         $("refPtb").textContent = Math.round(session.ptb_chainlink).toLocaleString("en-US");
         const secEl = $("orderSecToEnd");
         secEl.textContent = String(session.sec);
-        secEl.classList.toggle("sec-warn", session.sec <= 120 && session.sec > 60);
-        secEl.classList.toggle("sec-critical", session.sec <= 60);
+        applySecBandClass(secEl, session.sec);
         $("orderRoundTime").textContent = formatRoundClockUtc(session.market_start_ts, session.sec);
         if (!session.round_ended) $("orderOutcome").textContent = "---";
         $("refCountdown").textContent = formatMmSs(session.sec);

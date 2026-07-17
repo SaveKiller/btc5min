@@ -675,7 +675,7 @@ Nessun bundler. Moduli ES in `static/js/`, vendor offline in `static/vendor/`.
 
 | File | Ruolo |
 |------|--------|
-| `static/index.html` | DOM: header replay, tabs left (CANDLES / ACCOUNTS), pannello ordini right, modal account |
+| `static/index.html` | DOM: header replay, tabs left (CANDLES / ACCOUNTS / BOT), pannello ordini right, modal account |
 | `static/css/dashboard.css` | Stile (token/misure mockup v38) |
 | `static/js/app.js` | Stato client, Socket.IO, binding controlli, CSV export |
 | `static/js/render.js` | Aggiornamento DOM (tick, ladder, ordini, picker, history, accounts) |
@@ -701,6 +701,7 @@ Slider: `pointerdown` → pause; `input` → `replay.preview`; `pointerup` → `
 | Open orders / Close / Cancel | `render.js` (`renderOrders`) |
 | History / CSV / session groups | `render.js` (`renderHistory`) + `app.js` |
 | Accounts | `render.js` + comandi `account.*` |
+| Bot / Strategy | tab BOT + `renderBotSelect` + comandi `bot.*` |
 | Stile | `dashboard.css` |
 
 ---
@@ -899,7 +900,7 @@ Attivazione:
 | `bot_process.py` | Processo bot Socket.IO; shell vuota + `strategy.load` |
 | `random_bot.py` + `.json` | Strategy di test deterministica-random |
 
-- Attach/detach strategy (`bot.select`): solo mentre `playing=False`; durante play la dropdown è disabilitata.
+- Attach/detach strategy (`bot.select`): solo mentre `playing=False`; durante play la dropdown è disabilitata. UI: tab **BOT** → pannello *Bot and strategy management*.
 - Toggle Active (`bot.set_active`): real-time; off → bot non emette trade + bridge/engine rifiutano `order.*` del bot; umano continua a tradare.
 - Kind legacy plugin: `code`, `config`, `ai` (solo `code` oggi). Tipi target: deterministic / inferential / agentic.
 
