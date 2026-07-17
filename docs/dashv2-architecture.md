@@ -96,15 +96,16 @@ File: [`dashv2/__main__.py`](../dashv2/__main__.py)
 
 1. `mp.set_start_method("spawn", force=True)`.
 2. `load_config()` da `dashv2/setup.json` (path risolti, `history_dir` creato se manca, `data_dir` deve esistere).
-3. Creazione di **due** `mp.Pipe(duplex=False)`:
+3. Se esiste `data_dir/restart` **prima** dello spawn → lo elimina (niente doppio boot da sentinella residua).
+4. Creazione di **due** `mp.Pipe(duplex=False)`:
    - `data_recv_cmd` ← `server_send_cmd` (comandi verso i dati);
    - `server_recv_evt` ← `data_send_evt` (response ed eventi verso il server).
-4. Avvio `Process(target=run_data_process, name="dashv2-data")`.
-5. Avvio `Process(target=run_server_process, name="dashv2-server")`.
-6. Il processo padre entra in un loop di watchdog ogni 2 s:
+5. Avvio `Process(target=run_data_process, name="dashv2-data")`.
+6. Avvio `Process(target=run_server_process, name="dashv2-server")`.
+7. Il processo padre entra in un loop di watchdog ogni 2 s:
    - se esiste `data_dir/restart` → cancella la sentinella, terminate+join dei figli, `os.execv(python, ["-m", "dashv2"])` (reload completo);
    - se uno dei due processi non è `alive` → `_shutdown()` (terminate + join timeout 3 s) e `sys.exit(0)`.
-7. SIGINT / SIGTERM → stesso `_shutdown`.
+8. SIGINT / SIGTERM → stesso `_shutdown`.
 
 ### Perché spawn + due pipe
 
@@ -473,7 +474,13 @@ Ack sincrono tranne `round.load` (ack immediato `{ok:true}`, errori via evento `
 | `account.create` | `{name, initial_balance_usd, note?}` | `{ok, account}` |
 | `account.rename` | `{account_id, name}` | `{ok, account}` |
 | `account.update` | `{account_id, name, initial_balance_usd, note?}` | `{ok, account}` |
+| `bot.list` | `{}` | `{ok, bots}` |
+| `bot.select` | `{bot_id\|null}` | `{ok, ...}` + spawn/kill runner |
+| `bot.set_active` | `{active: bool}` | `{ok, bot_active}` |
 | `session.sync` | `{}` | `{ok}` + re-push eventi |
+| `consult.send` | `{text, ...}` | relay peer (no pipe data) |
+
+ACL: human → tutti i comandi sopra; bot → solo `order.*` trade/size/preview + `session.sync` + `consult.send`. Trade bot rifiutati se `bot_active=False`.
 
 Errori: `{error: string}` in ack, oppure evento `error` per load fallito.
 
@@ -488,6 +495,9 @@ Errori: `{error: string}` in ack, oppure evento `error` per load fallito.
 | `orders` | dopo place/close/MTM | sizes, `open[]`, `closed[]`, `preview?` |
 | `history` | ledger + live closed | `rows[]`, `active_account_id` |
 | `accounts` | CRUD / settle | lista + `active` con stats |
+| `action` | dopo place/close/cancel | `actor`, `cmd`, `detail`, `sec` |
+| `bot.status` | select / active / disconnect | `loaded`, `selected_bot_id`, `bot_active`, `reason?` |
+| `consult.message` | relay `consult.send` | messaggio peer human↔bot |
 | `round_end` | sec 0 | `outcome`, `final_chainlink`, `settled_orders` |
 | `error` | load fallito (async) | `{message}` |
 
@@ -576,18 +586,26 @@ Env vars previsti per live reale (non letti dallo stub): `POLY_API_KEY`, `POLY_A
 
 | Percorso | Ruolo |
 |----------|--------|
-| `dashv2/__main__.py` | Launcher spawn + watchdog fail-fast |
-| `dashv2/server.py` | Bridge Flask-SocketIO |
+| `dashv2/__main__.py` | Launcher spawn + watchdog fail-fast + restart sentinella |
+| `dashv2/server.py` | Bridge Flask-SocketIO (human + bot, consult relay, spawn runner) |
 | `dashv2/engine.py` | Motore replay / comandi / eventi |
+| `dashv2/live_engine.py` | Stub `engine_mode: live` (stesso contratto IPC) |
 | `dashv2/ipc.py` | Envelope request/response/event |
 | `dashv2/rounds.py` | Indice, load merge, candele |
 | `dashv2/orders.py` | Simulazione CLOB |
-| `dashv2/history.py` | Account ledger JSON |
+| `dashv2/history.py` | Account ledger JSON (`history/accounts/`) |
 | `dashv2/txt_rows.py` | Parse indicatori dal `.txt` |
-| `dashv2/config.py` + `setup.json` | Config fail-hard |
-| `dashv2/static/**` | UI |
+| `dashv2/config.py` + `setup.json` | Config fail-hard (`engine_mode` incluso) |
+| `dashv2/bots/` | Plugin + `runner.py` co-controller Socket.IO |
+| `dashv2/static/index.html` | DOM (header replay, tabs CANDLES/ACCOUNTS, ordini) |
+| `dashv2/static/css/dashboard.css` | Stile (token/misure mockup v38) |
+| `dashv2/static/js/app.js` | Stato client, Socket.IO, binding, CSV |
+| `dashv2/static/js/render.js` | DOM tick/ladder/ordini/picker/history/accounts |
+| `dashv2/static/js/chart.js` | Lightweight Charts v5 — candele 5m |
+| `dashv2/static/vendor/` | Bootstrap, Icons, Socket.IO, Lightweight Charts (offline) |
 | `dashv2/tests/**` | Unit test |
 | `dashv2.bat` | Launcher Windows |
+| `docs/dashv2-architecture.md` | Questo documento (canonico) |
 | `docs/dash-prompt-v2.md` | Intent originale V2 |
 | `docs/traccia.txt` | Backlog UI/feature |
 
@@ -608,8 +626,9 @@ python -m unittest discover -s dashv2/tests
 | `test_seek_history.py` | prune_seek, cancel, account CRUD, payout/outcome rows, visible_orders |
 | `test_dwin_public.py` | Proiezione DWin nel tick pubblico |
 | `test_side_risk.py` | Risk per lato in tick |
+| `test_bot_live.py` | Bot list/select/active + live stub |
 
-Smoke manuale: `dashv2.bat` → load → play → seek → BUY → close o settlement → history/CSV.
+Smoke manuale: `dashv2.bat` → load → play → seek → BUY → close/cancel o settlement → history/CSV.
 
 Non esiste oggi un test e2e Socket.IO/browser.
 

@@ -1,0 +1,35 @@
+Nel documento @docs/dashv2-architecture.md c'è il punto 12.Protocollo Socket.io(browser <> server), cioè sono tutti i comandi e gli eventi che si scambiano il browser con il server. Anche il bot scambia comandi ed eventi con il server, vorrei che indicassi come 12B  il protocollo socket IO, bot <> server, alla stessa maniera, cioè con la stessa nomenclatura, la stessa tabella, indicando chiaramente i comandi e gli eventi, che saranno in numero minore. 
+
+Io vedo questi due protocolli come paralleli e molto simili. In pratica si può vedere il processo del bot come un altro client, che non gira su un browser ma in un processo separato e che esegue operazioni quasi come potrebbe fare il client browser umano. E' corretta questa visione? 
+
+Se stanno così le cose, vorrei che il processo del bot non fosse più instanziato in modo lazy, ma fosse un cittadino di prima classe, un processo che si spawna assieme al processo del server e dei dati, poi, se viene caricato un bot, agirà e parlerà col server, se non viene caricato un bot, questo processo non dirà nulla al server, ma rimarrà comunque connesso con lui. 
+
+Il modo che ha questo processo bot di parlare col server deve essere uguale a quello che il client ha per parlare col server, quindi con la stessa tipologia di comandi (il protocollo socket.io), anzi alcuni comandi potrebbero essere quasi uguali.
+
+Il processo del bot sarà quello che adesso è il runner e sarà un elemento fisso 
+e strutturale. Però senza una strategia caricata è una scatola vuota
+e inerme.
+
+Definiamo "Strategy" la strategia che viene 
+caricata dentro al bot. 
+
+Esisteranno 3 tipi di strategie:
+1) DETERMINISTICA
+regole statiche che prendono decisioni in base solo alla 
+concomitanza di precisi valori o intervalli delle variabili
+del round (es. dopo il sec 120 se la quota è maggiore di 70
+e il rischio statistico è minore di 5 => entra con 20$)
+
+2) INFERENZIALE
+Si costruirà un modello sulla base di tecniche di machine learning, come la random forest, o qualcosa di più complesso, con training di tante settimane, sia settimane di lighter (senza quote), sia settimane di polymarket (con quote), poi si farà girare questo modello fornendo i tick della simulazione, per ricevere in risposta le entrate e le uscite degli ordini.
+
+3) AGENTICA
+Dentro il processo del bot, nel caso di una strategia agentica, gira un'interfaccia di controllo per un agente. Un agente che, o in locale o in cloud, decide se aprire o chiudere ordini sulla base di tutte le informazioni relative al round secondo per secondo.
+
+Queste strategie avranno genesi e modalità diverse ma tutte le strategie useranno il processo del bot come interfaccia per fare operazioni nel round e ricevere tutti gli eventi possibili. 
+Le strategie verranno caricate dall'umano nel bot tramite 
+browser->server->bot oppure tramite file di setup letto allo start.
+Il server avrà cmq un normale scambio di messaggi reali degli ordini solo col bot, non direttamente con la strategia che rimarrà sempre una cosa
+che viene gestita dall'interno del bot.
+
+Il processo del bot deve prevedere di contenere più strategie con attivazione contemporanea. Quindi, per esempio, un ordine potrebbe essere aperto da una strategia e chiuso da un'altra.

@@ -35,7 +35,7 @@ E' inclusa una webapp dashboard che permetta di eseguire i replay dei round in u
 
 ## Dashboard (replay round)
 
-Interfaccia web per **replay** dei round salvati in `data/`: timeline 1 Hz, chart candele BTC, ladder delta, quote Up/Down, indicatori dal `.txt` (vol, Rq/Rs, DWinA/B), simulazione ordini sul book `.bin` con fee CLOB, history locale delle run completate.
+Interfaccia web per **replay** dei round salvati in `data/`: timeline 1 Hz (anche x2/x5), chart candele BTC, ladder delta, quote Up/Down, indicatori dal `.txt` (vol, Rq/Rs, DWinA/B), simulazione ordini sul book `.bin` con fee CLOB, ledger account in `dashv2/history/accounts/`, bot collaborativo opzionale (`dashv2/bots/`), stub `engine_mode: live`.
 
 **Avvio:** `dashv2.bat` oppure `python -m dashv2` dalla root repo → apre `http://127.0.0.1:8780/` (host/porta in `dashv2/setup.json`).
 
@@ -65,49 +65,9 @@ Comportamento del launcher:
 - **entrambi** — backend + static (sentinella + refresh)
 - **niente** — docs/test/file non runtime, o cambio già attivo senza reload
 
-### Architettura
+### Architettura e mappa file
 
-Due processi `multiprocessing` con `spawn`, avviati da `[dashv2/__main__.py](dashv2/__main__.py)`; comunicazione tramite due pipe unidirezionali (`[dashv2/ipc.py](dashv2/ipc.py)`: envelope `request` / `response` / `event`). Fail-fast: se un processo termina, l’altro viene killato.
-
-```
-Browser  ←Socket.IO→  dashv2/server.py (Flask, solo bridge)
-                              ↕ pipe
-                       dashv2/engine.py (unica fonte di verità)
-                              ↓
-              dashv2/rounds.py + orders.py + history.py + src/*
-```
-
-
-| Processo   | Modulo                                 | Ruolo                                                                                                         |
-| ---------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **Server** | `[dashv2/server.py](dashv2/server.py)` | Serve `static/`, bridge Socket.IO↔pipe; **nessuna** business logic; un solo client controller per sessione    |
-| **Dati**   | `[dashv2/engine.py](dashv2/engine.py)` | Round load, clock replay 1 Hz, seek, tick, chart, ordini, settlement, history; emette eventi verso il browser |
-
-
-Config obbligatoria in `[dashv2/setup.json](dashv2/setup.json)`, caricata da `[dashv2/config.py](dashv2/config.py)` (chiavi mancanti → eccezione; nessun default implicito): `data_dir`, `history_dir`, `host`, `port`, `chart_previous_candles`, `default_order_size_usd`, `stall_reconnect_sec`.
-
-### Mappa cartelle e file
-
-
-| Percorso                                                             | Contenuto                                                                  |
-| -------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `[dashv2/](dashv2/)`                                                 | Package Python dashboard                                                   |
-| `[dashv2/static/index.html](dashv2/static/index.html)`               | Layout DOM (header replay, chart, pannello ordini, history)                |
-| `[dashv2/static/css/dashboard.css](dashv2/static/css/dashboard.css)` | Stile (token/misure mockup v38)                                            |
-| `[dashv2/static/js/app.js](dashv2/static/js/app.js)`                 | Stato client, Socket.IO, binding controlli                                 |
-| `[dashv2/static/js/render.js](dashv2/static/js/render.js)`           | Aggiornamento DOM (tick, ladder, ordini, picker, history)                  |
-| `[dashv2/static/js/chart.js](dashv2/static/js/chart.js)`             | Lightweight Charts v5 — candele 5m, solo dati causali                      |
-| `[dashv2/static/vendor/](dashv2/static/vendor/)`                     | Bootstrap, Icons, Socket.IO client, Lightweight Charts (offline, no CDN)   |
-| `[dashv2/rounds.py](dashv2/rounds.py)`                               | Indice `.bin`, load merge bin+txt, candele precedenti, anti-spoiler picker |
-| `[dashv2/txt_rows.py](dashv2/txt_rows.py)`                           | Parser righe `data:` del `.txt` (vol, risk, DWinA/B, …)                    |
-| `[dashv2/orders.py](dashv2/orders.py)`                               | Simulazione BUY/SELL walk book, MTM, close, settlement                     |
-| `[dashv2/history.py](dashv2/history.py)`                             | JSON immutabili per run a sec 0 in `dashv2/history/` (gitignored)          |
-| `[dashv2/tests/](dashv2/tests/)`                                     | Test unitari dashboard                                                     |
-| `[dashv2.bat](dashv2.bat)`                                           | Launcher Windows                                                           |
-| `[docs/traccia.txt](docs/traccia.txt)`                               | Backlog UI/feature richieste dall’utente                                   |
-
-
-
+Se il task tocca processi, IPC, layout moduli, config o dove vivere il codice dashv2, **leggi e applica** [`docs/dashv2-architecture.md`](docs/dashv2-architecture.md) (due processi spawn + bot-runner opzionale, pipe, mappa file, principi P1–P12).
 
 ### Codice condiviso con il collector (`src/`)
 
@@ -119,41 +79,24 @@ La dashboard **non** legge i file round da sola con logica duplicata: riusa modu
 | `[src/binary_format.py](src/binary_format.py)` | `read_round()`, path `.txt`                            |
 | `[src/book.py](src/book.py)`                   | `BookSnapshot`                                         |
 | `[src/clob_api.py](src/clob_api.py)`           | `majority_side`, `market_buy_walk`, `market_sell_walk` |
+| `[src/risk.py](src/risk.py)`                   | `compute_side_risks` (Rq/Rs per lato)                  |
 | `[src/setup.py](src/setup.py)`                 | `VOLATILITY_WINDOWS_SEC`, `DELTA_WIN_TXT_COLUMNS`      |
 
 
 Ordini simulati: walk sul book ask/bid del tick corrente con `fee_rate` dell’header `.bin` — **non** il `gain%` precomputato nel `.txt`.
 
-### Protocollo [Socket.IO](http://Socket.IO)
+### Protocollo Socket.IO
 
-**Comandi client → server** (ack sincrono, tranne `round.load` che è async con evento `error` su fallimento):
-
-`round.load`, `rounds.list`, `replay.play`, `replay.pause`, `replay.seek`, `order.size`, `order.preview`, `order.place`, `order.close`, `session.sync`
-
-**Eventi server → client** (push dal processo dati):
-
-
-| Evento      | Payload tipico                                  |
-| ----------- | ----------------------------------------------- |
-| `bootstrap` | giorni round disponibili, size default          |
-| `session`   | round caricato, sec, playing, PTB, tradable     |
-| `tick`      | BTC, delta, quote, vol, Rq/Rs, DWin, previews   |
-| `chart`     | candele precedenti + candela corrente (causale) |
-| `orders`    | open/closed, size Up/Down, MTM                  |
-| `history`   | righe tabella + run visibili                    |
-| `round_end` | outcome, final BTC, ordini settled              |
-| `error`     | messaggio (es. load round fallito)              |
-
-
-Asse replay: `sec` = secondi mancanti a scadenza (300 → 0), come nei file round. Seek con `replay.seek` `{ sec, resume? }`; a sec 0 il round termina e scrive history.
+Se il task richiede comandi/eventi Socket.IO, ACL human/bot, payload o asse temporale UI (`sec` / seek / preview), **leggi e applica** la sezione 12 di [`docs/dashv2-architecture.md`](docs/dashv2-architecture.md).
 
 ### Layout UI (dove modificare cosa)
 
-- **Header** (timestamp, picker round, play/pause, timeline, prezzo BTC): `index.html` + `render.js` (`renderTick`, picker) + `app.js` (slider seek)
+- **Header** (timestamp, picker round, play/pause/speed, timeline, prezzo BTC): `index.html` + `render.js` (`renderTick`, picker) + `app.js` (slider seek/preview)
 - **Chart candele**: `chart.js` + eventi `chart` in `engine.py` (`RoundRepository.previous_candles`, `current_candle`)
 - **Ladder delta / countdown / PTB**: `render.js` (`renderTick`)
 - **Pulsanti BUY Up/Down, size, signal card** (vol, Rq, Rs, DWin): `index.html` + `render.js` (`applyButtonPreviews`, signal) + `orders.py` / `engine.py` (`_public_tick`, `_orient_dwin`)
-- **Open orders + Close**: `render.js` (`renderOrders`) + `orders.py`
+- **Open orders + Close / Cancel**: `render.js` (`renderOrders`) + `orders.py`
+- **Accounts + Bot Active**: `render.js` + comandi `account.*` / `bot.*`
 - **Closed order history + Export CSV**: `render.js` (`renderHistory`) + `history.py`; CSV generato lato client in `app.js`
 - **Stile / responsive**: `dashboard.css`
 
@@ -161,18 +104,18 @@ Asse replay: `sec` = secondi mancanti a scadenza (300 → 0), come nei file roun
 
 ### Anti-spoiler
 
-Fino al settlement del round in replay: il picker espone solo timestamp/label (`RoundRepository.list_picker_day`); outcome e prezzi finali restano nascosti. Le run del round attivo non compaiono in history finché non si arriva a sec 0 (`visible_history`).
+Fino al settlement del round in replay: il picker espone solo timestamp/label (`RoundRepository.list_picker_day`); outcome e prezzi finali restano nascosti. In history, le closed live della sessione corrente hanno `outcome=None` finché non si arriva a sec 0; il ledger su disco si aggiorna solo a fine round.
 
 ### Test e smoke
 
 
 | Comando                                       | Uso                                                                              |
 | --------------------------------------------- | -------------------------------------------------------------------------------- |
-| `python -m unittest discover -s dashv2/tests` | Test round load, IPC, seek/history, CLOB walk                                    |
-| `dashv2.bat`                                  | Smoke manuale: load round → play → seek → BUY → close o settlement → history/CSV |
+| `python -m unittest discover -s dashv2/tests` | Test round load, IPC, seek/history/account, CLOB walk, DWin, risk, bot/live stub |
+| `dashv2.bat`                                  | Smoke manuale: load round → play → seek → BUY → close/cancel o settlement → history/CSV |
 
 
-Per modifiche alla dashboard: partire da questa sezione e dai file indicati; non cercare altre cartelle `dash*` nel repo.
+Per modifiche alla dashboard: partire da questa sezione e da [`docs/dashv2-architecture.md`](docs/dashv2-architecture.md); non cercare altre cartelle `dash*` nel repo.
 
 ---
 
@@ -180,160 +123,7 @@ Per modifiche alla dashboard: partire da questa sezione e dai file indicati; non
 
 ## Formato file del round (bin e txt)
 
-Ogni round del mercato **BTC Up or Down 5m** produce una coppia di file: `.bin` (formato canonico, versione 6) e `.txt` (vista tabellare per analisi umana). Un round dura **300 secondi**; il campionamento mira a **un tick al secondo** (tipicamente ~300 tick, `sec` da 300 a 1).
-
-### Percorsi e nomi
-
-```
-data/<YYYY-MM-DD>/bin/btc5m_<market_start_ts>_<HHMM>.bin
-data/<YYYY-MM-DD>/txt/btc5m_<market_start_ts>_<HHMM>.txt
-```
-
-- `market_start_ts`: Unix UTC di inizio round (allineato allo slug Polymarket, es. `btc-updown-5m-1783238400`).
-- `HHMM`: ora UTC di inizio (solo comodità nel nome file).
-- Il `.txt` è generato dal `.bin` con `python -m src.convert`; le regole di formattazione del feed testuale sono centralizzate in `src/txt_format.py` (`render_round_txt`). I `warnings` nel `.txt` vengono preservati tra rigenerazioni.
-
-
-
-### Campionamento (cosa finisce in ogni tick)
-
-Un thread campiona **una volta per ogni secondo di countdown** (`sec` = secondi mancanti alla scadenza, arrotondato). Per ogni `sec` nuovo:
-
-1. Legge il prezzo BTC da **Chainlink** (feed RTDS Polymarket).
-2. Se il CLOB ha bid/ask su entrambi i token Up/Down → tick **completo** (quote + book).
-3. Altrimenti → tick **partial**: solo BTC Chainlink, quote = `NaN` nel `.bin` e `UP/DOWN ---` nel `.txt`.
-
-**PTB (price to beat)** usato per il delta durante il round: `ptb_gamma` se già arrivato da Gamma API, altrimenti `ptb_chainlink` (ultimo tick Chainlink con timestamp ≤ `market_start_ts`). Alla chiusura, `final_chainlink` è l’ultimo tick Chainlink con timestamp ≤ `market_end_ts`.
-
-Dopo il campionamento, `enrich_gains` calcola il `majority_gain` su ogni tick completo (vedi sotto). Poi scrittura `.bin` + `.txt`; un worker in background può patchare `ptb_gamma` / `final_gamma` nel header e rigenerare il `.txt`.
-
----
-
-
-
-### File `.bin` (versione 6)
-
-Magic `BTC5`, little-endian. Struttura: **header fisso** + **N record tick** (ciascuno seguito da uno **snapshot del book**).
-
-#### Header (76 byte)
-
-
-| Campo             | Tipo    | Significato                                                          |
-| ----------------- | ------- | -------------------------------------------------------------------- |
-| `magic`           | 4 char  | `BTC5`                                                               |
-| `version`         | uint16  | `6`                                                                  |
-| `market_start_ts` | uint32  | Inizio round (Unix UTC)                                              |
-| `market_end_ts`   | uint32  | Fine round (`start + 300`)                                           |
-| `outcome`         | uint8   | `0` unknown, `1` Up, `2` Down                                        |
-| `tick_count`      | uint32  | Numero di tick (≈ 300)                                               |
-| `fee_rate`        | float32 | Fee CLOB da Gamma (`feeSchedule.rate`)                               |
-| `ptb_price`       | float64 | BTC al primo tick campionato (`ticks[0].chainlink_btc`, arrotondato) |
-| `ptb_chainlink`   | float64 | PTB da feed Chainlink (ultimo tick ≤ start)                          |
-| `ptb_gamma`       | float64 | PTB ufficiale Polymarket/Gamma; `NaN` se non ancora patchato         |
-| `final_price`     | float64 | BTC all’ultimo tick campionato                                       |
-| `final_chainlink` | float64 | Prezzo finale Chainlink (ultimo tick ≤ end)                          |
-| `final_gamma`     | float64 | Prezzo finale Gamma; `NaN` finché non patchato                       |
-
-
-**Outcome:** se Gamma ha risposto in tempo → outcome Gamma; altrimenti `Up` se `final_chainlink >= ptb_chainlink`, `Down` altrimenti (warning nel `.txt`).
-
-#### Record tick (40 byte) + book snapshot
-
-Ogni tick:
-
-
-| Campo                  | Tipo    | Significato                                                               |
-| ---------------------- | ------- | ------------------------------------------------------------------------- |
-| `recv_ts_ms`           | uint64  | Timestamp locale di campionamento (ms)                                    |
-| `secs_to_expiry`       | float32 | Secondi reali mancanti a `market_end_ts` (non arrotondato)                |
-| `up_bid`, `up_ask`     | float32 | Miglior bid/ask token **Up** (0–1); `NaN` se partial                      |
-| `down_bid`, `down_ask` | float32 | Miglior bid/ask token **Down** (0–1); `NaN` se partial                    |
-| `chainlink_btc`        | float32 | Prezzo BTC USD da Chainlink al campionamento                              |
-| `majority_gain`        | float32 | ROI frazionario su acquisto $100 sul lato maggioritario; `NaN` se partial |
-| `chainlink_recv_ms`    | uint64  | Quando è arrivato l’ultimo aggiornamento Chainlink usato (ms)             |
-
-
-Subito dopo: **book snapshot** = 4× uint16 (conteggi livelli up_bids, up_asks, down_bids, down_asks) + per ogni livello `(price: float64, size: float64)`. I best bid/ask nel record tick devono coincidere con il primo livello dello snapshot (verificato da `verify`).
-
-Tick partial: quote e gain = `NaN`, snapshot vuoto (tutti i conteggi 0).
-
----
-
-
-
-### File `.txt` (vista tabellare)
-
-Sezione `header:` con metadati del round + contatori utili per il sanity check:
-
-- `stale_sec`: soglia da `setup.json` → `stall_reconnect_sec` (default 15).
-- `stale_ticks`: quanti tick hanno Chainlink “stale” (vedi colonna `delta`).
-- `vol_windows_sec`, `vol_min_changes`, `vol_unit`: parametri indici volatilità `VW` (vedi colonna `vol`).
-- `risk_model_version`, `risk_status`, `risk_target`, `risk_label_source`, `risk_ptb_source`, `risk_primary_vol_window_sec`, `risk_min_vol_coverage_ratio`, `risk_probability_buckets`, `risk_variants`: metadati indice di rischio R (vedi colonna `risk`).
-- `delta_win_*`: versione modello v2, metodi `[band, logistic]`, hash `hour_bands`, target, intervallo sec, periodo training (vedi `docs/indicator_delta_win.md`).
-- `intraday: Hk`: fascia oraria UTC da `hour_bands.json`.
-- `warnings`: es. outcome provvisorio, `ptb_gamma` mancante, mismatch outcome gamma vs chainlink.
-
-Sezione `data:` — righe ordinate per `sec` **decrescente** (300 → 1):
-
-```
-sec  time  quote      delta    gain%             DWinA DWinB       btc  vol                         risk
-240  4:00  DOWN  61c   -28$  62.3%  66% [n=535]   93%  97206$  V30 18  V60 22  V120 31  Rq 5   Rs 4
-```
-
-
-| Colonna   | Calcolo / significato                                                                                                                                                                                                                                                                                                                                                                                                |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **sec**   | `floor(secs_to_expiry + 0.5)` — secondi mancanti alla scadenza                                                                                                                                                                                                                                                                                                                                                       |
-| **time**  | `sec` in `M:SS`                                                                                                                                                                                                                                                                                                                                                                                                      |
-| **quote** | Se tick completo: probabilità implicita = `round(mid_bid_ask × 100)` in centesimi; mostra il lato con probabilità più alta (`UP 75c`, `DOWN 60c`, oppure `---- 50c` se pari). Se partial: `UP ---` o `DOWN ---` (lato stimato da ultimo tick completo o da `chainlink` vs PTB)                                                                                                                                       |
-| **delta** | `round(chainlink_btc - ptb_chainlink)` in USD, con segno (`+12$`, `-5$`, `0$`). Se Chainlink stale: `---` (campione più vecchio di `stall_reconnect_sec` rispetto a `chainlink_recv_ms`)                                                                                                                                                                                                                             |
-| **gain%** | `majority_gain × 100`, una cifra decimale (`8.5%`). `---` se partial. Vedi formula sotto                                                                                                                                                                                                                                                                                                                             |
-| **DWinA** | Intero % + `[n=N]` (pool empirico per fascia **H**, finestra fissa ±2 implicita), es. `87% [n=39]`; slot con `p_win` solo se `n ≥ delta_win_window_min_samples` (default 30); se `n` sotto soglia: spazi al posto della % e `[n=N*]` allineato ( `[n=29*]`); `---` se nessun pool locale; calcolato ogni secondo da `delta_win_sec_start` a `delta_win_sec_end`.                                                     |
-| **DWinB** | Intero %, es. `93%`; stesso intervallo sec; colonna opzionale.                                                                                                                                                                                                                                                                                                                                                       |
-| **btc**   | `chainlink_btc` arrotondato all'intero, seguito da `$` senza spazio (es. `97235$`)                                                                                                                                                                                                                                                                                                                                   |
-| **vol**   | Token `VW N` per ogni `W` in `setup.json` → `volatility_windows_sec` (es. `V30 18`, `V60 22`). Volatilità realizzata trailing in USD, intero arrotondato (`V30 0` se BTC fermo). `VW ---` se dati insufficienti o Chainlink stale sulla riga. Non è previsione forward.                                                                                                                                              |
-| **risk**  | `Rq N` rischio di quota (`Pq0 = 1 − quota normalizzata del lato maggioritario` → bucket 1–9). `Rs N` rischio statistico (`Pz = Φ(−z)` con `z = delta_signed / (sigma_W × √secs_to_expiry)`, finestra primaria W60). `-` al posto del numero se non calcolabile. Ingresso eseguibile quando entrambi hanno valore numerico (nessuna lineetta). Stato `experimental_uncalibrated` finché non c'è calibrazione holdout. |
-
-
-**Indice R (rischio perdita a settlement):** target = outcome ufficiale header ≠ lato maggioritario scelto. Calcolo live-safe in `src/risk.py`, solo dati passati. Bucket preliminari da `risk_probability_buckets` in `setup.json`. Valutazione: `python scripts/eval_risk.py [data_dir]` → report in `data/reports/risk_eval_<timestamp>.json`. Test: `python -m unittest tests.test_risk`.
-
-**Indici VW (volatilità intra-round):** calcolati in `convert` su `chainlink_btc`, solo tick già osservati nel round (trailing/live-safe). Per ogni secondo `sec` e finestra `W`: tick con `sec' ∈ [sec, sec+W−1]` (asse countdown: presente + passato, mai futuro); `Δ = btc_j − btc_{j−1}` tra coppie consecutive nella finestra; `VW = round(std(Δ) × √(n_pairs))`. Configurazione in `setup.json`: `volatility_windows_sec` (array, es. `[30, 45]`), `volatility_min_changes` (minimo variazioni nella finestra). Unità USD documentata in header (`vol_unit: usd_trailing`). Confronto utile con `|delta|`: se `|delta| < VW` il movimento vs PTB è ancora nel rumore recente.
-
-**Lato maggioritario** (per quote e gain): confronto dei mid `((up_bid+up_ask)/2)` vs `((down_bid+down_ask)/2)`; vince Up se `up_mid >= down_mid`.
-
-**majority_gain** (solo tick completi): simula un **market buy da $100** (`BET_USD=100`) sul lato maggioritario, camminando il book ask con fee Polymarket (`fee_rate × price × (1-price)` per livello). ROI = `(payout_usd / 100) - 1` (es. `0.085` → `8.5%` nel `.txt`). Se il book ask è vuoto ma il token è a ≥99c, usa il best ask sintetico.
-
-**delta nel** `.txt` usa sempre `ptb_chainlink` dell’header (non `ptb_gamma`), per coerenza con il feed live.
-
----
-
-
-
-### Strumenti utili
-
-
-| Comando                                  | Uso                                                                                                                   |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `python -m src.reader <file.bin>`        | Riepilogo header, range quote/gain, primi/ultimi tick; `--csv`, `--book-sec N` per dump book                          |
-| `python -m src.convert <file.bin         | dir>`                                                                                                                 |
-| `python -m src.verify <file.bin          | dir>`                                                                                                                 |
-| `python scripts/eval_risk.py [data_dir]` | Preview metriche R (Brier, AUC, reliability) su round locali; non statisticamente significativa su una sola giornata. |
-| `python -m unittest tests.test_risk`     | Test anti-leakage, batch/live e casi limite indice R.                                                                 |
-
-
-Per analisi programmatica preferire `read_round()` in `src/binary_format.py` → `(header, ticks ndarray N×9, list[BookSnapshot])`.
-
----
-
-
-
-### Note per strategie / altri agenti
-
-- **sec** è l’asse temporale principale: “quanto manca alla scadenza”, non il timestamp assoluto.
-- **quote** riflette il mercato CLOB; **delta** riflette Chainlink vs PTB. Disallineamenti (quota maggioritaria vs segno del delta) sono pattern di trading rilevanti (vedi `docs/patterns.txt`).
-- Tick **partial** ≠ bug automatico: spesso assenza di liquidità (delta alto, mercato a 99c+) o warmup book; usare `scripts/analyze_clob_partial.py` per classificare.
-- Round **completo** atteso: `tick_count == 300`, primo tick `sec ≥ 295`, ultimo `sec ≤ 10`, nessun errore `verify`.
-- Campi `*_gamma` nel header possono arrivare in ritardo via `GammaPatchWorker`; finché `NaN`, affidarsi a Chainlink per outcome e PTB live.
+Se il task richiede di leggere, scrivere, parsare o validare file `.bin` / `.txt` dei round Polymarket, **leggi e applica** [`docs/round-format.md`](docs/round-format.md) (struttura binaria v6, colonne `.txt`, campionamento, strumenti CLI, note per strategie).
 
 ---
 
@@ -341,44 +131,7 @@ Per analisi programmatica preferire `read_round()` in `src/binary_format.py` →
 
 ## Round sintetici Lighter (feed `.txt` ausiliario)
 
-Dataset separato dai round Polymarket reali. Percorso intraround da mid top-of-book Lighter; label e audit da Gamma quando disponibile.
-
-Radice dati tick in `setup.json` → `ticks_root` (default `H:\ticks\`).
-
-**Output:** `<ticks_root>/lighter-rounds5m/<settimana_ISO>/btc5m_<market_start_ts>_<HHMM>.txt`  
-**Input:** `<ticks_root>/lighter-fullrawticks/btc/<settimana_ISO>/raw-btc-YYYY-MM-DD.csv`  
-**Cache Gamma:** `<ticks_root>/lighter-rounds5m/_gamma_cache.jsonl` — prefetch giornaliero via `src/lighter_gamma.py` (`GET /events/keyset?series_id=10684`, ~3 richieste/giorno); lock solo su scrittura cache con pool parallelo.
-
-
-| Comando                                                                                                            | Uso                                                                                                                                                                         |
-| ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `python scripts/build_lighter_rounds.py test-day <csv> <out_dir> [cache_name]`                                     | Build di un solo giorno (controllo qualità)                                                                                                                                 |
-| `python scripts/build_lighter_rounds.py all <input_root> <out_dir> <workers> [cache_name]`                         | Build completo; `<workers>` = processi paralleli (1 = sequenziale, una giornata CSV per worker)                                                                             |
-| `python scripts/compare_lighter_gamma_cache.py <baseline_cache> <bulk_cache> <baseline_dir> <bulk_dir> <week_iso>` | Confronto regressione cache + `.txt`                                                                                                                                        |
-| `python -m src.listats [summary]`                                                                                  | Sommario tabellare del dataset Lighter (vedi sotto)                                                                                                                         |
-| `build_lighter_rounds.bat [workers]`                                                                               | Batch Windows (default 8 worker); **salta** i `.txt` già presenti in output                                                                                                 |
-| `python scripts/backfill_lighter_intraday.py [rounds_root] [workers] [--dry-run]`                                  | Aggiunge `intraday: Hk` agli header storici (idempotente; non tocca `data:`)                                                                                                |
-| `python scripts/backfill_lighter_delta_win.py [rounds_root] [workers] [--dry-run]`                                 | Aggiunge header modello v2 + colonne `DWinA` / `DWinB` (idempotente)                                                                                                        |
-| `python scripts/study_delta_win_v2.py [workers]`                                                                   | Fit metodo A (pool empirico per H + espansione finestra) + B (logistic) su Lighter train weeks → `models/delta_win_v2.json`; calibrazione soglia + report; default 8 worker |
-| `python scripts/eval_delta_win_v2_compare.py [data_dir]`                                                           | Report comparativo A vs B su round Chainlink (label Gamma)                                                                                                                  |
-| `python scripts/backfill_real_delta_win.py [data_dir] [workers] [--dry-run]`                                       | Rifit `study_delta_win_v2.py` poi rigenera `.txt` reali da `.bin` con `DWinA`/`DWinB` (idempotente; `--dry-run` salta il fit)                                               |
-| `python scripts/probe_delta_win_bands.py [data_dir]`                                                               | Win rate osservato per finestra |delta| ±2 sui reali (supporto metodo A)                                                                                                    |
-| `python scripts/study_delta_win.py`                                                                                | Studio modelli v1 (legacy) → `models/delta_win_v1.json`                                                                                                                     |
-| `python scripts/eval_delta_win_real.py [data_dir]`                                                                 | Valutazione esterna v1 su round Chainlink (legacy)                                                                                                                          |
-| `backfill_lighter_intraday.bat [workers]`                                                                          | Batch Windows backfill header `intraday` su `H:\ticks\lighter-rounds5m`                                                                                                     |
-
-
-**Statistiche (**`src/listats.py`**).** Modulo dedicato all’analisi del dataset Lighter: funzioni con prefisso `li_` (es. `li_summary`, `li_rounds_root`, `read_lighter_header`). Legge gli header dei `.txt` sotto `<ticks_root>/lighter-rounds5m/`; estendere qui nuove metriche derivate dallo studio dei round sintetici. CLI: `python -m src.listats` o `python -m src.listats summary` — output a sezioni tabellari. Prima statistica implementata: `li_summary` (conteggio round, intervallo temporale, distribuzione outcome gamma/lighter, `outcome_agreement`, completezza tick, gap `ptb_gamma`/`final_gamma`, `move_error` medio e move_error medio, round per settimana ISO).
-
-Header: `source: lighter_synthetic`; `intraday: Hk` (fascia oraria da `hour_bands.json` / `hour_band(market_start_ts)`); campi audit `outcome_lighter`, `outcome_agreement: TRUE` / `FALSE`, `delta_lighter`, `delta_chainlink`, `move_error`. Colonna `outcome` = Gamma ufficiale se presente, altrimenti proxy Lighter. `ptb_chainlink` / `final_chainlink` / colonna `btc` = valori Lighter. Header `delta_win_*`: versione modello `2`, metodi `[band, logistic]`, hash `hour_bands`, target, intervallo sec, periodo training, stato `synthetic_calibrated` (vedi `docs/indicator_delta_win.md`).
-
-Tabella `data:` **senza** `gain%` e **senza** `Rq`; colonne `DWinA`/`DWinB` (se in `delta_win_txt_columns`), poi `btc`, `vol`, `Rs`.
-
-Filtro build: griglia causale completa (301 confini); round 23:55 UTC esclusi (confine finale oltre il giorno CSV). Non usare `convert` / `verify` su questi file.
-
-Filtrare round discordanti: `grep -l "outcome_agreement: FALSE" <ticks_root>/lighter-rounds5m/**/*.txt`
-
-Build incrementale: se `btc5m_<start_ts>_<HHMM>.txt` esiste già in output, il round viene saltato (`present` nel log). Giornata interamente presente → nessuna lettura CSV. `skipped` = griglia causale incompleta.
+Se il task riguarda build, backfill, analisi o studio dei round sintetici Lighter (dataset `.txt` ausiliario, `src/listats`, delta_win su Lighter), **leggi e applica** [`docs/lighter-rounds.md`](docs/lighter-rounds.md).
 
 ---
 
@@ -387,91 +140,4 @@ poly (proxmox id 103, ip 10.1.1.73) che è pensata per stare attiva 24h e salvar
 
 ## Sanity check round
 
-Se l'utente chiede un **sanity check** (o controllo/sanità dei file round), eseguire **tutti** i controlli sotto sui `.bin` / `.txt` locali in `data/` (dopo `sync.bat` se serve aggiornare dal server). Comprende sia **Chainlink stall** sia **quote partial CLOB**.
-
-Parametri collector attuali in `setup.json` (per interpretare stall/stale): `stall_reconnect_sec`, `ping_interval_sec`, `reconnect_cooldown_sec`.
-
-### 1. Log collector (Chainlink stall, round completi, verify)
-
-Se presente `data/collector-poly.log` (o il log passato come argomento):
-
-```
-python scripts/analyze_collector_log.py
-python scripts/analyze_collector_log.py <path_log>
-```
-
-Controllare e riportare:
-
-
-| Metrica                       | Cosa significa                                                                                                                         |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `chainlink stall`             | Gap tick BTC > `stall_reconnect_sec` → reconnect forzato. Contare eventi e **quali round erano in campionamento** (`sampling_active`). |
-| `chainlink ws error`          | Chiusura WS (es. `Going away` 1001). Idem: correlare con round attivi.                                                                 |
-| `ROUND A RISCHIO CHAINLINK`   | Round che hanno avuto stall/error **durante** il campionamento — candidati a prezzo BTC bloccato nel `.bin`/`.txt`.                    |
-| `verify ERROR`                | Mismatch outcome / integrità (es. V13 outcome). Elencare `start_ts` e messaggio.                                                       |
-| `round failed` / `no seconds` | Round persi del tutto.                                                                                                                 |
-| `done con tick != 300`        | Round incompleti.                                                                                                                      |
-| `outcome=computed`            | Settlement provvisorio (gamma timeout): non è un bug feed, ma affidabilità outcome inferiore.                                          |
-| `clob ws drop`                | Disconnect CLOB — **non** basta da solo per diagnosi; correlare con analisi partial (§2).                                              |
-
-
-**Verifica manuale sui round a rischio Chainlink:** per ogni `start_ts` in `ROUND A RISCHIO CHAINLINK`, aprire `data/txt/btc5m_<ts>.txt` (o `data/**/txt/`) e controllare:
-
-- header `warnings` (outcome provvisorio, ptb_gamma mancante, …)
-- righe con `delta: ---` (solo su `.txt` v6 rigenerati; indica chainlink stale oltre `stall_reconnect_sec`)
-- header `stale_ticks` / `stale_sec` (solo v6)
-- **BTC fermo**: ≥4 tick consecutivi con stesso prezzo `NNNNN$` (il log script ha `analyze_txt_files` per questo pattern)
-
-Lo script analizza automaticamente in coda i `.txt` dei round in `ROUND A RISCHIO CHAINLINK` e dei `verify ERROR` (btc piatto, `delta_stale`, `stale_ticks`, warnings).
-
-**Interpretazione stall (sessione baseline ~252 round):** gli stall sono attesi occasionalmente; sono un problema solo se il round a rischio mostra nel `.txt` BTC piatto per molti secondi **a metà round** con mercato ancora contestabile, o verify error sullo stesso `start_ts`. Dopo tuning `stall_reconnect_sec: 15` gli stall dovrebbero essere più brevi.
-
-### 2. Quote partial CLOB
-
-```
-python scripts/analyze_clob_partial.py 100
-python scripts/analyze_clob_partial.py 100 <data_dir> <log_collector>
-```
-
-Il primo argomento è la soglia `|delta|` in USD (100 = regola attuale).
-
-Leggere il report in `data/reports/clob_partial_<timestamp>.json` e confrontarlo con `data/reports/clob_partial_baseline.json`.
-
-
-| Verdetto         | Significato                                                                                                                          |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `no_liquidity`   | Normale: delta alto, mercato a 99c+, o pochi tick a delta basso con max delta alto. Nessuna liquidità utile, **non** è bug CLOB.     |
-| `warmup`         | Partial solo all'apertura round (sec ≥ 240): book non ancora pronto.                                                                 |
-| `certainty_skew` | Partial solo negli ultimi 60s con quota 97–98c, o book sbilanciato (bid senza ask).                                                  |
-| `clob_suspect`   | Partial sostenuto (≥10 tick) a delta basso nella fascia centrale (sec 60–240): possibile problema feed CLOB — verificare sul `.txt`. |
-| `mixed`          | Pattern non chiaro — revisione manuale.                                                                                              |
-
-
-**Non** classificare come problema CLOB i round in cui la quota manca perché il delta è già molto alto (outcome quasi deciso) o il mercato è a 99c+: è assenza di liquidità, non disconnect.
-
-### 3. Cosa riportare all'utente
-
-Sintesi unica con:
-
-- round totali / completati / con tick ≠ 300
-- conteggio stall, ws error chainlink, ws drop CLOB, verify error, outcome computed
-- elenco round a rischio chainlink + esito controllo `.txt` (btc piatto, stale, warnings)
-- conteggio verdetto partial (`no_liquidity`, `warmup`, `certainty_skew`, `clob_suspect`, `mixed`)
-- eventuali `clob_suspect` / `mixed` da rivedere manualmente
-- discrepanze vs `clob_partial_baseline.json`
-
-
-
-### Baseline e review manuali
-
-- `data/reports/clob_partial_baseline.json` — metodologia CLOB, review manuali sessione 252 round, round ancora `pending_reviews`.
-- Per aggiornare le review CLOB: aggiungere voci in `manual_reviews`, togliere da `pending_reviews`.
-- Ogni run `analyze_clob_partial.py` scrive un report timestampato in `data/reports/`.
-
-
-
-### Criterio di esito
-
-- **OK**: nessun round fallito; tutti i `done` a 300 tick; nessun `verify ERROR`; nessun `clob_suspect`; stall/ws error senza danni visibili sui `.txt` dei round a rischio (niente BTC piatto lungo a metà round con mercato aperto).
-- **Da indagare**: `verify ERROR`; tick ≠ 300; round a rischio chainlink con BTC piatto prolungato o molti `delta: ---`; `clob_suspect` > 0; `mixed` con delta basso e mercato ancora contestabile (<97c).
-
+Se l'utente chiede un **sanity check** (o controllo/sanità dei file round), **leggi e applica** [`docs/sanity-check-round.md`](docs/sanity-check-round.md) ed esegui tutti i controlli descritti (log collector Chainlink, quote partial CLOB, criteri di esito).
