@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import threading
 import uuid
 from multiprocessing.connection import Connection
@@ -18,6 +16,7 @@ _STATIC = Path(__file__).resolve().parent / "static"
 _ACK_TIMEOUT_SEC = 30.0
 _ROUND_LOAD_TIMEOUT_SEC = 120.0
 
+# Comandi che il bot può emettere verso il server (protocollo 12B).
 _BOT_CMDS = frozenset({
     "order.size", "order.preview", "order.place", "order.close", "order.cancel",
     "session.sync", "consult.send",
@@ -46,13 +45,11 @@ class ServerBridge:
         self._human_sid: str | None = None
         self._bot_sid: str | None = None
         self._sid_role: dict[str, str] = {}
-        self._bot_proc: subprocess.Popen | None = None
-        self._bot_proc_lock = threading.Lock()
         self._bot_active = False
+        self._selected_strategy_id: str | None = None
         self._register_routes()
         self._register_socketio()
         threading.Thread(target=self._evt_reader_loop, daemon=True).start()
-        threading.Thread(target=self._bot_watch_loop, daemon=True).start()
 
     def run(self) -> None:
         self.socketio.run(self.app, host=self.cfg["host"], port=self.cfg["port"], allow_unsafe_werkzeug=True)
@@ -70,6 +67,23 @@ class ServerBridge:
             if sid:
                 self.socketio.emit(name, payload, to=sid)
 
+    def _forward_strategy_load(self, strategy_id: str | None) -> None:
+        """Stato già in engine; push esplicito al processo bot."""
+        self._selected_strategy_id = strategy_id
+        if self._bot_sid is None:
+            return
+        self.socketio.emit("strategy.load", {"strategy_id": strategy_id}, to=self._bot_sid)
+
+    def _resync_bot_strategy(self) -> None:
+        """Al (ri)connect del bot: riallinea strategy dallo stato engine."""
+        try:
+            st = self._request_to_data("bot.list", {}, actor="user")
+        except Exception as e:
+            print(f"bot resync failed: {e}", flush=True)
+            return
+        self._bot_active = bool(st.get("bot_active"))
+        self._forward_strategy_load(st.get("selected_bot_id"))
+
     def _register_socketio(self) -> None:
         @self.socketio.on("connect")
         def on_connect(auth=None):
@@ -85,6 +99,7 @@ class ServerBridge:
                 if self._bot_sid is not None:
                     return False
                 self._bot_sid = request.sid
+                threading.Thread(target=self._resync_bot_strategy, daemon=True).start()
             self._sid_role[request.sid] = role
 
         @self.socketio.on("disconnect")
@@ -101,8 +116,11 @@ class ServerBridge:
             elif role == "bot" and sid == self._bot_sid:
                 self._bot_sid = None
                 print("bot client disconnected", flush=True)
-                self._broadcast("bot.status", {"loaded": False, "reason": "disconnected", "selected_bot_id": None, "bot_active": False})
-                self._bot_active = False
+                self._broadcast("bot.status", {
+                    "loaded": self._selected_strategy_id is not None, "reason": "disconnected",
+                    "selected_bot_id": self._selected_strategy_id, "bot_active": self._bot_active,
+                    "bot_connected": False,
+                })
 
         @self.socketio.on("consult.send")
         def on_consult_send(payload):
@@ -142,54 +160,13 @@ class ServerBridge:
             try:
                 result = self._request_to_data(_cmd, payload or {}, timeout=_ACK_TIMEOUT_SEC, actor=actor)
                 if _cmd == "bot.select":
-                    self._sync_bot_process(result.get("selected_bot_id"))
                     self._bot_active = bool(result.get("bot_active"))
+                    self._forward_strategy_load(result.get("selected_bot_id"))
                 elif _cmd == "bot.set_active":
                     self._bot_active = bool(result.get("bot_active"))
                 return result
             except Exception as e:
                 return {"error": str(e)}
-
-    def _sync_bot_process(self, bot_id: str | None) -> None:
-        with self._bot_proc_lock:
-            if bot_id is None:
-                self._kill_bot_proc()
-                return
-            if self._bot_proc is not None and self._bot_proc.poll() is None:
-                self._kill_bot_proc()
-            self._start_bot_proc(bot_id)
-
-    def _start_bot_proc(self, bot_id: str) -> None:
-        self._bot_proc = subprocess.Popen(
-            [sys.executable, "-m", "dashv2.bots.runner", self.cfg["host"], str(self.cfg["port"]), bot_id],
-            cwd=str(Path(__file__).resolve().parent.parent))
-        print(f"bot-runner started pid={self._bot_proc.pid} bot_id={bot_id}", flush=True)
-
-    def _kill_bot_proc(self) -> None:
-        if self._bot_proc is None:
-            return
-        if self._bot_proc.poll() is None:
-            self._bot_proc.terminate()
-            try:
-                self._bot_proc.wait(timeout=3)
-            except Exception:
-                self._bot_proc.kill()
-        self._bot_proc = None
-
-    def _bot_watch_loop(self) -> None:
-        while True:
-            with self._bot_proc_lock:
-                proc = self._bot_proc
-                if proc is not None and proc.poll() is not None:
-                    code = proc.returncode
-                    print(f"bot-runner exited with code {code}", flush=True)
-                    self._bot_proc = None
-                    self._broadcast("bot.status", {
-                        "loaded": False, "reason": f"crashed:{code}", "selected_bot_id": None,
-                        "bot_active": False,
-                    })
-                    self._bot_active = False
-            threading.Event().wait(0.5)
 
     def _round_load_async(self, payload: dict, actor: str) -> None:
         def _run():
@@ -240,6 +217,8 @@ class ServerBridge:
             name, payload = msg["name"], msg.get("payload") or {}
             if name == "bot.status" and "bot_active" in payload:
                 self._bot_active = bool(payload["bot_active"])
+                if "selected_bot_id" in payload:
+                    self._selected_strategy_id = payload.get("selected_bot_id")
             self._broadcast(name, payload)
 
 

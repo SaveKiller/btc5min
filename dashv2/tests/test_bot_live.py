@@ -75,6 +75,15 @@ class TestBotAttach(unittest.TestCase):
         res = eng._cmd_bot_select({"bot_id": "random"})
         self.assertEqual(res["selected_bot_id"], "random")
         self.assertTrue(res["bot_active"])
+        self.assertEqual(res["strategies"], [{"id": "random", "active": True}])
+
+    def test_detach_clears_strategies_snapshot(self):
+        eng = self._engine()
+        eng._cmd_bot_select({"bot_id": "random"})
+        res = eng._cmd_bot_select({"bot_id": None})
+        self.assertIsNone(res["selected_bot_id"])
+        self.assertEqual(res["strategies"], [])
+        self.assertFalse(res["bot_active"])
 
     def test_attach_blocked_while_playing(self):
         eng = self._engine()

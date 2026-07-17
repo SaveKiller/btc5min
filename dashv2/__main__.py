@@ -1,4 +1,4 @@
-"""Launcher dashv2: due processi spawn + fail-fast + restart su sentinella."""
+"""Launcher dashv2: tre processi spawn + fail-fast server/data + bot soft + restart."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 
+from dashv2.bots.bot_process import run_bot_process
 from dashv2.config import load_config
 from dashv2.engine import run_data_process
 from dashv2.server import run_server_process
@@ -25,18 +26,20 @@ def main() -> None:
     server_recv_evt, data_send_evt = mp.Pipe(duplex=False)
     data_proc = mp.Process(target=run_data_process, args=(cfg, data_recv_cmd, data_send_evt), name="dashv2-data")
     server_proc = mp.Process(target=run_server_process, args=(cfg, server_send_cmd, server_recv_evt), name="dashv2-server")
+    bot_proc = mp.Process(target=run_bot_process, args=(cfg,), name="dashv2-bot")
     data_proc.start()
     server_proc.start()
+    bot_proc.start()
     url = f"http://{cfg['host']}:{cfg['port']}/"
     print(f"Dashboard V2: {url}")
     print(f"restart watch: {sentinel}")
     print("Ctrl+C to stop")
 
     def _kill_children() -> None:
-        for p in (server_proc, data_proc):
+        for p in (server_proc, data_proc, bot_proc):
             if p.is_alive():
                 p.terminate()
-        for p in (server_proc, data_proc):
+        for p in (server_proc, data_proc, bot_proc):
             p.join(timeout=3)
 
     def _shutdown(*_args):
@@ -49,16 +52,25 @@ def main() -> None:
         _kill_children()
         os.execv(sys.executable, [sys.executable, "-m", "dashv2"])
 
+    def _respawn_bot() -> mp.Process:
+        p = mp.Process(target=run_bot_process, args=(cfg,), name="dashv2-bot")
+        p.start()
+        print(f"bot process respawned pid={p.pid}", flush=True)
+        return p
+
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
     try:
         while True:
             if sentinel.exists():
                 _restart()
-            for p in (data_proc, server_proc):
-                if not p.is_alive():
-                    print(f"process {p.name} exited with code {p.exitcode}")
-                    _shutdown()
+            if not data_proc.is_alive() or not server_proc.is_alive():
+                dead = "dashv2-data" if not data_proc.is_alive() else "dashv2-server"
+                print(f"process {dead} exited with code {data_proc.exitcode if dead == 'dashv2-data' else server_proc.exitcode}")
+                _shutdown()
+            if not bot_proc.is_alive():
+                print(f"process dashv2-bot exited with code {bot_proc.exitcode} (soft, respawning)", flush=True)
+                bot_proc = _respawn_bot()
             time.sleep(2.0)
     except KeyboardInterrupt:
         _shutdown()

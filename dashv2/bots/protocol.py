@@ -1,15 +1,19 @@
-"""Contratto plugin bot (code / config / ai)."""
+"""Contratto plugin strategy (shim attuale: BotPlugin in *_bot.py).
+
+Le Strategy vere (DETERMINISTICA / INFERENZIALE / AGENTICA) arriveranno in un piano separato.
+Il processo bot resta l'unica interfaccia verso il server; le strategy vivono solo dentro il bot.
+"""
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Protocol
 
 
 class BotPlugin(Protocol):
-    """Interfaccia minima di un bot collaborativo."""
+    """Interfaccia minima di una strategy caricata nel processo bot (shim legacy)."""
 
     name: str
-    kind: str  # code | config | ai
+    kind: str  # code | config | ai  (legacy; tipi target: deterministic | inferential | agentic)
 
     def on_session(self, session: dict) -> list[dict]: ...
     def on_tick(self, tick: dict, session: dict | None, orders: dict | None) -> list[dict]: ...

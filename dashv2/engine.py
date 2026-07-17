@@ -418,11 +418,18 @@ class ReplayEngine:
     def _bot_attach_allowed(self) -> bool:
         return not self.playing
 
+    def _strategies_snapshot(self) -> list[dict]:
+        if self.selected_bot_id is None:
+            return []
+        return [{"id": self.selected_bot_id, "active": self.bot_active}]
+
     def _cmd_bot_list(self) -> dict:
         return {"ok": True, "bots": list_bot_infos(), "selected_bot_id": self.selected_bot_id,
-                "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active}
+                "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
+                "strategies": self._strategies_snapshot()}
 
     def _cmd_bot_select(self, payload: dict) -> dict:
+        """Seleziona una strategy shim (plugin *_bot.py); il server fa forward strategy.load al bot."""
         bot_id = payload.get("bot_id")
         if bot_id is not None:
             if not self._bot_attach_allowed():
@@ -440,7 +447,7 @@ class ReplayEngine:
         self._emit_session()
         return {
             "ok": True, "selected_bot_id": bot_id, "bot_attach_allowed": self._bot_attach_allowed(),
-            "bot_active": self.bot_active,
+            "bot_active": self.bot_active, "strategies": self._strategies_snapshot(),
         }
 
     def _cmd_bot_set_active(self, payload: dict) -> dict:
@@ -591,6 +598,7 @@ class ReplayEngine:
         self._emit_event("bot.status", {
             "selected_bot_id": self.selected_bot_id, "bots": list_bot_infos(),
             "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
+            "strategies": self._strategies_snapshot(),
             "loaded": self.selected_bot_id is not None,
         })
 

@@ -35,7 +35,7 @@ E' inclusa una webapp dashboard che permetta di eseguire i replay dei round in u
 
 ## Dashboard (replay round)
 
-Interfaccia web per **replay** dei round salvati in `data/`: timeline 1 Hz (anche x2/x5), chart candele BTC, ladder delta, quote Up/Down, indicatori dal `.txt` (vol, Rq/Rs, DWinA/B), simulazione ordini sul book `.bin` con fee CLOB, ledger account in `dashv2/history/accounts/`, bot collaborativo opzionale (`dashv2/bots/`), stub `engine_mode: live`.
+Interfaccia web per **replay** dei round salvati in `data/`: timeline 1 Hz (anche x2/x5), chart candele BTC, ladder delta, quote Up/Down, indicatori dal `.txt` (vol, Rq/Rs, DWinA/B), simulazione ordini sul book `.bin` con fee CLOB, ledger account in `dashv2/history/accounts/`, processo **bot** sempre spawnato (`dashv2/bots/`, strategie caricate a runtime), stub `engine_mode: live`.
 
 **Avvio:** `dashv2.bat` oppure `python -m dashv2` dalla root repo → apre `http://127.0.0.1:8780/` (host/porta in `dashv2/setup.json`).
 
@@ -48,7 +48,7 @@ Il launcher (`dashv2/__main__.py`) poll ogni **2 s** il file sentinella **`data/
 Comportamento del launcher:
 
 1. All’avvio, **prima** di spawnare server/data: se `restart` esiste → lo elimina (niente doppio boot).
-2. In loop: se trova `restart` → lo cancella, termina i due processi, `os.execv` di `python -m dashv2` (reload completo codice + config).
+2. In loop: se trova `restart` → lo cancella, termina i tre processi (server/data/bot), `os.execv` di `python -m dashv2` (reload completo codice + config).
 
 **Cosa deve fare l’agente** dopo modifiche che richiedono riavvio del processo Python:
 
@@ -67,7 +67,7 @@ Comportamento del launcher:
 
 ### Architettura e mappa file
 
-Se il task tocca processi, IPC, layout moduli, config o dove vivere il codice dashv2, **leggi e applica** [`docs/dashv2-architecture.md`](docs/dashv2-architecture.md) (due processi spawn + bot-runner opzionale, pipe, mappa file, principi P1–P12).
+Se il task tocca processi, IPC, layout moduli, config o dove vivere il codice dashv2, **leggi e applica** [`docs/dashv2-architecture.md`](docs/dashv2-architecture.md) (tre processi spawn: server + data + bot, pipe, mappa file, principi P1–P12).
 
 ### Codice condiviso con il collector (`src/`)
 
@@ -87,7 +87,7 @@ Ordini simulati: walk sul book ask/bid del tick corrente con `fee_rate` dell’h
 
 ### Protocollo Socket.IO
 
-Se il task richiede comandi/eventi Socket.IO, ACL human/bot, payload o asse temporale UI (`sec` / seek / preview), **leggi e applica** la sezione 12 di [`docs/dashv2-architecture.md`](docs/dashv2-architecture.md).
+Se il task richiede comandi/eventi Socket.IO, ACL human/bot, payload o asse temporale UI (`sec` / seek / preview), **leggi e applica** le sezioni 12 e 12B di [`docs/dashv2-architecture.md`](docs/dashv2-architecture.md).
 
 ### Layout UI (dove modificare cosa)
 

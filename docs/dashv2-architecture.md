@@ -18,7 +18,7 @@ Permette di:
 3. Vedere in sync: prezzo BTC Chainlink, delta vs PTB, quote Up/Down, ladder, volatilità, rischio Rq/Rs, DWinA/B, candele 5m causali.
 4. Piazzare ordini simulati sul book CLOB del tick corrente (BUY walk ask + fee), chiuderli (SELL walk bid) o lasciarli andare a settlement a sec 0.
 5. Persistere i risultati su un **ledger per account** in JSON sotto `dashv2/history/accounts/`.
-6. Caricare un **bot collaborativo** (plugin in `dashv2/bots/`) come co-controller Socket.IO: stesso terreno del round/account, ordini taggati `source: user|bot`, canale `consult.*` peer.
+6. Processo **bot** sempre attivo (co-controller Socket.IO): scatola vuota finché non si carica almeno una **Strategy**; ordini taggati `source: user|bot`, canale `consult.*` peer.
 7. Avviare in modalità `engine_mode: live` (stub: stesso contratto IPC, Polymarket reale non ancora collegato).
 
 ### Perché esiste (vs dash V1)
@@ -27,8 +27,8 @@ La V1 (`dash/` + `dash-api/`) separava web server e API in due stack; la comunic
 La V2 nasce da un disegno esplicito (vedi `docs/dash-prompt-v2.md`):
 
 - **un solo entrypoint** (`python -m dashv2`);
-- **due processi core** con ruoli netti (bridge UI vs motore dati) + bot-runner opzionale;
-- **pipe unidirezionali** per IPC veloce e isolato;
+- **tre processi** con ruoli netti (bridge UI, motore dati, bot/strategy shell);
+- **pipe unidirezionali** per IPC veloce e isolato (solo server ↔ data);
 - UI statica offline (no CDN obbligatori), layout da mockup v38;
 - **anti-spoiler** rigoroso fino a sec 0.
 
@@ -37,7 +37,9 @@ La V2 nasce da un disegno esplicito (vedi `docs/dash-prompt-v2.md`):
 | Fase | Sorgente / feature | Stato |
 |------|--------------------|-------|
 | Replay file | `.bin`/`.txt` via `ReplayEngine` | Implementato |
-| Bot collaborativo | Co-controller Socket.IO + plugin `dashv2/bots/` | Implementato (primo bot: `random`) |
+| Bot processo fisso | Spawn con server/data; Socket.IO `role=bot`; soft-crash + respawn | Implementato |
+| Strategy load (shim) | `bot.select` → stato engine + forward `strategy.load` → plugin `*_bot.py` | Implementato (es. `random`) |
+| Strategy types | DETERMINISTICA / INFERENZIALE / AGENTICA | Solo documentale (piano separato) |
 | Consulto peer | `consult.send` / `consult.message` sul bridge | Predisposto (relay + hook plugin; UI chat da fare) |
 | Live Polymarket | `LiveEngine` stub + `engine_mode` | Predisposto (no feed/trading reali) |
 
@@ -49,10 +51,10 @@ Questi vincoli **non** vanno indeboliti senza aggiornare esplicitamente questo d
 
 | # | Principio | Implicazione pratica |
 |---|-----------|----------------------|
-| P1 | **Due processi core, fail-fast** | Se server o data muore, l’altro viene terminato (`__main__.py`). Il bot-runner **non** è nel fail-fast. |
-| P2 | **Server = bridge** | `server.py` non simula ordini né clock; può fare routing ruoli, ACL, consult relay, spawn bot-runner. |
-| P3 | **Engine = unica fonte di verità round** | Stato replay/live, ordini, account, settlement: solo nel data process. |
-| P4 | **Pipe unidirezionali** | Cmd solo server→data; evt (response + event) solo data→server. |
+| P1 | **Fail-fast server+data** | Se server o data muore, l’altro viene terminato (`__main__.py`). Il bot **non** è nel fail-fast: crash → log + respawn soft. |
+| P2 | **Server = bridge** | `server.py` non simula ordini né clock; routing ruoli, ACL, consult relay, forward `strategy.load` al bot. |
+| P3 | **Engine = unica fonte di verità round** | Stato replay/live, ordini, account, settlement, **quale strategy è selezionata**: solo nel data process (`ReplayEngine`). |
+| P4 | **Pipe unidirezionali** | Cmd solo server→data; evt (response + event) solo data→server. Il bot **non** usa le pipe: parla solo Socket.IO col server. |
 | P5 | **Due co-controller Socket.IO** | `human_sid` + `bot_sid`; stessa priorità/latenza; ACL per ruolo (bot: solo order.* + sync + consult). |
 | P6 | **Anti-spoiler** | Picker senza outcome; outcome UI solo a `round_end` / sec 0. |
 | P7 | **Causalità timeline** | Chart e scrub non espongono tick futuri rispetto a `sec` di replay. |
@@ -60,7 +62,8 @@ Questi vincoli **non** vanno indeboliti senza aggiornare esplicitamente questo d
 | P9 | **Riuso `src/`** | Nessun reader binario duplicato; `read_round`, walk CLOB, risk da moduli core. |
 | P10 | **Config fail-hard** | Chiavi obbligatorie in `setup.json`; niente default silenziosi (`config.py`). |
 | P11 | **Spawn, non fork** | `multiprocessing.set_start_method("spawn", force=True)` (Windows + isolamento pulito). |
-| P12 | **Actor / source** | Bridge inietta `actor`; ordini hanno `source: user\|bot`; evento `action` per mutazioni. |
+| P12 | **Actor / source** | Bridge inietta `actor`; ordini hanno `source: user\|bot`; evento `action` per mutazioni. (Futuro multi-strategy: campo `strategy_id` aggiuntivo; oggi solo `source: bot`.) |
+| P13 | **Bot = shell; Strategy = logica** | Il processo bot è sempre su; senza strategy non emette trade. Il server scambia messaggi di trading solo col bot, mai direttamente con una strategy. |
 
 ---
 
@@ -69,17 +72,19 @@ Questi vincoli **non** vanno indeboliti senza aggiornare esplicitamente questo d
 ```
   Browser (human) ──┐
                     ├── Socket.IO ──► ServerBridge ──pipe CMD──► DataEngine
-  Bot-runner ───────┘                      │                      (replay | live stub)
-        ▲                                  │
-        │ spawn lazy                       ├── broadcast eventi ──► human + bot
-        │ (su bot.select)                  │
-        └──────────────────────────────────┘
+  Bot process ──────┘                      │                      (replay | live stub)
+  (sempre spawnato)                        │
+  + Strategy* dentro                       ├── broadcast eventi ──► human + bot
+                                           │
+                                           strategy.load = forward server→bot (no pipe)
                                            consult.* = peer relay (no pipe data)
 ```
 
 - Fail-fast: solo `dashv2-server` + `dashv2-data`.
-- Bot-runner: processo opzionale (`python -m dashv2.bots.runner`); crash → log console + `bot.status`, dash continua.
+- Bot (`dashv2-bot`): processo strutturale spawnato col launcher; crash → soft (log + respawn); senza strategy connesso ma inerte.
 - `engine_mode` in `setup.json`: `"replay"` → `ReplayEngine`; `"live"` → `LiveEngine` stub.
+
+**Nota lessicale — “engine”:** in questo documento *engine* = processo **data** (`ReplayEngine` / `LiveEngine` in `engine.py` / `live_engine.py`), non il server. Il server è solo bridge Socket.IO + IPC.
 
 Avvio: `dashv2.bat` oppure `python -m dashv2` dalla root repo → URL da `setup.json` (default `http://127.0.0.1:8780/`).
 
@@ -102,19 +107,22 @@ File: [`dashv2/__main__.py`](../dashv2/__main__.py)
    - `server_recv_evt` ← `data_send_evt` (response ed eventi verso il server).
 5. Avvio `Process(target=run_data_process, name="dashv2-data")`.
 6. Avvio `Process(target=run_server_process, name="dashv2-server")`.
-7. Il processo padre entra in un loop di watchdog ogni 2 s:
-   - se esiste `data_dir/restart` → cancella la sentinella, terminate+join dei figli, `os.execv(python, ["-m", "dashv2"])` (reload completo);
-   - se uno dei due processi non è `alive` → `_shutdown()` (terminate + join timeout 3 s) e `sys.exit(0)`.
-8. SIGINT / SIGTERM → stesso `_shutdown`.
+7. Avvio `Process(target=run_bot_process, name="dashv2-bot")` — sempre, anche senza strategy.
+8. Il processo padre entra in un loop di watchdog ogni 2 s:
+   - se esiste `data_dir/restart` → cancella la sentinella, terminate+join dei **tre** figli, `os.execv(python, ["-m", "dashv2"])` (reload completo);
+   - se server o data non è `alive` → `_shutdown()` (terminate + join timeout 3 s) e `sys.exit(0)`;
+   - se solo il bot non è `alive` → log soft + **respawn** del solo processo bot (dash continua).
+9. SIGINT / SIGTERM → stesso `_shutdown` (termina anche il bot).
 
 ### Perché spawn + due pipe
 
 - **spawn**: su Windows è l’unico metodo affidabile; evita stato ereditato da fork e rende i processi indipendenti (utile se in futuro il data process vive più a lungo o viene riavviato).
 - **Due pipe unidirezionali**: direzione del flusso esplicita; niente contesa half-duplex su un unico canale; il demux response/event avviene solo sul lato server nella pipe EVT.
+- **Bot fuori dalle pipe**: stesso trasporto del browser (Socket.IO); il launcher lo tratta come cittadino di prima classe ma non lo mette nel fail-fast.
 
 ### Cosa **non** fa il processo padre
 
-Non inoltra messaggi, non conosce Socket.IO, non tocca i round. È solo launcher + fail-fast + restart su sentinella.
+Non inoltra messaggi, non conosce Socket.IO, non tocca i round. È solo launcher + fail-fast (server/data) + soft-respawn bot + restart su sentinella.
 
 ---
 
@@ -184,8 +192,9 @@ Entry: `run_server_process(cfg, cmd_conn, evt_conn)`.
 - Bridge inietta `actor: user|bot` su ogni request IPC (non spoofabile dal client).
 - `consult.send`: peer relay sul bridge (**non** passa al data process); emit `consult.message` al peer e echo al mittente.
 - Disconnect human: pause replay best-effort.
-- Disconnect / crash bot: log console, `bot.status` disconnected; server/data restano vivi.
-- `bot.select` ok → server spawna `python -m dashv2.bots.runner host port bot_id` (lazy); select None → kill runner.
+- Disconnect socket bot: log console + `bot.status` con `bot_connected: false`; server/data restano vivi; il processo bot ritenta la connect.
+- `bot.select`: aggiorna stato in engine, poi **forward** `strategy.load` al `bot_sid` (niente spawn/kill processo).
+- Al (ri)connect del bot: bridge fa `bot.list` IPC e re-forward `strategy.load` se c’è una strategy selezionata.
 
 ### Timeout
 
@@ -212,8 +221,8 @@ Stub engine `controller.claim` / `controller.release` esistono ma **non** sono e
 
 ### Linee guida per estendere il server
 
-- Nuovo comando UI → ACL (`_HUMAN_CMDS` / `_BOT_CMDS`) **e** handler in engine.
-- Bridge: routing, timeout, ruoli, consult relay, spawn bot-runner — non logica di settlement/clock.
+- Nuovo comando UI → ACL (`_HUMAN_CMDS` / `_BOT_CMDS`) **e** handler in engine (se tocca stato round).
+- Bridge: routing, timeout, ruoli, consult relay, forward strategy — non logica di settlement/clock e **non** spawn del processo bot.
 - Nuovi eventi push: `make_event` dall’engine; broadcast automatico a human+bot.
 
 ---
@@ -242,8 +251,8 @@ Entry: `run_data_process` → `ReplayEngine(cfg, cmd_conn, evt_conn).run()`.
 | `_prev_candles` | candele precedenti calcolate al load |
 | `_last_tick` | ultimo tick pubblico |
 | `_round_advanced` | True dopo il primo advance/seek≠300 |
-| `selected_bot_id` | bot scelto (None = nessuno) |
-| `bot_active` | se True il bot può `order.place/close/cancel`; toggle real-time via `bot.set_active` |
+| `selected_bot_id` | strategy selezionata via shim `bot.select` (None = nessuna) |
+| `bot_active` | master switch: se True il bot può `order.place/close/cancel`; toggle real-time via `bot.set_active` |
 | `engine_mode` / `round_source` / `account_backend` | da config (`replay`/`live`, `local`/`polymarket`) |
 
 ### Loop principale (`run`)
@@ -446,6 +455,63 @@ Non estrae quote/delta/gain/btc (arrivano dal bin).
 
 ---
 
+## 11bis. Comandi vs Eventi
+
+Modello mentale della pipeline (sinistra ↔ destra):
+
+```
+  SINISTRA                         CENTRO                    DESTRA
+  (controller)                     (bridge)                  (fonte di verità)
+
+  Browser (human) ──┐
+                    ├── Socket.IO ──► ServerBridge ──CMD──► Data engine
+  Bot process ──────┘                      │               (replay | live)
+                                           │
+                    ◄── eventi Socket.IO ──┤◄── EVT ───────┘
+                    ◄── ack/response ──────┘
+```
+
+### Visione simmetrica (sì, con tre precisazioni)
+
+**Sì:** sul percorso round/trading la direzione è simmetrica e va preservata.
+
+| | **Comando** | **Evento** |
+|--|-------------|------------|
+| Origine | Sinistra: browser **o** bot | Destra: data engine (`ReplayEngine` / `LiveEngine`) |
+| Direzione | sinistra → destra | destra → sinistra |
+| Scopo | *chiedere* una mutazione o una query di stato | *notificare* uno stato già deciso / avanzato |
+| Esempi | `round.load`, `replay.seek`, `order.place`, `bot.select` | `tick`, `session`, `orders`, `round_end`, `bot.status` |
+| Chi lo “possiede” | il controller che lo emette (human/bot) | solo l’engine; bridge e client non inventano stato di dominio |
+
+Flusso tipico di un comando:
+
+1. Browser o bot emette il nome Socket.IO (es. `order.place`).
+2. Il bridge applica ACL, inietta `actor`, traduce in IPC `request` sulla pipe CMD.
+3. L’engine esegue e risponde con IPC `response` (ack verso il mittente).
+4. Se lo stato pubblico cambia, l’engine emette uno o più IPC `event` → broadcast Socket.IO a **entrambi** i controller a sinistra.
+
+Flusso tipico di un evento (anche senza comando, es. clock 1 Hz):
+
+1. L’engine avanza `sec` / MTM / settlement.
+2. `make_event("tick"|"session"|…)` sulla pipe EVT.
+3. Il bridge fa broadcast a human e bot: stessa timeline, stessa verità.
+
+### Precisazioni (non rompono il modello, lo delimitano)
+
+1. **Ack/response ≠ evento.** La risposta sincrona al comando torna a sinistra (destra→sinistra) ma è *correlata* al `request_id` del mittente; l’evento è un push di stato verso tutti i controller.
+2. **Peer sul bridge (non attraversano l’engine):** `consult.send` / `consult.message` restano human↔bot sul ServerBridge. Sono laterali, non destra↔sinistra sul data path.
+3. **Forward bridge→bot:** dopo un comando human che aggiorna lo stato in engine (es. `bot.select`), il bridge può emettere `strategy.load` solo verso il bot. La verità resta a destra; il forward è un side-channel operativo verso il processo bot.
+
+### Regola pratica per estensioni
+
+- Nuova *azione* del controller → **comando** (sinistra→destra), handler in engine, riga in §12 e/o §12B.
+- Nuovo *fatto di stato* da mostrare/reagire → **evento** (destra→sinistra), `_emit_event` dall’engine, mai inventato dal browser o dal bot.
+- Se qualcosa non è né comando di dominio né evento di stato (consult, forward strategy), documentarlo esplicitamente come eccezione di bridge.
+
+I cataloghi concreti: §12 (browser↔server) e §12B (bot↔server).
+
+---
+
 ## 12. Protocollo Socket.IO (browser ↔ server)
 
 Il browser non parla mai direttamente con il processo data.  
@@ -474,11 +540,13 @@ Ack sincrono tranne `round.load` (ack immediato `{ok:true}`, errori via evento `
 | `account.create` | `{name, initial_balance_usd, note?}` | `{ok, account}` |
 | `account.rename` | `{account_id, name}` | `{ok, account}` |
 | `account.update` | `{account_id, name, initial_balance_usd, note?}` | `{ok, account}` |
-| `bot.list` | `{}` | `{ok, bots}` |
-| `bot.select` | `{bot_id\|null}` | `{ok, ...}` + spawn/kill runner |
-| `bot.set_active` | `{active: bool}` | `{ok, bot_active}` |
+| `bot.list` | `{}` | `{ok, bots, selected_bot_id, strategies, bot_active, ...}` |
+| `bot.select` | `{bot_id\|null}` | `{ok, ...}` + stato engine + forward `strategy.load` al bot |
+| `bot.set_active` | `{active: bool}` | `{ok, bot_active}` (master switch globale) |
 | `session.sync` | `{}` | `{ok}` + re-push eventi |
 | `consult.send` | `{text, ...}` | relay peer (no pipe data) |
+
+*Target (non ancora esposti come comandi human dedicati): `strategy.list` / `strategy.load` / `strategy.unload` / `strategy.set_active` — oggi il load passa da `bot.select` come shim.*
 
 ACL: human → tutti i comandi sopra; bot → solo `order.*` trade/size/preview + `session.sync` + `consult.send`. Trade bot rifiutati se `bot_active=False`.
 
@@ -496,7 +564,7 @@ Errori: `{error: string}` in ack, oppure evento `error` per load fallito.
 | `history` | ledger + live closed | `rows[]`, `active_account_id` |
 | `accounts` | CRUD / settle | lista + `active` con stats |
 | `action` | dopo place/close/cancel | `actor`, `cmd`, `detail`, `sec` |
-| `bot.status` | select / active / disconnect | `loaded`, `selected_bot_id`, `bot_active`, `reason?` |
+| `bot.status` | select / active / disconnect | `loaded`, `selected_bot_id`, `strategies[]`, `bot_active`, `reason?` |
 | `consult.message` | relay `consult.send` | messaggio peer human↔bot |
 | `round_end` | sec 0 | `outcome`, `final_chainlink`, `settled_orders` |
 | `error` | load fallito (async) | `{message}` |
@@ -506,6 +574,69 @@ Errori: `{error: string}` in ack, oppure evento `error` per load fallito.
 - Engine: `sec` = secondi a scadenza (300 → 0).
 - Slider: `progress = 300 - sec` (0 a sinistra = inizio, 300 a destra = fine).
 - Countdown string: `"{sec} | M:SS"`.
+
+---
+
+## 12B. Protocollo Socket.IO (bot ↔ server)
+
+Il processo bot è un **secondo client** Socket.IO (non un browser): stesso bridge, stesso clock di eventi, ACL ristretta.  
+Non usa le pipe IPC. Connect con `auth: { role: "bot" }`.
+
+Senza strategy caricata il bot resta connesso e **inerte** (nessun `order.*` emesso dalle hook).
+
+### Comandi (bot → server)
+
+Ack come per l’human. Trade rifiutati dal bridge se `bot_active=False`.
+
+| Comando | Payload tipico | Response tipica | Note |
+|---------|----------------|-----------------|------|
+| `order.size` | `{side, size_usd}` | `{ok}` | |
+| `order.preview` | `{size_up_usd, size_down_usd}` | `{ok, previews}` | |
+| `order.place` | `{side, size_usd}` | `{ok, order}` | `actor=bot` iniettato dal bridge |
+| `order.close` | `{order_id}` | `{ok, order}` | può chiudere ordine aperto da altra strategy (futuro) |
+| `order.cancel` | `{order_id}` | `{ok, order}` | |
+| `session.sync` | `{}` | `{ok}` + re-push eventi | tipico al connect |
+| `consult.send` | `{text, ...}` | `{ok}` | peer relay; `from` forzato a `bot` |
+
+**Non ammessi** al bot (esempi): `round.*`, `replay.*`, `account.*`, `bot.select`, `bot.set_active`.
+
+### Eventi (server → bot)
+
+Stesso broadcast degli eventi engine verso l’human, **più** il forward dedicato strategy:
+
+| Evento | Quando | Payload essenziale |
+|--------|--------|-------------------|
+| `bootstrap` | sync | come §12 |
+| `session` | clock / account / bot_active | include `bot_active` per armare/disarmare trade |
+| `tick` | 1 Hz / scrub | ignorare se `preview: true` |
+| `chart` | load / advance | tipicamente ignorato dalle strategy |
+| `orders` | mutazioni book posizioni | stato open/closed per decide close |
+| `history` | ledger | opzionale |
+| `accounts` | CRUD | opzionale |
+| `action` | dopo place/close/cancel | feedback peer (anche ordini human) |
+| `bot.status` | select / active | `selected_bot_id`, `strategies[]`, `bot_active` |
+| `consult.message` | relay | messaggi human↔bot |
+| `round_end` | sec 0 | settlement |
+| `error` | load fallito | |
+| `strategy.load` | dopo `bot.select` o (ri)connect | `{strategy_id: string\|null}` — **solo al bot_sid**, non passa dal data pipe |
+
+### Flusso load strategy (oggi)
+
+```
+Browser --bot.select--> Server --IPC--> Engine (selected_bot_id, bot_active)
+                              \--strategy.load--> Bot (load/unload plugin in-process)
+Engine --bot.status--> Server --broadcast--> Browser + Bot
+```
+
+Target multi-strategy: più id attivi contemporaneamente; master `bot.set_active` globale + `active` per strategy; ordini ancora `source: bot` finché non si aggiunge `strategy_id` (piano separato).
+
+### Target comandi futuri (documentati, non implementati)
+
+| Direzione | Nome | Ruolo |
+|-----------|------|-------|
+| human→server | `strategy.list` / `strategy.load` / `strategy.unload` / `strategy.set_active` | API dedicata (sostituirà lo shim `bot.select`) |
+| server→bot | `strategy.unload`, heartbeat | simmetrici a `strategy.load` |
+| setup.json | chiave startup strategies | load allo start senza UI |
 
 ---
 
@@ -586,9 +717,9 @@ Env vars previsti per live reale (non letti dallo stub): `POLY_API_KEY`, `POLY_A
 
 | Percorso | Ruolo |
 |----------|--------|
-| `dashv2/__main__.py` | Launcher spawn + watchdog fail-fast + restart sentinella |
-| `dashv2/server.py` | Bridge Flask-SocketIO (human + bot, consult relay, spawn runner) |
-| `dashv2/engine.py` | Motore replay / comandi / eventi |
+| `dashv2/__main__.py` | Launcher spawn + watchdog fail-fast (server/data) + soft-respawn bot + restart sentinella |
+| `dashv2/server.py` | Bridge Flask-SocketIO (human + bot, consult relay, forward strategy.load) |
+| `dashv2/engine.py` | Motore replay / comandi / eventi (fonte di verità anche per selected strategy) |
 | `dashv2/live_engine.py` | Stub `engine_mode: live` (stesso contratto IPC) |
 | `dashv2/ipc.py` | Envelope request/response/event |
 | `dashv2/rounds.py` | Indice, load merge, candele |
@@ -596,7 +727,7 @@ Env vars previsti per live reale (non letti dallo stub): `POLY_API_KEY`, `POLY_A
 | `dashv2/history.py` | Account ledger JSON (`history/accounts/`) |
 | `dashv2/txt_rows.py` | Parse indicatori dal `.txt` |
 | `dashv2/config.py` + `setup.json` | Config fail-hard (`engine_mode` incluso) |
-| `dashv2/bots/` | Plugin + `runner.py` co-controller Socket.IO |
+| `dashv2/bots/` | Processo bot + plugin strategy shim (`bot_process.py`, `*_bot.py`) |
 | `dashv2/static/index.html` | DOM (header replay, tabs CANDLES/ACCOUNTS, ordini) |
 | `dashv2/static/css/dashboard.css` | Stile (token/misure mockup v38) |
 | `dashv2/static/js/app.js` | Stato client, Socket.IO, binding, CSV |
@@ -686,19 +817,70 @@ Qualsiasi UI che espone liste di round, history, nomi file, tooltip, chart “fu
 
 ---
 
-## 18bis. Bot collaborativo (`dashv2/bots/`)
+### Cose da non fare
+
+- Mettere clock/settlement/fee nel bridge (ok: ACL, consult relay, forward strategy).
+- Far parlare il browser con il data process senza passare dal bridge.
+- Far parlare una Strategy direttamente col server (passa sempre dal processo bot).
+- Usare `majority_gain` / `gain%` del txt come PnL ordini.
+- Riempire buchi nelle previous candles.
+- Introdurre default silenziosi in `setup.json` / `config.py`.
+- Mettere il bot nel fail-fast server+data o nel data process (rompe consulto peer e crash soft).
+- Far controllare replay (load/seek/play) al bot.
+- Spawn lazy del bot dal server (il bot è spawnato solo dal launcher).
+
+---
+
+## 18bis. Bot processo + Strategy (`dashv2/bots/`)
+
+### Ruoli
+
+| Concetto | Cos’è | Dove vive |
+|----------|-------|-----------|
+| **Bot** | Processo OS sempre spawnato; client Socket.IO `role=bot` | `bot_process.py` / `run_bot_process` |
+| **Strategy** | Logica decisionale caricata *dentro* il bot | oggi shim `*_bot.py`; domani tipi sotto |
+| **Engine** | Fonte di verità round + `selected_bot_id` / `bot_active` | `ReplayEngine` (processo data) |
+
+Il server scambia comandi/eventi di trading **solo** col bot. La strategy non è un peer Socket.IO.
+
+### Tipi di Strategy (solo documentale — piano implementativo separato)
+
+| Tipo | Idea | Input tipico | Output |
+|------|------|--------------|--------|
+| **DETERMINISTICA** | Regole statiche su soglie/intervalli delle variabili del round | sec, quote, Rq/Rs, vol, DWin, … | `order.place` / `close` / `cancel` |
+| **INFERENZIALE** | Modello ML (es. random forest o oltre) trainato su settimane Lighter e/o Polymarket | feature per tick | entrate/uscite |
+| **AGENTICA** | Agente (locale o cloud) con interfaccia di controllo nel processo bot | contesto round secondo-per-secondo | decisioni open/close |
+
+Genesi diversa, stesso contratto verso l’esterno: usano il bot come unica interfaccia operativa.
+
+### Multi-strategy
+
+Il processo bot deve poter tenere **più strategy attive insieme**. Esempio: strategy A apre, strategy B chiude lo stesso ordine.  
+Oggi lo shim `bot.select` carica **una** strategy alla volta (replace). Il processo bot già fa fan-out degli hook su un dict `strategies`.
+
+Attivazione:
+
+- master switch globale `bot.set_active` (implementato);
+- per-strategy `active` (documentato, non ancora in UI/API dedicata).
+
+### Load
+
+1. **UI:** human `bot.select` → engine aggiorna stato → server emit `strategy.load` al bot.
+2. **Setup allo start (target):** chiave in `setup.json` letta dal bot o forward post-connect — non ancora implementata.
+3. **(Ri)connect bot:** server re-sync via `bot.list` + `strategy.load`.
+
+### File attuali
 
 | File | Ruolo |
 |------|--------|
-| `protocol.py` | Contratto `BotPlugin` (`on_tick`, `on_consult`, …) |
+| `protocol.py` | Contratto `BotPlugin` (shim strategy) |
 | `__init__.py` | `list_bot_infos` / `load_bot` (discovery `*_bot.py`) |
-| `runner.py` | Client Socket.IO `role=bot` |
-| `random_bot.py` + `.json` | Bot di test (place/close random) |
+| `bot_process.py` | Processo bot Socket.IO; shell vuota + `strategy.load` |
+| `random_bot.py` + `.json` | Strategy di test deterministica-random |
 
-- Attach/detach: `bot.select` solo mentre `playing=False` (pausa o fine round); durante play la dropdown è disabilitata.
-- Toggle Active (`bot.set_active`): real-time, indipendente dall’attach; off → runner non emette trade + bridge/engine rifiutano `order.*` del bot; umano continua a tradare.
-- Dropdown Bot + switch Active nella sezione Accounts.
-- Kind previsti: `code`, `config`, `ai` (solo `code` implementato oggi).
+- Attach/detach strategy (`bot.select`): solo mentre `playing=False`; durante play la dropdown è disabilitata.
+- Toggle Active (`bot.set_active`): real-time; off → bot non emette trade + bridge/engine rifiutano `order.*` del bot; umano continua a tradare.
+- Kind legacy plugin: `code`, `config`, `ai` (solo `code` oggi). Tipi target: deterministic / inferential / agentic.
 
 ## 18ter. Live stub (`dashv2/live_engine.py`)
 
@@ -738,11 +920,12 @@ Browser          ServerBridge              ReplayEngine
 - [ ] Eventi broadcast ok per human e bot?
 - [ ] Anti-spoiler rispettato (picker, history, chart)?
 - [ ] Ordini usano walk CLOB + `fee_rate`, con `source`/`actor`?
-- [ ] Bot non controlla replay; attach solo in pausa (non durante play)?
+- [ ] Bot non controlla replay; attach strategy solo in pausa (non durante play)?
+- [ ] Bot spawnato dal launcher (non lazy dal server)? Strategy solo dentro il bot?
 - [ ] Config: nessuna chiave nuova senza aggiornare `_REQUIRED` e `setup.json`?
 - [ ] Test unitari per la parte di dominio toccata?
 - [ ] Questo documento aggiornato solo dopo che il codice funziona?
 
 ---
 
-*Ultimo allineamento al codice: bot co-controller + random_bot, consult relay, actor/source, engine_mode + LiveEngine stub.*
+*Ultimo allineamento al codice: bot processo fisso + strategy.load forward, soft-respawn, random shim, consult relay, actor/source, engine_mode + LiveEngine stub.*
