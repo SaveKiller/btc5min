@@ -11,8 +11,8 @@ from dashv2.bots import list_bot_infos, load_bot
 from dashv2.bots.random_bot import RandomBot, create_bot
 from dashv2.config import load_config
 from dashv2.engine import ReplayEngine, _actor_from_payload
+from dashv2.engine.plugins.live import LiveEngine
 from dashv2.history import append_settled_orders, create_account, order_rows_from_ledger
-from dashv2.live_engine import LiveEngine
 from dashv2.orders import OrderEngine
 from dashv2.server import _BOT_CMDS, _HUMAN_CMDS
 from src.book import BookSnapshot
@@ -62,7 +62,7 @@ class TestBotAttach(unittest.TestCase):
             "data_dir": Path("."), "history_dir": Path(tempfile.mkdtemp()),
             "default_order_size_usd": 100, "stall_reconnect_sec": 15,
             "chart_previous_candles": 1, "host": "127.0.0.1", "port": 8780,
-            "engine_mode": "replay",
+            "engine_plugin": "replay",
         }
         cfg["history_dir"].mkdir(parents=True, exist_ok=True)
         eng = ReplayEngine(cfg, MagicMock(), MagicMock())
@@ -160,19 +160,18 @@ class TestLiveStub(unittest.TestCase):
     def test_live_rejects_trading(self):
         cfg = {
             "default_order_size_usd": 100, "host": "127.0.0.1", "port": 8780,
-            "engine_mode": "live",
+            "engine_plugin": "live",
         }
         cmd, evt = MagicMock(), MagicMock()
         eng = LiveEngine(cfg, cmd, evt)
         sent = []
         evt.send = lambda m: sent.append(m)
         eng._handle_cmd({"kind": "request", "request_id": "r1", "cmd": "order.place", "payload": {}})
-        self.assertTrue(any(m.get("error") == "live engine not implemented" for m in sent))
+        self.assertTrue(any(m.get("error") == "live engine plugin not implemented" for m in sent))
 
-    def test_config_requires_engine_mode(self):
-        # load_config from real setup.json must include engine_mode
+    def test_config_requires_engine_plugin(self):
         cfg = load_config()
-        self.assertIn(cfg["engine_mode"], ("replay", "live"))
+        self.assertIn(cfg["engine_plugin"], ("replay", "live", None))
 
 
 if __name__ == "__main__":

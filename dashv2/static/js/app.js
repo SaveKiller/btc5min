@@ -1,6 +1,6 @@
 import { initChart, relayoutChart, resizeChart, setCandles, updateCurrentCandle } from "./chart.js";
 import {
-    applyButtonPreviews, layoutReplayScale, renderAccounts, renderHistory,
+    applyButtonPreviews, layoutReplayScale, renderAccounts, renderEnginePlugin, renderHistory,
     renderOrders, renderOutcome, renderRoundPickerDays, renderRoundPickerHours, renderRoundPickerRounds,
     renderStakeButtons, renderTick, setDisconnectBanner, toggleHistorySession,
 } from "./render.js";
@@ -227,6 +227,7 @@ socket.on("bootstrap", (payload) => {
     state.selectedBotId = payload.selected_bot_id ?? null;
     state.botAttachAllowed = payload.bot_attach_allowed !== false;
     state.botActive = payload.bot_active === true;
+    renderEnginePlugin(payload.engine_plugin);
     showRoundDays();
     updateRoundNavButtons();
     applyOrderSizes({ size_up_usd: payload.default_order_size_usd, size_down_usd: payload.default_order_size_usd });
@@ -236,6 +237,7 @@ socket.on("bootstrap", (payload) => {
 socket.on("session", (payload) => {
     const prev = state.session;
     state.session = payload;
+    if (payload.engine_plugin !== undefined) renderEnginePlugin(payload.engine_plugin);
     if (payload.playing != null) renderPlaybackButtons(payload.playing);
     if (payload.replay_speed != null) applyReplaySpeed(payload.replay_speed, { persist: false, notify: false });
     if (payload.active_account_id !== undefined) state.activeAccountId = payload.active_account_id;

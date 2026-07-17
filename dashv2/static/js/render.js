@@ -3,6 +3,14 @@
 const $ = (id) => document.getElementById(id);
 
 
+export function renderEnginePlugin(pluginId) {
+    const el = $("enginePluginLabel");
+    if (!el) return;
+    const id = pluginId || "replay";
+    el.textContent = id === "live" ? "LIVE" : "REPLAY";
+}
+
+
 function formatMmSs(sec) {
     const mm = Math.floor(sec / 60);
     const ss = sec % 60;
@@ -262,7 +270,10 @@ export function renderTick(state) {
         $("timelineSlider").value = String(session.progress);
         updateTimelineSecLabel(session.sec, session.progress);
         $("refPtb").textContent = Math.round(session.ptb_chainlink).toLocaleString("en-US");
-        $("orderSecToEnd").textContent = String(session.sec);
+        const secEl = $("orderSecToEnd");
+        secEl.textContent = String(session.sec);
+        secEl.classList.toggle("sec-warn", session.sec <= 120 && session.sec > 60);
+        secEl.classList.toggle("sec-critical", session.sec <= 60);
         $("orderRoundTime").textContent = formatRoundClockUtc(session.market_start_ts, session.sec);
         if (!session.round_ended) $("orderOutcome").textContent = "---";
         $("refCountdown").textContent = formatMmSs(session.sec);

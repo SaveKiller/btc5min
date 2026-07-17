@@ -5,6 +5,7 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .app-panel { background:var(--panel); border:1px solid var(--border); border-radius:.65rem; box-shadow:0 .4rem 1.25rem rgba(0,0,0,.18); }
 .panel-head { padding:.65rem .85rem; border-bottom:1px solid var(--border); background:rgba(255,255,255,.018); }
 .panel-title { font-size:.76rem; letter-spacing:.08em; text-transform:uppercase; color:#b9c4d9; font-weight:700; }
+.engine-plugin-label { color:var(--amber); font-weight:800; font-size:.85rem; letter-spacing:.12em; }
 .text-muted-app { color:var(--muted)!important; }
 .toolbar .btn-group[aria-label="Playback speed"] .btn { min-width:2.6rem; font-weight:700; }
 .toolbar .divider { height:36px; width:1px; background:var(--border); }
@@ -112,12 +113,14 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .timeline-sec-label { position:absolute; top:calc(100% - .1rem); transform:translateX(-50%); min-width:2.5rem; padding:.12rem .45rem; border:1px solid var(--border); border-radius:.375rem; background:var(--panel-2); font-weight:700; font-size:1.15rem; line-height:1.1; text-align:center; pointer-events:none; white-space:nowrap; }
 .order-head-divider { height:1.6rem; width:1px; background:var(--border); flex:0 0 auto; }
 .order-head-stat { min-width:4.5rem; }
-.order-head-stat-time { min-width:6.75rem; }
+.order-head-stat-time { min-width:7.5rem; }
 .order-head-stat-value { font-size:1.28rem; font-weight:700; color:#8fa4ff; line-height:1.1; letter-spacing:.02em; }
 .order-head-stat-value.delta-pos { color:var(--up); }
 .order-head-stat-value.delta-neg { color:var(--down); }
 #orderOutcome { color:var(--amber); }
 #orderSecToEnd { color:#fff; }
+#orderSecToEnd.sec-warn { color:#f5d547; }
+#orderSecToEnd.sec-critical { color:#e85d6a; }
 .reference-ladder { display:grid; grid-template-columns:80px 1fr 90px 1fr 80px; gap:.5rem; align-items:center; width:100%; padding:.65rem .75rem 1.65rem; background:var(--panel-2); border:1px solid var(--border); border-radius:.5rem; }
 .reference-cell { height:38px; display:flex; align-items:center; justify-content:center; text-align:center; border:1px solid var(--border); border-radius:.375rem; background:var(--bs-tertiary-bg); color:var(--bs-body-color); font-size:1.4rem; font-weight:600; }
 .reference-cell.time-remaining { font-size:1.5rem; font-weight:700; letter-spacing:.03em; }

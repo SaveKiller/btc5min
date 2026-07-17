@@ -1,4 +1,4 @@
-"""Processo dati: round, replay, ordini, history — unica fonte di verità."""
+"""Plugin Engine replay: round da file, clock 1 Hz, account ledger locale."""
 
 from __future__ import annotations
 
@@ -67,6 +67,10 @@ def _empty_side_risk() -> dict:
 
 
 class ReplayEngine:
+    """Plugin replay: file .bin/.txt, ordini simulati, account JSON locale."""
+
+    plugin_id = "replay"
+
     def __init__(self, cfg: dict, cmd_conn: Connection, evt_conn: Connection) -> None:
         self.cfg = cfg
         self.cmd_conn = cmd_conn
@@ -89,9 +93,9 @@ class ReplayEngine:
         self._round_advanced = False
         self.selected_bot_id: str | None = None
         self.bot_active = False
-        self.engine_mode = cfg["engine_mode"]
-        self.round_source = "replay" if self.engine_mode == "replay" else "live"
-        self.account_backend = "local" if self.engine_mode == "replay" else "polymarket"
+        self.engine_plugin = "replay"
+        self.round_source = "replay"
+        self.account_backend = "local"
 
     def run(self) -> None:
         self._emit_event("bootstrap", self._bootstrap_payload())
@@ -115,7 +119,7 @@ class ReplayEngine:
             "host": self.cfg["host"], "port": self.cfg["port"],
             "accounts": list_accounts(self.accounts_root),
             "active_account_id": self.active_account_id,
-            "engine_mode": self.engine_mode, "account_backend": self.account_backend,
+            "engine_plugin": self.engine_plugin, "account_backend": self.account_backend,
             "bots": list_bot_infos(), "selected_bot_id": self.selected_bot_id,
             "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
         }
@@ -552,7 +556,7 @@ class ReplayEngine:
             self._emit_event("session", {
                 "loaded": False, "active_account_id": self.active_account_id,
                 "account_switch_locked": bool(self.orders.open_orders),
-                "replay_speed": self.replay_speed, "engine_mode": self.engine_mode,
+                "replay_speed": self.replay_speed, "engine_plugin": self.engine_plugin,
                 "account_backend": self.account_backend, "selected_bot_id": self.selected_bot_id,
                 "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
             })
@@ -570,7 +574,7 @@ class ReplayEngine:
             "ptb_chainlink": self.loaded.ptb_chainlink, "tradable": tradable,
             "active_account_id": self.active_account_id,
             "account_switch_locked": bool(self.orders.open_orders),
-            "replay_speed": self.replay_speed, "engine_mode": self.engine_mode,
+            "replay_speed": self.replay_speed, "engine_plugin": self.engine_plugin,
             "account_backend": self.account_backend, "selected_bot_id": self.selected_bot_id,
             "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
         })
@@ -636,15 +640,3 @@ class ReplayEngine:
 
     def _emit_event(self, name: str, payload: dict) -> None:
         self.evt_conn.send(ipc.make_event(name, payload))
-
-
-def run_data_process(cfg: dict, cmd_conn: Connection, evt_conn: Connection) -> None:
-    mode = cfg["engine_mode"]
-    if mode == "replay":
-        ReplayEngine(cfg, cmd_conn, evt_conn).run()
-        return
-    if mode == "live":
-        from dashv2.live_engine import LiveEngine
-        LiveEngine(cfg, cmd_conn, evt_conn).run()
-        return
-    raise Exception(f"unknown engine_mode: {mode}")

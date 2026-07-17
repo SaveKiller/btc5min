@@ -1,4 +1,4 @@
-"""Stub LiveEngine: stesso contratto IPC del replay, senza Polymarket reale."""
+"""Plugin Engine live (stub): contratto IPC comune, senza Polymarket reale."""
 
 from __future__ import annotations
 
@@ -11,13 +11,15 @@ from dashv2 import ipc
 
 
 class LiveEngine:
-    """Predisposizione live: bootstrap/sync ok; trading/replay non implementati."""
+    """Plugin live stub: bootstrap/sync ok; trading/account Polymarket non implementati."""
+
+    plugin_id = "live"
 
     def __init__(self, cfg: dict, cmd_conn: Connection, evt_conn: Connection) -> None:
         self.cfg = cfg
         self.cmd_conn = cmd_conn
         self.evt_conn = evt_conn
-        self.engine_mode = "live"
+        self.engine_plugin = "live"
         self.account_backend = "polymarket"
 
     def run(self) -> None:
@@ -27,7 +29,7 @@ class LiveEngine:
             "account_backend": self.account_backend,
         }))
         self.evt_conn.send(ipc.make_event("error", {
-            "message": "live engine not implemented", "feed": {"state": "paused"},
+            "message": "live engine plugin not implemented", "feed": {"state": "paused"},
         }))
         while True:
             while self.cmd_conn.poll(0.1):
@@ -39,7 +41,7 @@ class LiveEngine:
             "default_order_size_usd": self.cfg["default_order_size_usd"],
             "host": self.cfg["host"], "port": self.cfg["port"],
             "accounts": [], "active_account_id": None,
-            "engine_mode": self.engine_mode, "account_backend": self.account_backend,
+            "engine_plugin": self.engine_plugin, "account_backend": self.account_backend,
             "bots": [], "selected_bot_id": None, "bot_attach_allowed": False, "bot_active": False,
         }
 
@@ -48,7 +50,7 @@ class LiveEngine:
         if cmd == "session.sync":
             self.evt_conn.send(ipc.make_event("bootstrap", self._bootstrap_payload()))
             self.evt_conn.send(ipc.make_event("session", {
-                "loaded": False, "engine_mode": self.engine_mode,
+                "loaded": False, "engine_plugin": self.engine_plugin,
                 "account_backend": self.account_backend, "selected_bot_id": None,
                 "bot_attach_allowed": False, "bot_active": False,
                 "account_switch_locked": False, "replay_speed": 1,
@@ -60,4 +62,4 @@ class LiveEngine:
                                                        "selected_bot_id": None, "active_account_id": None,
                                                        "bot_attach_allowed": False, "bot_active": False}))
             return
-        self.evt_conn.send(ipc.make_error(rid, "live engine not implemented"))
+        self.evt_conn.send(ipc.make_error(rid, "live engine plugin not implemented"))

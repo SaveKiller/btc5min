@@ -19,7 +19,7 @@ Permette di:
 4. Piazzare ordini simulati sul book CLOB del tick corrente (BUY walk ask + fee), chiuderli (SELL walk bid) o lasciarli andare a settlement a sec 0.
 5. Persistere i risultati su un **ledger per account** in JSON sotto `dashv2/history/accounts/`.
 6. Processo **bot** sempre attivo (co-controller Socket.IO): scatola vuota finché non si carica almeno una **Strategy**; ordini taggati `source: user|bot`, canale `consult.*` peer.
-7. Avviare in modalità `engine_mode: live` (stub: stesso contratto IPC, Polymarket reale non ancora collegato).
+7. Processo **Engine** sempre attivo (pipe col server): shell stabile + **una** plugin (`replay` | `live` | …) scelta solo a startup da `setup.json`.
 
 ### Perché esiste (vs dash V1)
 
@@ -27,8 +27,8 @@ La V1 (`dash/` + `dash-api/`) separava web server e API in due stack; la comunic
 La V2 nasce da un disegno esplicito (vedi `docs/dash-prompt-v2.md`):
 
 - **un solo entrypoint** (`python -m dashv2`);
-- **tre processi** con ruoli netti (bridge UI, motore dati, bot/strategy shell);
-- **pipe unidirezionali** per IPC veloce e isolato (solo server ↔ data);
+- **tre processi** con ruoli netti (bridge UI, Engine+plugin, bot/strategy shell);
+- **pipe unidirezionali** per IPC veloce e isolato (solo server ↔ Engine);
 - UI statica offline (no CDN obbligatori), layout da mockup v38;
 - **anti-spoiler** rigoroso fino a sec 0.
 
@@ -36,12 +36,14 @@ La V2 nasce da un disegno esplicito (vedi `docs/dash-prompt-v2.md`):
 
 | Fase | Sorgente / feature | Stato |
 |------|--------------------|-------|
-| Replay file | `.bin`/`.txt` via `ReplayEngine` | Implementato |
-| Bot processo fisso | Spawn con server/data; Socket.IO `role=bot`; soft-crash + respawn | Implementato |
+| Replay file | Plugin `replay` (`.bin`/`.txt`) | Implementato |
+| Engine shell + plugin | Processo `dashv2-engine` + load da `engine_plugin` | Implementato |
+| Live Polymarket | Plugin `live` stub | Predisposto (no feed/trading reali) |
+| Endpoint `/replay` e `/live` | Stessa UI, plugin diversa per entrypoint | Solo documentale |
+| Bot processo fisso | Spawn con server/engine; Socket.IO `role=bot`; soft-crash + respawn | Implementato |
 | Strategy load (shim) | `bot.select` → stato engine + forward `strategy.load` → plugin `*_bot.py` | Implementato (es. `random`) |
 | Strategy types | DETERMINISTICA / INFERENZIALE / AGENTICA | Solo documentale (piano separato) |
 | Consulto peer | `consult.send` / `consult.message` sul bridge | Predisposto (relay + hook plugin; UI chat da fare) |
-| Live Polymarket | `LiveEngine` stub + `engine_mode` | Predisposto (no feed/trading reali) |
 
 ---
 
@@ -51,10 +53,10 @@ Questi vincoli **non** vanno indeboliti senza aggiornare esplicitamente questo d
 
 | # | Principio | Implicazione pratica |
 |---|-----------|----------------------|
-| P1 | **Fail-fast server+data** | Se server o data muore, l’altro viene terminato (`__main__.py`). Il bot **non** è nel fail-fast: crash → log + respawn soft. |
+| P1 | **Fail-fast server+engine** | Se server o Engine muore, l’altro viene terminato (`__main__.py`). Il bot **non** è nel fail-fast: crash → log + respawn soft. |
 | P2 | **Server = bridge** | `server.py` non simula ordini né clock; routing ruoli, ACL, consult relay, forward `strategy.load` al bot. |
-| P3 | **Engine = unica fonte di verità round** | Stato replay/live, ordini, account, settlement, **quale strategy è selezionata**: solo nel data process (`ReplayEngine`). |
-| P4 | **Pipe unidirezionali** | Cmd solo server→data; evt (response + event) solo data→server. Il bot **non** usa le pipe: parla solo Socket.IO col server. |
+| P3 | **Engine = shell; plugin = dominio** | Il processo Engine parla via pipe col server. Round, clock, ordini, settlement, **account/history** vivono nella **plugin** attiva (`replay` / `live`). Una sola plugin per processo. |
+| P4 | **Pipe unidirezionali** | Cmd solo server→Engine; evt (response + event) solo Engine→server. Il bot **non** usa le pipe: parla solo Socket.IO col server. |
 | P5 | **Due co-controller Socket.IO** | `human_sid` + `bot_sid`; stessa priorità/latenza; ACL per ruolo (bot: solo order.* + sync + consult). |
 | P6 | **Anti-spoiler** | Picker senza outcome; outcome UI solo a `round_end` / sec 0. |
 | P7 | **Causalità timeline** | Chart e scrub non espongono tick futuri rispetto a `sec` di replay. |
@@ -64,6 +66,7 @@ Questi vincoli **non** vanno indeboliti senza aggiornare esplicitamente questo d
 | P11 | **Spawn, non fork** | `multiprocessing.set_start_method("spawn", force=True)` (Windows + isolamento pulito). |
 | P12 | **Actor / source** | Bridge inietta `actor`; ordini hanno `source: user\|bot`; evento `action` per mutazioni. (Futuro multi-strategy: campo `strategy_id` aggiuntivo; oggi solo `source: bot`.) |
 | P13 | **Bot = shell; Strategy = logica** | Il processo bot è sempre su; senza strategy non emette trade. Il server scambia messaggi di trading solo col bot, mai direttamente con una strategy. |
+| P14 | **Niente hot-swap plugin Engine** | La plugin Engine si sceglie solo a startup (`engine_plugin` in setup). Cambio plugin ⇒ restart completo (rilegge setup). |
 
 ---
 
@@ -71,8 +74,8 @@ Questi vincoli **non** vanno indeboliti senza aggiornare esplicitamente questo d
 
 ```
   Browser (human) ──┐
-                    ├── Socket.IO ──► ServerBridge ──pipe CMD──► DataEngine
-  Bot process ──────┘                      │                      (replay | live stub)
+                    ├── Socket.IO ──► ServerBridge ──pipe CMD──► Engine process
+  Bot process ──────┘                      │                    + plugin (replay|live|…)
   (sempre spawnato)                        │
   + Strategy* dentro                       ├── broadcast eventi ──► human + bot
                                            │
@@ -80,11 +83,12 @@ Questi vincoli **non** vanno indeboliti senza aggiornare esplicitamente questo d
                                            consult.* = peer relay (no pipe data)
 ```
 
-- Fail-fast: solo `dashv2-server` + `dashv2-data`.
-- Bot (`dashv2-bot`): processo strutturale spawnato col launcher; crash → soft (log + respawn); senza strategy connesso ma inerte.
-- `engine_mode` in `setup.json`: `"replay"` → `ReplayEngine`; `"live"` → `LiveEngine` stub.
+- Fail-fast: `dashv2-server` + `dashv2-engine`.
+- Bot (`dashv2-bot`): processo strutturale; crash → soft (log + respawn); senza strategy connesso ma inerte.
+- Engine (`dashv2-engine`): shell + **una** plugin da `engine_plugin` in `setup.json` (oggi tipicamente `"replay"`). Nessun hot-swap: cambio plugin ⇒ restart.
+- Shell Engine senza plugin (`engine_plugin: null`): pipe viva, nessun dominio — utile come capacità; in pratica setup punta a `replay` o `live`.
 
-**Nota lessicale — “engine”:** in questo documento *engine* = processo **data** (`ReplayEngine` / `LiveEngine` in `engine.py` / `live_engine.py`), non il server. Il server è solo bridge Socket.IO + IPC.
+**Nota lessicale — “Engine”:** processo OS stabile (`dashv2/engine/process.py`). Non confondere con la **plugin** (`replay` / `live`) né col server (solo bridge).
 
 Avvio: `dashv2.bat` oppure `python -m dashv2` dalla root repo → URL da `setup.json` (default `http://127.0.0.1:8780/`).
 
@@ -103,26 +107,26 @@ File: [`dashv2/__main__.py`](../dashv2/__main__.py)
 2. `load_config()` da `dashv2/setup.json` (path risolti, `history_dir` creato se manca, `data_dir` deve esistere).
 3. Se esiste `data_dir/restart` **prima** dello spawn → lo elimina (niente doppio boot da sentinella residua).
 4. Creazione di **due** `mp.Pipe(duplex=False)`:
-   - `data_recv_cmd` ← `server_send_cmd` (comandi verso i dati);
-   - `server_recv_evt` ← `data_send_evt` (response ed eventi verso il server).
-5. Avvio `Process(target=run_data_process, name="dashv2-data")`.
+   - `eng_recv_cmd` ← `server_send_cmd` (comandi verso l’Engine);
+   - `server_recv_evt` ← `eng_send_evt` (response ed eventi verso il server).
+5. Avvio `Process(target=run_engine_process, name="dashv2-engine")`.
 6. Avvio `Process(target=run_server_process, name="dashv2-server")`.
 7. Avvio `Process(target=run_bot_process, name="dashv2-bot")` — sempre, anche senza strategy.
 8. Il processo padre entra in un loop di watchdog ogni 2 s:
    - se esiste `data_dir/restart` → cancella la sentinella, terminate+join dei **tre** figli, `os.execv(python, ["-m", "dashv2"])` (reload completo);
-   - se server o data non è `alive` → `_shutdown()` (terminate + join timeout 3 s) e `sys.exit(0)`;
+   - se server o Engine non è `alive` → `_shutdown()` (terminate + join timeout 3 s) e `sys.exit(0)`;
    - se solo il bot non è `alive` → log soft + **respawn** del solo processo bot (dash continua).
 9. SIGINT / SIGTERM → stesso `_shutdown` (termina anche il bot).
 
 ### Perché spawn + due pipe
 
-- **spawn**: su Windows è l’unico metodo affidabile; evita stato ereditato da fork e rende i processi indipendenti (utile se in futuro il data process vive più a lungo o viene riavviato).
-- **Due pipe unidirezionali**: direzione del flusso esplicita; niente contesa half-duplex su un unico canale; il demux response/event avviene solo sul lato server nella pipe EVT.
-- **Bot fuori dalle pipe**: stesso trasporto del browser (Socket.IO); il launcher lo tratta come cittadino di prima classe ma non lo mette nel fail-fast.
+- **spawn**: su Windows è l’unico metodo affidabile; evita stato ereditato da fork e rende i processi indipendenti.
+- **Due pipe unidirezionali**: direzione del flusso esplicita; demux response/event sul lato server.
+- **Bot fuori dalle pipe**: stesso trasporto del browser (Socket.IO).
 
 ### Cosa **non** fa il processo padre
 
-Non inoltra messaggi, non conosce Socket.IO, non tocca i round. È solo launcher + fail-fast (server/data) + soft-respawn bot + restart su sentinella.
+Non inoltra messaggi, non conosce Socket.IO, non tocca i round. È solo launcher + fail-fast (server/Engine) + soft-respawn bot + restart su sentinella.
 
 ---
 
@@ -147,7 +151,7 @@ Predicate: `is_response`, `is_event`.
    - response → sblocca il `threading.Event` del `request_id` pendente;
    - event → `socketio.emit(name, payload, to=controller_sid)`.
 2. Ogni request ha un `request_id` (UUID hex) usato per correlare la response.
-3. Il data process **non** scrive sulla pipe CMD; il server **non** scrive sulla pipe EVT.
+3. L’Engine **non** scrive sulla pipe CMD; il server **non** scrive sulla pipe EVT.
 4. Errori di comando: `make_error(request_id, message)` → il bridge li traduce in Exception / ack `{error: ...}` / evento `error` (solo per `round.load` async).
 
 ### Pattern speciale: `round.load`
@@ -190,7 +194,7 @@ Entry: `run_server_process(cfg, cmd_conn, evt_conn)`.
 - Eventi engine: broadcast a **entrambi** i sid presenti.
 - ACL: bot solo `order.*`, `session.sync`, `consult.send`; human tutto il resto + `bot.*`.
 - Bridge inietta `actor: user|bot` su ogni request IPC (non spoofabile dal client).
-- `consult.send`: peer relay sul bridge (**non** passa al data process); emit `consult.message` al peer e echo al mittente.
+- `consult.send`: peer relay sul bridge (**non** passa all’Engine); emit `consult.message` al peer e echo al mittente.
 - Disconnect human: pause replay best-effort.
 - Disconnect socket bot: log console + `bot.status` con `bot_connected: false`; server/data restano vivi; il processo bot ritenta la connect.
 - `bot.select`: aggiorna stato in engine, poi **forward** `strategy.load` al `bot_sid` (niente spawn/kill processo).
@@ -227,18 +231,30 @@ Stub engine `controller.claim` / `controller.release` esistono ma **non** sono e
 
 ---
 
-## 7. Processo DATA — `ReplayEngine`
+## 7. Processo ENGINE — shell + plugin
 
-File: [`dashv2/engine.py`](../dashv2/engine.py)  
-Entry: `run_data_process` → `ReplayEngine(cfg, cmd_conn, evt_conn).run()`.
+Package: [`dashv2/engine/`](../dashv2/engine/)  
+Entry: `run_engine_process` → carica **una** plugin da `cfg["engine_plugin"]` → `plugin.run()`.
 
-### Stato interno (campi rilevanti)
+### Ruoli
+
+| Concetto | Cos’è | Dove vive |
+|----------|-------|-----------|
+| **Engine** | Processo OS sempre spawnato; parla solo via pipe col server | `process.py` / `run_engine_process` |
+| **Plugin** | Dominio: round, clock, ordini, settlement, **account**, history | `plugins/replay.py`, `plugins/live.py`, … |
+| **Contratto** | Interfaccia comune (trading + account + settlement + history) | `protocol.py` |
+
+Analogia col bot: Engine : plugin = Bot : Strategy. Differenze: **una sola** plugin Engine; **nessun hot-swap** (solo startup / restart).
+
+### Plugin `replay` (`ReplayEngine`)
+
+Stato interno rilevante (invariato rispetto al motore replay precedente):
 
 | Campo | Ruolo |
 |-------|--------|
 | `repo` | `RoundRepository` (indice + load) |
 | `orders` | `OrderEngine` (posizioni in memoria) |
-| `accounts_root` | `history_dir/accounts` |
+| `accounts_root` | `history_dir/accounts` — **account locale del plugin replay** |
 | `active_account_id` | account selezionato (`_state.json`) |
 | `loaded` | `LoadedRound \| None` |
 | `sec` | secondi a scadenza (asse replay) |
@@ -247,15 +263,27 @@ Entry: `run_data_process` → `ReplayEngine(cfg, cmd_conn, evt_conn).run()`.
 | `seq` | monotono su ogni tick pubblico (anche preview scrub) |
 | `session_id` / `session_started_at_utc` | run corrente (nuovo a ogni `round.load`) |
 | `replay_speed` | 1, 2 o 5 |
-| `_next_tick_at` | `time.monotonic()` del prossimo advance |
-| `_prev_candles` | candele precedenti calcolate al load |
-| `_last_tick` | ultimo tick pubblico |
-| `_round_advanced` | True dopo il primo advance/seek≠300 |
-| `selected_bot_id` | strategy selezionata via shim `bot.select` (None = nessuna) |
-| `bot_active` | master switch: se True il bot può `order.place/close/cancel`; toggle real-time via `bot.set_active` |
-| `engine_mode` / `round_source` / `account_backend` | da config (`replay`/`live`, `local`/`polymarket`) |
+| `selected_bot_id` / `bot_active` | strategy shim selezionata / master switch |
+| `engine_plugin` / `round_source` / `account_backend` | `"replay"` / `"replay"` / `"local"` |
 
-### Loop principale (`run`)
+Loop, advance, settlement, tradable, helper tick: come prima (vedi sotto e sezioni ordini/history). Le regole account JSON attuali **appartengono al plugin replay**, non allo shell Engine né al futuro plugin live.
+
+### Plugin `live` (`LiveEngine`)
+
+Stub: stesso contratto IPC; `account_backend: polymarket`; trading/account reali non implementati. Avrà regole account diverse (wallet / API Polymarket) dietro la stessa interfaccia place/close/… .
+
+### Endpoint futuri (solo documentale)
+
+Stessa webapp base, due entrypoint HTTP che fissano la plugin Engine (e quindi richiedono processi/setup dedicati o restart con setup diverso):
+
+| Endpoint | Plugin Engine | Note |
+|----------|---------------|------|
+| `/replay` (o root attuale) | `replay` | Round da `data/`, account ledger locale |
+| `/live` | `live` | Feed/trading Polymarket, account live utente |
+
+Niente switch plugin a runtime nella stessa istanza: un cambio implica **riavvio** e rilettura `setup.json` (o istanza separata per endpoint).
+
+### Loop principale (plugin replay)
 
 All’avvio: eventi `bootstrap` + `accounts`.
 
@@ -305,7 +333,6 @@ Note:
 
 - `_public_tick`: proietta il tick interno nel payload browser (quote in centesimi, risk per lato, DWin).
 - `_dwin_public`: DWinA/B orientati al **segno del delta** (`dwin_ref_side`); il client inverte con `100-pct` per il lato opposto.
-
 ---
 
 ## 8. Round repository — `rounds.py`
@@ -392,7 +419,9 @@ Asse countdown: `sec` alto = inizio round, `sec` basso = fine.
 
 ---
 
-## 10. History / account ledger — `history.py`
+## 10. History / account ledger — `history.py` (plugin replay)
+
+Modulo di persistenza account del **plugin replay** (`account_backend: local`). Il plugin live userà un backend diverso dietro la stessa interfaccia account del protocollo Engine.
 
 ### Layout filesystem
 
@@ -464,8 +493,8 @@ Modello mentale della pipeline (sinistra ↔ destra):
   (controller)                     (bridge)                  (fonte di verità)
 
   Browser (human) ──┐
-                    ├── Socket.IO ──► ServerBridge ──CMD──► Data engine
-  Bot process ──────┘                      │               (replay | live)
+                    ├── Socket.IO ──► ServerBridge ──CMD──► Engine (+ plugin)
+  Bot process ──────┘                      │               (replay | live | …)
                                            │
                     ◄── eventi Socket.IO ──┤◄── EVT ───────┘
                     ◄── ack/response ──────┘
@@ -477,7 +506,7 @@ Modello mentale della pipeline (sinistra ↔ destra):
 
 | | **Comando** | **Evento** |
 |--|-------------|------------|
-| Origine | Sinistra: browser **o** bot | Destra: data engine (`ReplayEngine` / `LiveEngine`) |
+| Origine | Sinistra: browser **o** bot | Destra: Engine (plugin attiva) |
 | Direzione | sinistra → destra | destra → sinistra |
 | Scopo | *chiedere* una mutazione o una query di stato | *notificare* uno stato già deciso / avanzato |
 | Esempi | `round.load`, `replay.seek`, `order.place`, `bot.select` | `tick`, `session`, `orders`, `round_end`, `bot.status` |
@@ -514,7 +543,7 @@ I cataloghi concreti: §12 (browser↔server) e §12B (bot↔server).
 
 ## 12. Protocollo Socket.IO (browser ↔ server)
 
-Il browser non parla mai direttamente con il processo data.  
+Il browser non parla mai direttamente con il processo Engine.  
 I nomi comando Socket.IO coincidono con `cmd` IPC.
 
 ### Comandi (client → server)
@@ -690,7 +719,7 @@ Chiavi obbligatorie (`_REQUIRED`):
 | `chart_previous_candles` | Quante candele 5m precedenti caricare |
 | `default_order_size_usd` | Size iniziale Up/Down |
 | `stall_reconnect_sec` | Soglia stale Chainlink (allineata al collector) |
-| `engine_mode` | `"replay"` \| `"live"` (scelta solo a startup) |
+| `engine_plugin` | `"replay"` \| `"live"` \| `null` — plugin caricata **solo a startup** (null = shell vuota) |
 
 Chiave mancante o `data_dir` assente → eccezione immediata.
 
@@ -717,16 +746,18 @@ Env vars previsti per live reale (non letti dallo stub): `POLY_API_KEY`, `POLY_A
 
 | Percorso | Ruolo |
 |----------|--------|
-| `dashv2/__main__.py` | Launcher spawn + watchdog fail-fast (server/data) + soft-respawn bot + restart sentinella |
+| `dashv2/__main__.py` | Launcher spawn + watchdog fail-fast (server/engine) + soft-respawn bot + restart sentinella |
 | `dashv2/server.py` | Bridge Flask-SocketIO (human + bot, consult relay, forward strategy.load) |
-| `dashv2/engine.py` | Motore replay / comandi / eventi (fonte di verità anche per selected strategy) |
-| `dashv2/live_engine.py` | Stub `engine_mode: live` (stesso contratto IPC) |
+| `dashv2/engine/process.py` | Shell processo Engine (pipe, load plugin) |
+| `dashv2/engine/protocol.py` | Contratto `EnginePlugin` (trading + account + settlement + history) |
+| `dashv2/engine/plugins/replay.py` | Plugin replay (`ReplayEngine`) |
+| `dashv2/engine/plugins/live.py` | Plugin live stub (`LiveEngine`) |
 | `dashv2/ipc.py` | Envelope request/response/event |
 | `dashv2/rounds.py` | Indice, load merge, candele |
-| `dashv2/orders.py` | Simulazione CLOB |
-| `dashv2/history.py` | Account ledger JSON (`history/accounts/`) |
+| `dashv2/orders.py` | Simulazione CLOB (usata dal plugin replay) |
+| `dashv2/history.py` | Account ledger JSON — **backend del plugin replay** |
 | `dashv2/txt_rows.py` | Parse indicatori dal `.txt` |
-| `dashv2/config.py` + `setup.json` | Config fail-hard (`engine_mode` incluso) |
+| `dashv2/config.py` + `setup.json` | Config fail-hard (`engine_plugin` incluso) |
 | `dashv2/bots/` | Processo bot + plugin strategy shim (`bot_process.py`, `*_bot.py`) |
 | `dashv2/static/index.html` | DOM (header replay, tabs CANDLES/ACCOUNTS, ordini) |
 | `dashv2/static/css/dashboard.css` | Stile (token/misure mockup v38) |
@@ -792,10 +823,10 @@ Non esiste oggi un test e2e Socket.IO/browser.
 Il contratto da preservare:
 
 ```
-Browser  ↔  ServerBridge (invariato)  ↔  Data process (nuova sorgente tick)
+Browser  ↔  ServerBridge (invariato)  ↔  Engine + plugin (replay | live)
 ```
 
-Idealmente il data process continua a emettere gli stessi eventi (`tick`, `session`, `orders`, …) così il frontend e il bridge restano stabili. Cambia solo come si popola `LoadedRound` / lo stream secondario.
+Idealmente la plugin continua a emettere gli stessi eventi (`tick`, `session`, `orders`, …) così il frontend e il bridge restano stabili. Cambia solo come si popola il round / lo stream secondario (e il backend account).
 
 ### Anti-spoiler in nuove feature
 
@@ -807,25 +838,15 @@ Qualsiasi UI che espone liste di round, history, nomi file, tooltip, chart “fu
 
 ### Cose da non fare
 
-- Mettere clock/settlement/fee nel bridge (ok: ACL, consult relay, spawn bot).
-- Far parlare il browser con il data process senza passare dal bridge.
-- Usare `majority_gain` / `gain%` del txt come PnL ordini.
-- Riempire buchi nelle previous candles.
-- Introdurre default silenziosi in `setup.json` / `config.py`.
-- Mettere il bot nel fail-fast server+data o nel data process (rompe consulto peer e crash soft).
-- Far controllare replay (load/seek/play) al bot.
-
----
-
-### Cose da non fare
-
-- Mettere clock/settlement/fee nel bridge (ok: ACL, consult relay, forward strategy).
-- Far parlare il browser con il data process senza passare dal bridge.
+- Mettere clock/settlement/fee/account nel bridge (ok: ACL, consult relay, forward strategy).
+- Far parlare il browser con l’Engine senza passare dal bridge.
 - Far parlare una Strategy direttamente col server (passa sempre dal processo bot).
+- Mettere regole account replay nel plugin live (o viceversa): ogni plugin possiede il proprio backend.
+- Hot-swap della plugin Engine a runtime (solo startup + restart).
 - Usare `majority_gain` / `gain%` del txt come PnL ordini.
 - Riempire buchi nelle previous candles.
 - Introdurre default silenziosi in `setup.json` / `config.py`.
-- Mettere il bot nel fail-fast server+data o nel data process (rompe consulto peer e crash soft).
+- Mettere il bot nel fail-fast server+Engine o nell’Engine (rompe consulto peer e crash soft).
 - Far controllare replay (load/seek/play) al bot.
 - Spawn lazy del bot dal server (il bot è spawnato solo dal launcher).
 
@@ -839,7 +860,7 @@ Qualsiasi UI che espone liste di round, history, nomi file, tooltip, chart “fu
 |----------|-------|-----------|
 | **Bot** | Processo OS sempre spawnato; client Socket.IO `role=bot` | `bot_process.py` / `run_bot_process` |
 | **Strategy** | Logica decisionale caricata *dentro* il bot | oggi shim `*_bot.py`; domani tipi sotto |
-| **Engine** | Fonte di verità round + `selected_bot_id` / `bot_active` | `ReplayEngine` (processo data) |
+| **Engine (plugin)** | Fonte di verità round + `selected_bot_id` / `bot_active` | plugin attiva in `dashv2-engine` |
 
 Il server scambia comandi/eventi di trading **solo** col bot. La strategy non è un peer Socket.IO.
 
@@ -882,19 +903,31 @@ Attivazione:
 - Toggle Active (`bot.set_active`): real-time; off → bot non emette trade + bridge/engine rifiutano `order.*` del bot; umano continua a tradare.
 - Kind legacy plugin: `code`, `config`, `ai` (solo `code` oggi). Tipi target: deterministic / inferential / agentic.
 
-## 18ter. Live stub (`dashv2/live_engine.py`)
+## 18ter. Plugin Engine live (`dashv2/engine/plugins/live.py`)
 
-- Stesso entry `run_data_process` in base a `engine_mode`.
-- Bootstrap/sync con `engine_mode: live`, `account_backend: polymarket`.
-- Altri comandi → errore `"live engine not implemented"`.
-- Ledger: campo `round_source` (`replay`\|`live`) sulle entry.
+- Caricata se `engine_plugin: "live"` a startup (nessun hot-swap).
+- Bootstrap/sync con `engine_plugin: live`, `account_backend: polymarket`.
+- Altri comandi → errore `"live engine plugin not implemented"`.
+- Account live Polymarket: da implementare dietro la stessa interfaccia account/trading del protocollo plugin.
+- Ledger replay: campo `round_source` (`replay`\|`live`) sulle entry quando applicabile.
 
+---
+
+## 18quater. Parallelismo Bot/Strategy ↔ Engine/Plugin
+
+| | Lato sinistro | Lato destro |
+|--|---------------|-------------|
+| Processo stabile | **Bot** | **Engine** |
+| Logica caricabile | **Strategy** (anche più di una) | **Plugin** (una sola) |
+| Quando si carica | Runtime (`strategy.load` / `bot.select`) o setup futuro | **Solo startup** (`engine_plugin`) |
+| Senza carico | Bot connesso, inerte | Engine shell vuota (pipe ok, no dominio) |
+| Account | Non possiede account | **Il plugin** possiede account + history + settlement |
 ---
 
 ## 19. Diagramma sequenza — load + tick + ordine
 
 ```
-Browser          ServerBridge              ReplayEngine
+Browser          ServerBridge              Engine (plugin replay)
    |                  |                         |
    |-- round.load --->|                         |
    |<-- ack ok -------|                         |
@@ -915,17 +948,18 @@ Browser          ServerBridge              ReplayEngine
 
 ## 20. Checklist rapida per review di una PR dashv2
 
-- [ ] Business logic round/ordini solo in processo data / moduli `rounds|orders|history`?
-- [ ] Nuovi comandi in ACL bridge + handler engine?
+- [ ] Business logic round/ordini/account solo nella **plugin** Engine (non nello shell, non nel bridge)?
+- [ ] Nuovi comandi in ACL bridge + handler nella plugin?
 - [ ] Eventi broadcast ok per human e bot?
 - [ ] Anti-spoiler rispettato (picker, history, chart)?
 - [ ] Ordini usano walk CLOB + `fee_rate`, con `source`/`actor`?
 - [ ] Bot non controlla replay; attach strategy solo in pausa (non durante play)?
 - [ ] Bot spawnato dal launcher (non lazy dal server)? Strategy solo dentro il bot?
+- [ ] Plugin Engine scelta solo a startup (niente hot-swap)?
 - [ ] Config: nessuna chiave nuova senza aggiornare `_REQUIRED` e `setup.json`?
 - [ ] Test unitari per la parte di dominio toccata?
 - [ ] Questo documento aggiornato solo dopo che il codice funziona?
 
 ---
 
-*Ultimo allineamento al codice: bot processo fisso + strategy.load forward, soft-respawn, random shim, consult relay, actor/source, engine_mode + LiveEngine stub.*
+*Ultimo allineamento al codice: Engine shell + plugin replay/live, `engine_plugin`, bot processo fisso + strategy.load, soft-respawn, consult relay, actor/source.*
