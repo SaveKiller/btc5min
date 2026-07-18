@@ -20,7 +20,29 @@ class TestRounds(unittest.TestCase):
             self.skipTest("no rounds in data/")
         self.assertIn("day_utc", days[0])
         self.assertIn("count", days[0])
-        self.assertGreater(days[0]["count"], 0)
+        self.assertIn("valid", days[0])
+        # sequenza calendario continua tra min e max
+        from datetime import datetime, timedelta, timezone
+        first = datetime.strptime(days[-1]["day_utc"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        last = datetime.strptime(days[0]["day_utc"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        self.assertEqual(len(days), (last - first).days + 1)
+
+    def test_picker_day_fills_missing_slots(self):
+        days = [d for d in self.repo.list_days() if d["valid"]]
+        if not days:
+            self.skipTest("no rounds in data/")
+        day = days[0]["day_utc"]
+        picker = self.repo.list_picker_day(day)
+        self.assertEqual(len(picker), 288)
+        present = [r for r in picker if r["present"]]
+        missing = [r for r in picker if not r["present"]]
+        self.assertGreater(len(present), 0)
+        for r in missing:
+            self.assertFalse(r["valid"])
+            self.assertEqual(r["reason"], "missing round")
+        # slot allineati ogni 300s
+        for i in range(1, len(picker)):
+            self.assertEqual(picker[i]["market_start_ts"] - picker[i - 1]["market_start_ts"], 300)
 
     def test_picker_no_outcome(self):
         picker = self.repo.list_picker()

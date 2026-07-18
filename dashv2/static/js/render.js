@@ -133,15 +133,19 @@ export function renderRoundPickerDays(days, onDaySelect) {
     const total = days.reduce((n, d) => n + d.count, 0);
     menu.innerHTML = `
         <li><h6 class="dropdown-header">Rounds: ${total}</h6></li>
-        ${days.map((d) => `
-        <li><button class="dropdown-item round-day-btn" type="button" data-day="${d.day_utc}">
+        ${days.map((d) => {
+            const cls = d.valid === false ? "disabled" : "";
+            const title = d.valid === false ? ' title="missing day"' : "";
+            return `<li><button class="dropdown-item round-day-btn ${cls}" type="button" data-day="${d.day_utc}"${title}>
             ${d.day_utc}<span class="text-muted-app ms-1">(${d.count})</span>
             <i class="bi bi-chevron-right float-end opacity-50"></i>
-        </button></li>`).join("")}`;
+        </button></li>`;
+        }).join("")}`;
     menu.querySelectorAll(".round-day-btn").forEach((btn) => {
         btn.addEventListener("click", (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (btn.classList.contains("disabled")) return;
             onDaySelect(btn.dataset.day);
         });
     });
@@ -156,12 +160,15 @@ export function renderRoundPickerHours(dayUtc, hours, onBack, onHourSelect) {
         <li><button class="dropdown-item round-picker-back" type="button"><i class="bi bi-chevron-left me-1"></i>Giorni</button></li>
         <li><hr class="dropdown-divider"></li>
         <li><h6 class="dropdown-header">${dayUtc} UTC</h6></li>
-        ${hours.map((h) => `
-        <li><button class="dropdown-item round-hour-btn" type="button" data-hour="${h.hour_utc}">
+        ${hours.map((h) => {
+            const cls = h.valid === false ? "disabled" : "";
+            const title = h.valid === false ? ' title="missing hour"' : "";
+            return `<li><button class="dropdown-item round-hour-btn ${cls}" type="button" data-hour="${h.hour_utc}"${title}>
             <span class="round-hour-time">${h.hour_utc}<span class="text-muted-app ms-1">(${h.count})</span></span>
             <span class="round-hour-markets">${marketsForHourUtc(h.hour_utc)}</span>
             <i class="bi bi-chevron-right round-hour-chevron"></i>
-        </button></li>`).join("")}`;
+        </button></li>`;
+        }).join("")}`;
     menu.querySelector(".round-picker-back").addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -171,6 +178,7 @@ export function renderRoundPickerHours(dayUtc, hours, onBack, onHourSelect) {
         btn.addEventListener("click", (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (btn.classList.contains("disabled")) return;
             onHourSelect(btn.dataset.hour);
         });
     });

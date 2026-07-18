@@ -141,16 +141,24 @@ function roundHourUtc(market_start_ts) {
 
 function groupRoundsByHour(rounds) {
     const byHour = {};
+    for (let h = 0; h < 24; h++) {
+        const hour = `${String(h).padStart(2, "0")}:00`;
+        byHour[hour] = [];
+    }
     rounds.forEach((r) => {
         const hour = roundHourUtc(r.market_start_ts);
-        if (!byHour[hour]) byHour[hour] = [];
         byHour[hour].push(r);
     });
-    return Object.keys(byHour).sort().map((hour_utc) => ({
-        hour_utc,
-        count: byHour[hour_utc].length,
-        rounds: byHour[hour_utc].sort((a, b) => a.market_start_ts - b.market_start_ts),
-    }));
+    return Object.keys(byHour).sort().map((hour_utc) => {
+        const list = byHour[hour_utc].sort((a, b) => a.market_start_ts - b.market_start_ts);
+        const present = list.filter((r) => r.present !== false).length;
+        return {
+            hour_utc,
+            count: present,
+            valid: present > 0,
+            rounds: list,
+        };
+    });
 }
 
 function showRoundDays() {

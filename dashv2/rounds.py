@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dashv2.txt_rows import parse_txt_data_rows, txt_path_for_bin_path
@@ -29,6 +29,23 @@ def _utc_label(market_start_ts: int) -> str:
 
 def _day_key(market_start_ts: int) -> str:
     return datetime.fromtimestamp(market_start_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+ROUND_STEP_SEC = 300
+SLOTS_PER_DAY = 24 * 12  # 288 round da 5m in un giorno UTC
+
+
+def _day_start_ts(day_utc: str) -> int:
+    return int(datetime.strptime(day_utc, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
+
+
+def _iter_calendar_days(day_from: str, day_to: str):
+    """Giorni UTC inclusivi da day_from a day_to (YYYY-MM-DD)."""
+    cur = datetime.strptime(day_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    end = datetime.strptime(day_to, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    while cur <= end:
+        yield cur.strftime("%Y-%m-%d")
+        cur += timedelta(days=1)
 
 
 @dataclass
@@ -85,16 +102,37 @@ class RoundRepository:
         counts: dict[str, int] = {}
         for e in self._index:
             counts[e.day_utc] = counts.get(e.day_utc, 0) + 1
-        return [{"day_utc": d, "count": counts[d]} for d in sorted(counts.keys(), reverse=True)]
+        if not counts:
+            return []
+        days = []
+        for d in _iter_calendar_days(min(counts), max(counts)):
+            n = counts.get(d, 0)
+            days.append({"day_utc": d, "count": n, "valid": n > 0})
+        days.reverse()
+        return days
 
     def list_nav_ts(self) -> list[int]:
         return sorted(e.market_start_ts for e in self._index if e.valid)
 
     def list_picker_day(self, day_utc: str) -> list[dict]:
-        return [
-            {"market_start_ts": e.market_start_ts, "label": e.label, "valid": e.valid, "reason": e.reason}
-            for e in self._index if e.day_utc == day_utc
-        ]
+        """Tutti i 288 slot 5m del giorno UTC; assenti → valid=False, present=False."""
+        by_ts = {e.market_start_ts: e for e in self._index if e.day_utc == day_utc}
+        start = _day_start_ts(day_utc)
+        out = []
+        for i in range(SLOTS_PER_DAY):
+            ts = start + i * ROUND_STEP_SEC
+            e = by_ts.get(ts)
+            if e is None:
+                out.append({
+                    "market_start_ts": ts, "label": _utc_label(ts),
+                    "valid": False, "present": False, "reason": "missing round",
+                })
+            else:
+                out.append({
+                    "market_start_ts": e.market_start_ts, "label": e.label,
+                    "valid": e.valid, "present": True, "reason": e.reason,
+                })
+        return out
 
     def list_picker(self) -> list[dict]:
         return [{"market_start_ts": e.market_start_ts, "label": e.label, "day_utc": e.day_utc, "valid": e.valid, "reason": e.reason} for e in self._index]
