@@ -8,6 +8,7 @@
     "stall_reconnect_sec": 15,
     "engine_plugin": "replay",
     "cursor_label": "Composer 2.5",
+    "agent_cursor_label": "Grok 4.5 High",
     "cursor_models": [
         {
             "id": "composer-2.5",

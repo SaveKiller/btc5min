@@ -71,6 +71,9 @@
         <li class="nav-item" role="presentation">
           <button class="nav-link" id="bot-tab" data-bs-toggle="tab" data-bs-target="#botPane" type="button" role="tab" aria-controls="botPane" aria-selected="false">BOT</button>
         </li>
+        <li class="nav-item ms-auto" role="presentation">
+          <button class="nav-link" id="agent-tab" data-bs-toggle="tab" data-bs-target="#agentPane" type="button" role="tab" aria-controls="agentPane" aria-selected="false">AI AGENT</button>
+        </li>
       </ul>
       <div class="tab-content workspace-tab-content flex-grow-1 min-h-0">
         <div class="tab-pane fade h-100" id="candlesPane" role="tabpanel" aria-labelledby="candles-tab" tabindex="0">
@@ -164,6 +167,31 @@
                 <ul class="strategy-catalog-list flex-grow-1 mb-0" id="strategyCatalogList"></ul>
                 <p class="tiny text-muted-app mt-2 mb-0">Use + to add to bot; remove from LOADED labels. Double-click to edit.</p>
               </div>
+            </article>
+          </div>
+        </div>
+        <div class="tab-pane fade h-100" id="agentPane" role="tabpanel" aria-labelledby="agent-tab" tabindex="0">
+          <div class="agent-stack h-100 d-flex flex-column min-h-0 gap-2">
+            <aside class="app-panel agent-context-panel d-flex flex-column">
+              <div class="panel-head"><span class="panel-title">Context</span></div>
+              <div class="px-2 py-1 tiny agent-context-body" id="agentContextBody"></div>
+            </aside>
+            <article class="app-panel agent-chat-panel flex-grow-1 min-h-0 d-flex flex-column">
+              <div class="panel-head d-flex justify-content-between align-items-center">
+                <span class="panel-title">AI Agent · Grok 4.5</span>
+                <button class="btn btn-sm btn-outline-secondary" id="agentClearBtn" type="button">Clear</button>
+              </div>
+              <div class="agent-chat-log flex-grow-1 min-h-0 px-3 py-2" id="agentChatLog"></div>
+              <div class="agent-proposed d-none px-3 pb-2" id="agentProposedWrap">
+                <div class="tiny text-muted-app mb-1">Proposed rules</div>
+                <pre class="agent-proposed-pre mb-2" id="agentProposedRules"></pre>
+                <button class="btn btn-sm btn-primary" id="agentApplyRulesBtn" type="button" disabled>Applica rules</button>
+              </div>
+              <div class="agent-compose px-3 pb-3 pt-2 d-flex gap-2 align-items-end">
+                <textarea class="form-control agent-input" id="agentChatInput" rows="2" placeholder="Chiedi di strategie, account, bot, round…"></textarea>
+                <button class="btn btn-primary" id="agentSendBtn" type="button">Send</button>
+              </div>
+              <div class="tiny text-muted-app px-3 pb-2 d-none" id="agentStatusLabel"></div>
             </article>
           </div>
         </div>
@@ -346,6 +374,7 @@
 <script src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>
 <script src="/vendor/socket.io/socket.io.min.js"></script>
 <script src="/vendor/lightweight-charts/lightweight-charts.standalone.production.js"></script>
+<script src="/vendor/marked/marked.min.js"></script>
 <script type="module" src="/js/app.js"></script>
 </body>
 </html>

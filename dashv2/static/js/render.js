@@ -655,6 +655,102 @@ export function markStrategySelected(state, strategyId) {
 }
 
 
+export function renderAgentChat(messages, { thinking = false } = {}) {
+    const log = $("agentChatLog");
+    const parts = (messages || []).map((m) => {
+        const role = m.role === "user" ? "user" : "assistant";
+        return `<div class="agent-msg ${role}"><div class="agent-msg-role">${role}</div>`
+            + `<div class="agent-msg-body">${renderAgentMarkdown(m.content || "")}</div></div>`;
+    });
+    if (thinking) {
+        parts.push(
+            `<div class="agent-msg assistant agent-thinking" id="agentThinkingBubble">`
+            + `<div class="agent-msg-role">assistant</div>Thinking…</div>`
+        );
+    }
+    log.innerHTML = parts.join("");
+    log.scrollTop = log.scrollHeight;
+}
+
+
+export function renderAgentContext(state) {
+    const acc = state.activeAccount;
+    const focus = state.agentFocus || {};
+    const isLive = !!focus.is_live;
+    const sessionStratIds = isLive
+        ? (state.activeStrategyIds || focus.strategy_ids || [])
+        : (focus.strategy_ids || []);
+    const loadedLabel = sessionStratIds.map((id) => {
+        const s = state.strategies.find((x) => x.id === id);
+        return s ? s.name : id;
+    }).join(", ") || "—";
+    const roundVal = focus.market_start_ts != null ? String(focus.market_start_ts) : "—";
+    const secVal = isLive ? (focus.sec != null ? String(focus.sec) : "—") : "0";
+    const sessions = state.executionSessions || [];
+    const focusId = state.agentSessionId || "";
+    const opts = sessions.map((s) => {
+        const liveMark = s.session_id === state.session?.session_id ? " · live" : "";
+        const when = formatSessionClock(s.market_start_ts);
+        const label = `${s.session_id} · ${when} · ${s.n_events || 0} events${liveMark}`;
+        const selected = s.session_id === focusId ? " selected" : "";
+        return `<option value="${escapeHtml(s.session_id)}"${selected}>${escapeHtml(label)}</option>`;
+    }).join("");
+    const sessionControl = sessions.length
+        ? `<select class="form-select form-select-sm agent-session-select" id="agentSessionSelect">${opts}</select>`
+        : `<span title="—">—</span>`;
+    const parts = [
+        cell("Account", acc ? acc.name : "—"),
+        cell("Round", roundVal),
+        cell("Sec", secVal),
+        `<span class="agent-ctx-item agent-ctx-session"><strong>Session</strong>${sessionControl}</span>`,
+        cell("Bot", state.botActive ? "ACTIVE" : "PAUSED"),
+        `<span class="agent-ctx-item agent-ctx-loaded"><strong>Loaded strategies</strong>`
+            + `<span title="${escapeHtml(loadedLabel)}">${escapeHtml(loadedLabel)}</span></span>`,
+    ];
+    $("agentContextBody").innerHTML = parts.join("");
+}
+
+function cell(label, value) {
+    return `<span class="agent-ctx-item"><strong>${escapeHtml(label)}</strong>`
+        + `<span title="${escapeHtml(value)}">${escapeHtml(value)}</span></span>`;
+}
+
+
+/** market_start_ts → dd-MM HH:mm (UTC). */
+function formatSessionClock(mts) {
+    if (mts == null || mts === "") return "—";
+    const d = new Date(Number(mts) * 1000);
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const hh = String(d.getUTCHours()).padStart(2, "0");
+    const mi = String(d.getUTCMinutes()).padStart(2, "0");
+    return `${dd}-${mm} ${hh}:${mi}`;
+}
+
+export function renderAgentProposed(proposed, strategyId) {
+    const wrap = $("agentProposedWrap");
+    const btn = $("agentApplyRulesBtn");
+    if (!proposed?.rules) {
+        wrap.classList.add("d-none");
+        btn.disabled = true;
+        btn.dataset.strategyId = "";
+        btn.dataset.rules = "";
+        return;
+    }
+    wrap.classList.remove("d-none");
+    $("agentProposedRules").textContent = proposed.rules;
+    btn.disabled = !strategyId;
+    btn.dataset.strategyId = strategyId || "";
+    btn.dataset.rules = proposed.rules;
+}
+
+
+function renderAgentMarkdown(text) {
+    // marked è globale (vendor); breaks=true → newline → <br>
+    return marked.parse(String(text), { breaks: true, async: false });
+}
+
+
 function escapeHtml(value) {
     return String(value)
         .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")

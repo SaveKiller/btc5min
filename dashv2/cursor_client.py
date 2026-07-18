@@ -87,7 +87,10 @@ _META_MARKERS = (
 )
 
 
-def call_model(prompt: str, *, model_id: str, params: dict[str, str], cwd: str) -> str:
+def call_model(
+    prompt: str, *, model_id: str, params: dict[str, str], cwd: str,
+    reject_meta: bool = True,
+) -> str:
     """Invoca Cursor Agent locale; restituisce solo il testo del risultato."""
     api_key = os.environ["CURSOR_API_KEY"]
     model = ModelSelection(
@@ -108,9 +111,10 @@ def call_model(prompt: str, *, model_id: str, params: dict[str, str], cwd: str) 
             raise RuntimeError(f"Cursor startup failed: {e.message}") from e
         if result.status == "finished" and result.result and result.result.strip():
             text = result.result.strip()
-            for marker in _META_MARKERS:
-                if marker.lower() in text.lower():
-                    raise RuntimeError(f"Cursor meta-commentary instead of code (found {marker!r})")
+            if reject_meta:
+                for marker in _META_MARKERS:
+                    if marker.lower() in text.lower():
+                        raise RuntimeError(f"Cursor meta-commentary instead of code (found {marker!r})")
             return text
         last_err = RuntimeError(
             f"Cursor run failed: status={result.status} run_id={result.id} attempt={attempt}")

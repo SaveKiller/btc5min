@@ -9,6 +9,7 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 
 from dashv2 import ipc
+from dashv2.execution_log import append_execution
 from dashv2.history import (
     account_summary, accounts_dir, append_settled_orders, compute_stats, create_account,
     list_accounts, load_account, load_active_account_id, order_rows_for_run, order_rows_from_ledger,
@@ -189,6 +190,7 @@ class ReplayEngine:
         self._round_advanced = False
         result = {"ok": True, "market_start_ts": mts}
         def after():
+            self._write_session_begin()
             self._emit_session()
             self._emit_chart_full()
             self._emit_tick_at(self.sec)
@@ -214,6 +216,7 @@ class ReplayEngine:
         self.seq = 0
         self._round_advanced = sec != 300
         self.orders.clear_positions()
+        self._write_session_begin()
         self._emit_session()
         self._emit_chart_full()
         self._emit_tick_at(self.sec)
@@ -370,14 +373,18 @@ class ReplayEngine:
         tick, book = self._require_tick_book()
         side, size = payload["side"], float(payload["size_usd"])
         strategy_id = payload.get("strategy_id") if actor == "bot" else None
+        reason = payload.get("reason")
         order = self.orders.place(
             side, size, self.sec, tick, book, self.loaded.fee_rate, account_id, actor,
-            strategy_id=strategy_id)
+            strategy_id=strategy_id, reason=reason)
         self.orders.revalue_mtm(self.sec, tick, book, self.loaded.fee_rate)
         self._emit_orders(actor=actor)
-        self._emit_action(actor, "order.place", {
+        detail = {
             "order_id": order["id"], "side": side, "size_usd": size, "strategy_id": strategy_id,
-        })
+            "reason": reason, "best_ask_c": order.get("best_ask_c"),
+        }
+        self._emit_action(actor, "order.place", detail)
+        self._append_exec_log(actor, "order.place", detail, order)
         self._emit_session()
         return {"ok": True, "order": order}
 
@@ -386,12 +393,54 @@ class ReplayEngine:
         actor = _actor_from_payload(payload)
         self._require_bot_trading(actor)
         tick, book = self._require_tick_book()
-        closed = self.orders.close(payload["order_id"], self.sec, tick, book, self.loaded.fee_rate)
+        reason = payload.get("reason")
+        if reason is None and actor == "user":
+            reason = "manual"
+        closed = self.orders.close(
+            payload["order_id"], self.sec, tick, book, self.loaded.fee_rate, reason=reason)
         self._emit_orders(actor=actor)
         self._emit_history()
-        self._emit_action(actor, "order.close", {"order_id": closed["id"]})
+        detail = {
+            "order_id": closed["id"], "strategy_id": closed.get("strategy_id"),
+            "reason": closed.get("close_reason"), "pnl_usd": closed.get("pnl_usd"),
+            "side": closed.get("side"), "size_usd": closed.get("size_usd"),
+        }
+        self._emit_action(actor, "order.close", detail)
+        self._append_exec_log(actor, "order.close", detail, closed)
         self._emit_session()
         return {"ok": True, "order": closed}
+
+    def _append_exec_log(self, actor: str, cmd: str, detail: dict, order: dict) -> None:
+        if not self.session_id or not self.loaded:
+            return
+        append_execution(Path(self.cfg["history_dir"]), {
+            "session_id": self.session_id,
+            "market_start_ts": self.loaded.market_start_ts,
+            "sec": self.sec,
+            "strategy_id": detail.get("strategy_id") or order.get("strategy_id"),
+            "cmd": cmd,
+            "order_id": detail.get("order_id") or order.get("id"),
+            "side": detail.get("side") or order.get("side"),
+            "size_usd": detail.get("size_usd") or order.get("size_usd"),
+            "best_ask_c": order.get("best_ask_c"),
+            "mtm_usd": order.get("mtm_usd"),
+            "pnl_usd": detail.get("pnl_usd") or order.get("pnl_usd"),
+            "reason": detail.get("reason"),
+            "source": actor,
+        })
+
+    def _write_session_begin(self) -> None:
+        """Snapshot strategie caricate all'avvio sessione (anche senza ordini)."""
+        if not self.session_id or not self.loaded:
+            return
+        append_execution(Path(self.cfg["history_dir"]), {
+            "session_id": self.session_id,
+            "market_start_ts": self.loaded.market_start_ts,
+            "sec": self.sec,
+            "cmd": "session.begin",
+            "active_strategy_ids": list(self.active_strategy_ids),
+            "source": "engine",
+        })
 
     def _cmd_order_cancel(self, payload: dict) -> dict:
         if not self.loaded or self.round_ended: raise Exception("trading blocked")

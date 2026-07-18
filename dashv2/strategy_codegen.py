@@ -28,9 +28,11 @@ ctx (input tipico su ogni tick):
   open_orders (list of order dicts), strategy_id (str), bot_active (bool)
 
 Azioni ammesse (lista restituita dalle hook):
-  {"cmd": "order.place", "side": "Up"|"Down", "size_usd": float}
-  {"cmd": "order.close", "order_id": str}
-  {"cmd": "order.cancel", "order_id": str}
+  {"cmd": "order.place", "side": "Up"|"Down", "size_usd": float, "reason": str opzionale}
+  {"cmd": "order.close", "order_id": str, "reason": str opzionale}
+  {"cmd": "order.cancel", "order_id": str, "reason": str opzionale}
+
+Il campo reason (consigliato) spiega in una riga perché apri/chiudi (es. "majority 80c x2s", "TP +10%").
 
 SIZE (obbligatorio su ogni order.place):
   - size_usd è un float USD scelto dalla strategy per quel singolo ordine

@@ -11,13 +11,19 @@ from flask import Flask, send_from_directory
 from flask_socketio import SocketIO
 
 from dashv2 import ipc
+from dashv2.agent_chat import clear_thread, load_thread
+from dashv2.agent_round_tools import AgentRoundTools
+from dashv2.agent_service import AgentService
 from dashv2.config import reload_strategy_codegen_system_prompt
-from dashv2.strategies import strategies_dir, write_module
+from dashv2.execution_log import execution_session_meta, list_execution_sessions
+from dashv2.rounds import RoundRepository
+from dashv2.strategies import load_strategy, strategies_dir, write_module
 from dashv2.strategy_codegen import generate_strategy_module
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _ACK_TIMEOUT_SEC = 30.0
 _ROUND_LOAD_TIMEOUT_SEC = 120.0
+_AGENT_CHAT_TIMEOUT_SEC = 600.0
 
 # Comandi che il bot può emettere verso il server (protocollo 12B).
 _BOT_CMDS = frozenset({
@@ -32,8 +38,14 @@ _HUMAN_CMDS = frozenset({
     "account.rename", "account.update", "bot.list", "bot.set_active",
     "strategy.list", "strategy.create", "strategy.update", "strategy.clone", "strategy.delete",
     "strategy.load", "strategy.unload", "session.sync", "consult.send",
+    "agent.chat.send", "agent.chat.clear", "agent.chat.history", "agent.rules.apply",
+    "agent.executions.list", "agent.session.select",
 })
 _STRATEGY_GEN_CMDS = frozenset({"strategy.create", "strategy.update"})
+_AGENT_CMDS = frozenset({
+    "agent.chat.send", "agent.chat.clear", "agent.chat.history", "agent.rules.apply",
+    "agent.executions.list", "agent.session.select",
+})
 
 
 class ServerBridge:
@@ -52,7 +64,19 @@ class ServerBridge:
         self._sid_role: dict[str, str] = {}
         self._bot_active = False
         self._active_strategy_ids: list[str] = []
+        self._active_account_id: str | None = None
+        self._live_ctx = {
+            "loaded": False, "market_start_ts": None, "session_id": None,
+            "agent_session_id": None,
+            "sec": None, "bot_active": False, "active_strategy_ids": [],
+            "selected_strategy_id": None,
+        }
         self.strategies_root = strategies_dir(Path(cfg["history_dir"]))
+        self.round_tools = AgentRoundTools(
+            RoundRepository(Path(cfg["data_dir"]), float(cfg["stall_reconnect_sec"])))
+        self.agent_service = AgentService(cfg, self._agent_tool_ctx)
+        self.agent_service.set_apply_rules_fn(self._agent_apply_rules)
+        self._agent_busy = False
         self._register_routes()
         self._register_socketio()
         threading.Thread(target=self._evt_reader_loop, daemon=True).start()
@@ -151,10 +175,11 @@ class ServerBridge:
             self.socketio.emit("consult.message", msg, to=request.sid)
             return {"ok": True}
 
-        for evt in sorted(_HUMAN_CMDS - {"consult.send"} - _STRATEGY_GEN_CMDS):
+        for evt in sorted(_HUMAN_CMDS - {"consult.send"} - _STRATEGY_GEN_CMDS - _AGENT_CMDS):
             self._bind_command(evt)
         self._bind_strategy_create()
         self._bind_strategy_update()
+        self._bind_agent_chat()
 
     def _bind_command(self, cmd: str) -> None:
         @self.socketio.on(cmd)
@@ -206,6 +231,163 @@ class ServerBridge:
             except Exception as e:
                 self._emit_generate("error", str(e))
                 return {"error": str(e)}
+
+    def _agent_tool_ctx(self) -> dict:
+        ctx = dict(self._live_ctx)
+        ctx["round_tools"] = self.round_tools
+        ctx["bot_active"] = self._bot_active
+        ctx["active_strategy_ids"] = list(self._active_strategy_ids)
+        return ctx
+
+    def _agent_apply_rules(
+        self, strategy_id: str, rules: str, name: str | None, description: str | None,
+    ) -> dict:
+        data = load_strategy(self.strategies_root, strategy_id)
+        body = {
+            "strategy_id": strategy_id,
+            "name": name if name is not None else data["name"],
+            "description": description if description is not None else data.get("description") or "",
+            "rules": rules,
+            "rules_changed": True,
+        }
+        result = self._strategy_update_with_codegen(body)
+        return {"ok": True, "strategy": result.get("strategy")}
+
+    def _agent_focus_payload(self) -> dict:
+        focus = self._live_ctx.get("agent_session_id") or self._live_ctx.get("session_id")
+        live_sid = self._live_ctx.get("session_id")
+        is_live = bool(focus and focus == live_sid)
+        meta = execution_session_meta(Path(self.cfg["history_dir"]), focus) if focus else {
+            "session_id": None, "market_start_ts": None, "last_sec": None, "n_events": 0,
+        }
+        if is_live:
+            mts = self._live_ctx.get("market_start_ts") or meta.get("market_start_ts")
+            sec = self._live_ctx.get("sec")
+            strategy_ids = list(self._live_ctx.get("active_strategy_ids") or [])
+        else:
+            mts = meta.get("market_start_ts")
+            sec = 0  # sessione storica conclusa
+            strategy_ids = list(meta.get("strategy_ids") or [])
+        return {
+            "agent_session_id": focus,
+            "is_live": is_live,
+            "market_start_ts": mts,
+            "sec": sec,
+            "n_events": meta.get("n_events") or 0,
+            "strategy_ids": strategy_ids,
+            "live_session_id": live_sid,
+            "sessions": list_execution_sessions(
+                Path(self.cfg["history_dir"]), live_session_id=live_sid),
+        }
+
+    def _emit_agent_focus(self) -> None:
+        if self._human_sid:
+            self.socketio.emit("agent.session", self._agent_focus_payload(), to=self._human_sid)
+
+    def _set_agent_session(self, session_id: str | None) -> dict:
+        self._live_ctx["agent_session_id"] = session_id
+        payload = self._agent_focus_payload()
+        self._emit_agent_focus()
+        return payload
+
+    def _bind_agent_chat(self) -> None:
+        @self.socketio.on("agent.chat.history")
+        def on_history(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            account_id = (payload or {}).get("account_id") or self._active_account_id
+            if not account_id:
+                return {"error": "no active account"}
+            return {"ok": True, "messages": load_thread(Path(self.cfg["history_dir"]), account_id)}
+
+        @self.socketio.on("agent.chat.clear")
+        def on_clear(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            account_id = (payload or {}).get("account_id") or self._active_account_id
+            if not account_id:
+                return {"error": "no active account"}
+            clear_thread(Path(self.cfg["history_dir"]), account_id)
+            if self._human_sid:
+                self.socketio.emit("agent.chat.cleared", {"account_id": account_id}, to=self._human_sid)
+            return {"ok": True}
+
+        @self.socketio.on("agent.executions.list")
+        def on_exec_list(_payload=None):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            return {"ok": True, **self._agent_focus_payload()}
+
+        @self.socketio.on("agent.session.select")
+        def on_session_select(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            sid = (payload or {}).get("session_id")
+            if not sid:
+                return {"error": "session_id required"}
+            return {"ok": True, **self._set_agent_session(sid)}
+
+        @self.socketio.on("agent.rules.apply")
+        def on_rules_apply(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            body = payload or {}
+            try:
+                result = self._agent_apply_rules(
+                    body["strategy_id"], body["rules"], body.get("name"), body.get("description"))
+                return result
+            except Exception as e:
+                self._emit_generate("error", str(e))
+                return {"error": str(e)}
+
+        @self.socketio.on("agent.chat.send")
+        def on_send(payload):
+            # Ack immediato: run_turn (Cursor) dura minuti e se blocca il handler
+            # il websocket scade → ack/evento non arrivano e la UI resta su Thinking.
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            body = payload or {}
+            account_id = body.get("account_id") or self._active_account_id
+            if not account_id:
+                return {"error": "no active account"}
+            text = (body.get("text") or "").strip()
+            if not text:
+                return {"error": "empty message"}
+            if self._agent_busy:
+                return {"error": "agent busy"}
+            if body.get("selected_strategy_id") is not None:
+                self._live_ctx["selected_strategy_id"] = body.get("selected_strategy_id")
+            if body.get("agent_session_id"):
+                self._live_ctx["agent_session_id"] = body.get("agent_session_id")
+            self._agent_busy = True
+            if self._human_sid:
+                self.socketio.emit("agent.chat.status", {"phase": "thinking"}, to=self._human_sid)
+
+            def _run_agent_turn():
+                try:
+                    result = self.agent_service.run_turn(account_id, text)
+                    if self._human_sid:
+                        self.socketio.emit("agent.chat.message", {
+                            "message": result["message"],
+                            "proposed_rules": result.get("proposed_rules"),
+                            "account_id": account_id,
+                        }, to=self._human_sid)
+                except Exception as e:
+                    if self._human_sid:
+                        self.socketio.emit("agent.chat.error", {"message": str(e)}, to=self._human_sid)
+                finally:
+                    self._agent_busy = False
+                    if self._human_sid:
+                        self.socketio.emit("agent.chat.status", {"phase": "idle"}, to=self._human_sid)
+
+            self.socketio.start_background_task(_run_agent_turn)
+            return {"ok": True, "accepted": True}
 
     def _codegen_source(self, rules: str) -> str:
         model = self.cfg["cursor_model"]
@@ -308,10 +490,40 @@ class ServerBridge:
             if not ipc.is_event(msg):
                 continue
             name, payload = msg["name"], msg.get("payload") or {}
-            if name == "bot.status" and "bot_active" in payload:
-                self._bot_active = bool(payload["bot_active"])
+            if name == "session":
+                prev_live = self._live_ctx.get("session_id")
+                new_live = payload.get("session_id")
+                self._live_ctx["loaded"] = bool(payload.get("loaded"))
+                self._live_ctx["market_start_ts"] = payload.get("market_start_ts")
+                self._live_ctx["session_id"] = new_live
+                self._live_ctx["sec"] = payload.get("sec")
+                if "bot_active" in payload:
+                    self._bot_active = bool(payload["bot_active"])
+                    self._live_ctx["bot_active"] = self._bot_active
                 if "active_strategy_ids" in payload:
                     self._active_strategy_ids = list(payload.get("active_strategy_ids") or [])
+                    self._live_ctx["active_strategy_ids"] = list(self._active_strategy_ids)
+                if "active_account_id" in payload:
+                    self._active_account_id = payload.get("active_account_id")
+                # Nuova sessione live → focus forzato (anche se c'era una storica selezionata).
+                if new_live and new_live != prev_live:
+                    self._live_ctx["agent_session_id"] = new_live
+                    self._broadcast(name, payload)
+                    self._emit_agent_focus()
+                    continue
+                if self._live_ctx.get("agent_session_id") == new_live:
+                    # Aggiorna Round/Sec live nel context senza cambiare focus.
+                    self._broadcast(name, payload)
+                    self._emit_agent_focus()
+                    continue
+            if name == "bot.status" and "bot_active" in payload:
+                self._bot_active = bool(payload["bot_active"])
+                self._live_ctx["bot_active"] = self._bot_active
+                if "active_strategy_ids" in payload:
+                    self._active_strategy_ids = list(payload.get("active_strategy_ids") or [])
+                    self._live_ctx["active_strategy_ids"] = list(self._active_strategy_ids)
+            if name == "accounts" and "active_account_id" in payload:
+                self._active_account_id = payload.get("active_account_id")
             self._broadcast(name, payload)
 
 

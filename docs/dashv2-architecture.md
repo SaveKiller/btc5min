@@ -675,11 +675,25 @@ Nessun bundler. Moduli ES in `static/js/`, vendor offline in `static/vendor/`.
 
 | File | Ruolo |
 |------|--------|
-| `static/index.html` | DOM: header replay, tabs left (CANDLES / ACCOUNTS / BOT), pannello ordini right, modal account |
+| `static/index.html` | DOM: header replay, tabs left (CANDLES / ACCOUNTS / BOT / AI AGENT), pannello ordini right, modal account |
 | `static/css/dashboard.css` | Stile (token/misure mockup v38) |
 | `static/js/app.js` | Stato client, Socket.IO, binding controlli, CSV export |
 | `static/js/render.js` | Aggiornamento DOM (tick, ladder, ordini, picker, history, accounts) |
 | `static/js/chart.js` | Lightweight Charts v5 — candele 5m |
+
+### AI Agent (tab AI AGENT)
+
+Chat human-only con **Grok 4.5 High** (`agent_cursor_label` in setup), Cursor SDK come codegen (`reject_meta=False`).
+
+| Pezzo | Path / comando |
+|-------|----------------|
+| Persistenza thread | `history/agent/account_{id}/thread.json` (`agent_chat.py`) — **prossimo step:** thread per `session_id` (chat a tema sessione) |
+| Orchestrazione | `agent_service.py` + `agent_system_prompt.md` (cita sempre `session_id` nelle analisi) |
+| Tool round | `agent_round_tools.py` |
+| Exec log | `history/executions/{session_id}.jsonl` (`execution_log.py`); lista meta in Context dropdown |
+| Socket | `agent.chat.send` ack immediato `{accepted:true}` (turno in background); `agent.executions.list` / `agent.session.select`; eventi `agent.chat.message` / `status` / `error` / `agent.session`. Nuova sessione live → focus forzato su di essa. |
+
+Rules-first: proposte in chat (fence `rules`); apply solo con conferma UI o tool `strategy.apply_rules` + `confirm:true` → codegen update. Vietato write diretto del `.py`.
 
 ### Stato client (`app.js`)
 
@@ -697,6 +711,7 @@ Slider: `pointerdown` → pause; `input` → `replay.preview`; `pointerup` → `
 |------|------|
 | Header / play / timeline / BTC | `index.html` + `render.js` (`renderTick`) + `app.js` |
 | Chart | `chart.js` + eventi `chart` da engine |
+| AI Agent chat | `index.html` (`#agentPane`) + `render.js` (`renderAgent*`) + `app.js` |
 | Ladder / signal / BUY | `render.js` + previews da tick/order |
 | Open orders / Close / Cancel | `render.js` (`renderOrders`) |
 | History / CSV / session groups | `render.js` (`renderHistory`) + `app.js` |
@@ -721,6 +736,8 @@ Chiavi obbligatorie (`_REQUIRED`):
 | `default_order_size_usd` | Size iniziale Up/Down |
 | `stall_reconnect_sec` | Soglia stale Chainlink (allineata al collector) |
 | `engine_plugin` | `"replay"` \| `"live"` \| `null` — plugin caricata **solo a startup** (null = shell vuota) |
+| `cursor_label` / `cursor_models` | Modello codegen strategie |
+| `agent_cursor_label` | Modello chat AI Agent (es. `"Grok 4.5 High"`) |
 
 Chiave mancante o `data_dir` assente → eccezione immediata.
 
@@ -757,10 +774,13 @@ Env vars previsti per live reale (non letti dallo stub): `POLY_API_KEY`, `POLY_A
 | `dashv2/rounds.py` | Indice, load merge, candele |
 | `dashv2/orders.py` | Simulazione CLOB (usata dal plugin replay) |
 | `dashv2/history.py` | Account ledger JSON — **backend del plugin replay** |
+| `dashv2/execution_log.py` | Jsonl esecuzione ordini per session_id |
+| `dashv2/agent_chat.py` / `agent_service.py` / `agent_round_tools.py` | Chat AI Agent + tool |
+| `dashv2/agent_system_prompt.md` | System prompt agent (IT, domain, rules-first) |
 | `dashv2/txt_rows.py` | Parse indicatori dal `.txt` |
-| `dashv2/config.py` + `setup.json` | Config fail-hard (`engine_plugin` incluso) |
+| `dashv2/config.py` + `setup.json` | Config fail-hard (`engine_plugin`, `agent_cursor_label`) |
 | `dashv2/bots/` | Processo bot + plugin strategy shim (`bot_process.py`, `*_bot.py`) |
-| `dashv2/static/index.html` | DOM (header replay, tabs CANDLES/ACCOUNTS, ordini) |
+| `dashv2/static/index.html` | DOM (header replay, tabs CANDLES/ACCOUNTS/BOT/AI AGENT, ordini) |
 | `dashv2/static/css/dashboard.css` | Stile (token/misure mockup v38) |
 | `dashv2/static/js/app.js` | Stato client, Socket.IO, binding, CSV |
 | `dashv2/static/js/render.js` | DOM tick/ladder/ordini/picker/history/accounts |
@@ -789,9 +809,11 @@ python -m unittest discover -s dashv2/tests
 | `test_seek_history.py` | prune_seek, cancel, account CRUD, payout/outcome rows, visible_orders |
 | `test_dwin_public.py` | Proiezione DWin nel tick pubblico |
 | `test_side_risk.py` | Risk per lato in tick |
-| `test_bot_live.py` | Bot list/select/active + live stub |
+| `test_bot_live.py` | Bot list/select/active + live stub + ACL agent |
+| `test_agent_chat.py` | Thread chat, exec log, tool parse, turn mock |
+| `test_strategy_codegen.py` | Codegen parse/validate + clone |
 
-Smoke manuale: `dashv2.bat` → load → play → seek → BUY → close/cancel o settlement → history/CSV.
+Smoke manuale: `dashv2.bat` → load → play → seek → BUY → close/cancel o settlement → history/CSV; tab AI AGENT con account attivo.
 
 Non esiste oggi un test e2e Socket.IO/browser.
 

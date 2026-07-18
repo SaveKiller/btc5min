@@ -1,15 +1,15 @@
 import { initChart, relayoutChart, resizeChart, setCandles, updateCurrentCandle } from "./chart.js";
 import {
-    applyButtonPreviews, layoutReplayScale, markStrategySelected, renderAccounts, renderBotPanel,
-    renderEnginePlugin, renderHistory, renderOrders, renderOutcome, renderRoundPickerDays,
-    renderRoundPickerHours, renderRoundPickerRounds, renderSessionHistory, renderStakeButtons,
-    renderTick, setDisconnectBanner, toggleHistorySession,
+    applyButtonPreviews, layoutReplayScale, markStrategySelected, renderAccounts, renderAgentChat,
+    renderAgentContext, renderAgentProposed, renderBotPanel, renderEnginePlugin, renderHistory,
+    renderOrders, renderOutcome, renderRoundPickerDays, renderRoundPickerHours, renderRoundPickerRounds,
+    renderSessionHistory, renderStakeButtons, renderTick, setDisconnectBanner, toggleHistorySession,
 } from "./render.js";
 
 const REPLAY_SPEED_KEY = "dashv2_replay_speed";
 const REPLAY_SPEEDS = [1, 2, 5];
 const LEFT_TAB_KEY = "dashv2_left_tab";
-const LEFT_TAB_IDS = ["candles-tab", "accounts-tab", "bot-tab"];
+const LEFT_TAB_IDS = ["candles-tab", "accounts-tab", "bot-tab", "agent-tab"];
 const DEFAULT_LEFT_TAB = "accounts-tab";
 
 const state = {
@@ -20,6 +20,8 @@ const state = {
     chartPrevious: [], chartCurrent: null, chartFreeView: false, scrubbing: false, wasPlaying: false,
     activeRoundTs: null, syncSizesOnNextOrders: false, loadedRoundDays: {},
     roundDays: [], roundNav: [], replaySpeed: loadStoredReplaySpeed(),
+    agentMessages: [], agentBusy: false, agentProposed: null,
+    agentSessionId: null, executionSessions: [], agentFocus: null,
 };
 
 const socket = io({ transports: ["websocket", "polling"] });
@@ -98,6 +100,15 @@ socket.on("connect", () => {
     emitAck("session.sync")
         .then(() => applyReplaySpeed(state.replaySpeed, { persist: false }))
         .catch(console.error);
+    // Se il turno agent era in corso e il WS è ricollegato, ricarica la history
+    // (la risposta può essere già su disco anche se l'ack era andato perso).
+    if (state.activeAccountId) {
+        const wasBusy = state.agentBusy;
+        loadAgentHistory().finally(() => {
+            if (wasBusy) finishAgentTurn();
+        });
+    }
+    loadAgentExecutions();
 });
 
 socket.on("disconnect", () => setDisconnectBanner(true));
@@ -208,11 +219,86 @@ function openRoundDay(dayUtc) {
 }
 
 function applyAccountsPayload(payload) {
+    const prevId = state.activeAccountId;
     state.accounts = payload.accounts || [];
     state.activeAccountId = payload.active_account_id ?? null;
     state.activeAccount = payload.active ?? null;
     renderAccounts(state);
+    renderAgentContext(state);
+    if (state.activeAccountId && state.activeAccountId !== prevId) loadAgentHistory();
 }
+
+function setAgentStatus(text) {
+    const el = document.getElementById("agentStatusLabel");
+    if (!text) {
+        el.classList.add("d-none");
+        el.textContent = "";
+        return;
+    }
+    el.classList.remove("d-none");
+    el.textContent = text;
+}
+
+function applyAgentFocus(payload) {
+    state.agentSessionId = payload.agent_session_id ?? null;
+    if (payload.sessions) state.executionSessions = payload.sessions;
+    state.agentFocus = {
+        market_start_ts: payload.market_start_ts ?? null,
+        sec: payload.sec ?? null,
+        is_live: !!payload.is_live,
+        n_events: payload.n_events || 0,
+        strategy_ids: payload.strategy_ids || [],
+    };
+    renderAgentContext(state);
+}
+
+function loadAgentExecutions() {
+    return emitAck("agent.executions.list").then(applyAgentFocus).catch(() => {});
+}
+
+function finishAgentTurn() {
+    state.agentBusy = false;
+    document.getElementById("agentSendBtn").disabled = false;
+    setAgentStatus("");
+    renderAgentChat(state.agentMessages);
+}
+
+function loadAgentHistory() {
+    if (!state.activeAccountId) {
+        state.agentMessages = [];
+        renderAgentChat([]);
+        return Promise.resolve();
+    }
+    return emitAck("agent.chat.history", { account_id: state.activeAccountId }).then((res) => {
+        state.agentMessages = res.messages || [];
+        renderAgentChat(state.agentMessages, { thinking: state.agentBusy });
+    }).catch(() => {});
+}
+
+function sendAgentMessage() {
+    if (state.agentBusy) return;
+    const input = document.getElementById("agentChatInput");
+    const text = input.value.trim();
+    if (!text) return;
+    if (!state.activeAccountId) return alert("Seleziona un account");
+    state.agentBusy = true;
+    document.getElementById("agentSendBtn").disabled = true;
+    input.value = "";
+    state.agentMessages = [...state.agentMessages, { role: "user", content: text }];
+    renderAgentChat(state.agentMessages, { thinking: true });
+    setAgentStatus("Thinking…");
+    // Ack solo "accepted": la risposta arriva via agent.chat.message (turno async).
+    emitAck("agent.chat.send", {
+        text,
+        account_id: state.activeAccountId,
+        selected_strategy_id: state.selectedStrategyId,
+        agent_session_id: state.agentSessionId,
+    }).catch((err) => {
+        alert(err);
+        loadAgentHistory().finally(() => finishAgentTurn());
+    });
+}
+
 
 function openAccountModal(mode, account = null) {
     document.getElementById("accountModalMode").value = mode;
@@ -334,6 +420,9 @@ socket.on("bootstrap", (payload) => {
     updateRoundNavButtons();
     applyOrderSizes({ size_up_usd: payload.default_order_size_usd, size_down_usd: payload.default_order_size_usd });
     renderAccounts(state);
+    renderAgentContext(state);
+    loadAgentHistory();
+    loadAgentExecutions();
 });
 
 socket.on("session", (payload) => {
@@ -361,6 +450,7 @@ socket.on("session", (payload) => {
     updateRoundNavButtons();
     renderAccounts(state);
     renderTick(state);
+    renderAgentContext(state);
 });
 
 socket.on("tick", (payload) => {
@@ -435,12 +525,53 @@ socket.on("bot.status", (payload) => {
         state.botActive = false;
     }
     renderBotPanel(state);
+    renderAgentContext(state);
 });
 
 socket.on("strategies", (payload) => {
     if (payload.strategies) state.strategies = payload.strategies;
     if (payload.active_strategy_ids) state.activeStrategyIds = payload.active_strategy_ids;
     renderBotPanel(state);
+    renderAgentContext(state);
+    renderAgentProposed(state.agentProposed, state.selectedStrategyId);
+});
+
+socket.on("agent.chat.message", (payload) => {
+    if (payload.message) {
+        const last = state.agentMessages[state.agentMessages.length - 1];
+        if (!last || last.ts !== payload.message.ts || last.content !== payload.message.content) {
+            state.agentMessages = [...state.agentMessages, payload.message];
+        }
+    }
+    if (payload.proposed_rules !== undefined) {
+        state.agentProposed = payload.proposed_rules;
+        renderAgentProposed(state.agentProposed, state.selectedStrategyId);
+    }
+    finishAgentTurn();
+});
+
+socket.on("agent.chat.cleared", () => {
+    state.agentMessages = [];
+    state.agentProposed = null;
+    finishAgentTurn();
+    renderAgentProposed(null, null);
+});
+
+socket.on("agent.chat.status", (payload) => {
+    if (payload.phase === "thinking") {
+        setAgentStatus("Thinking…");
+        return;
+    }
+    setAgentStatus("");
+});
+
+socket.on("agent.chat.error", (payload) => {
+    alert(payload.message || "agent error");
+    loadAgentHistory().finally(() => finishAgentTurn());
+});
+
+socket.on("agent.session", (payload) => {
+    applyAgentFocus(payload);
 });
 
 
@@ -608,12 +739,16 @@ document.getElementById("strategyCatalogList").addEventListener("click", (e) => 
         e.stopPropagation();
         const id = actionBtn.dataset.id;
         markStrategySelected(state, id);
+        renderAgentContext(state);
+        renderAgentProposed(state.agentProposed, state.selectedStrategyId);
         if (actionBtn.dataset.action === "load") activateStrategy(id);
         return;
     }
     const item = e.target.closest(".strategy-catalog-item");
     if (!item) return;
     markStrategySelected(state, item.dataset.id);
+    renderAgentContext(state);
+    renderAgentProposed(state.agentProposed, state.selectedStrategyId);
 });
 
 document.getElementById("strategyCatalogList").addEventListener("dblclick", (e) => {
@@ -660,9 +795,44 @@ document.getElementById("editAccountBtn").addEventListener("click", () => {
 });
 document.getElementById("accountModalSaveBtn").addEventListener("click", saveAccountModal);
 
+document.getElementById("agentSendBtn").addEventListener("click", sendAgentMessage);
+document.getElementById("agentChatInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendAgentMessage();
+    }
+});
+document.getElementById("agentContextBody").addEventListener("change", (e) => {
+    if (e.target.id !== "agentSessionSelect") return;
+    emitAck("agent.session.select", { session_id: e.target.value }).then(applyAgentFocus).catch(alert);
+});
+document.getElementById("agentClearBtn").addEventListener("click", () => {
+    if (!state.activeAccountId) return;
+    emitAck("agent.chat.clear", { account_id: state.activeAccountId }).catch(alert);
+});
+document.getElementById("agentApplyRulesBtn").addEventListener("click", () => {
+    const btn = document.getElementById("agentApplyRulesBtn");
+    const sid = btn.dataset.strategyId;
+    const rules = btn.dataset.rules;
+    if (!sid || !rules) return;
+    setAgentStatus("Applying rules (codegen)…");
+    emitAck("agent.rules.apply", { strategy_id: sid, rules }).then(() => {
+        setAgentStatus("");
+        state.agentProposed = null;
+        renderAgentProposed(null, null);
+    }).catch((err) => {
+        setAgentStatus("");
+        alert(err);
+    });
+});
+
 document.getElementById("leftTabs").addEventListener("shown.bs.tab", (e) => {
     persistLeftTab(e.target.id);
     if (e.target.id === "candles-tab") relayoutChart();
+    if (e.target.id === "agent-tab") {
+        renderAgentContext(state);
+        loadAgentExecutions();
+    }
 });
 
 renderStakeButtons();
