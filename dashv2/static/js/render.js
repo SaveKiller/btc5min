@@ -450,6 +450,40 @@ function sumField(rows, key) {
 }
 
 
+/** Capitale iniettato nella sessione: wallet riusa solo la size (non i profitti); le perdite riducono il ritorno. */
+export function sessionCapitalSizeUsd(bets) {
+    const events = [];
+    for (const b of bets) {
+        const size = Number(b.size_usd);
+        events.push({ kind: "open", sec: Number(b.entry_sec), size });
+        if (b.exit_sec != null) {
+            const pnl = b.pnl_usd == null ? 0 : Number(b.pnl_usd);
+            events.push({ kind: "close", sec: Number(b.exit_sec), size, pnl });
+        }
+    }
+    // Cronologia: sec più alto = prima; a parità chiudi prima di aprire (capitale liberato).
+    events.sort((a, b) => {
+        if (b.sec !== a.sec) return b.sec - a.sec;
+        if (a.kind === b.kind) return 0;
+        return a.kind === "close" ? -1 : 1;
+    });
+    let wallet = 0;
+    let injected = 0;
+    for (const e of events) {
+        if (e.kind === "open") {
+            if (wallet >= e.size) wallet -= e.size;
+            else {
+                injected += e.size - wallet;
+                wallet = 0;
+            }
+        } else {
+            wallet += e.size + Math.min(0, e.pnl);
+        }
+    }
+    return injected;
+}
+
+
 function groupHistoryRows(rows) {
     const groups = new Map();
     for (const r of rows) {
@@ -470,7 +504,7 @@ function groupHistoryRows(rows) {
             date_utc: bets[0].date_utc,
             time_utc: bets[0].time_utc,
             outcome: bets[0].outcome,
-            size_usd: bets.reduce((s, b) => s + b.size_usd, 0),
+            size_usd: sessionCapitalSizeUsd(bets),
             final_pnl_usd: sumField(bets, "final_pnl_usd"),
             pnl_usd: sumField(bets, "pnl_usd"),
             bets,
@@ -570,9 +604,13 @@ export function renderBotPanel(state) {
             const sel = s.id === selectedId ? " selected" : "";
             const isActive = activeIds.includes(s.id);
             const desc = (s.description || "").trim();
+            const rules = (s.rules || "").trim();
             const tip = desc || "Double-click to toggle in bot";
             const descHtml = desc
                 ? `<span class="desc">${escapeHtml(desc)}</span>`
+                : "";
+            const rulesHtml = rules
+                ? `<span class="rules">${escapeHtml(rules)}</span>`
                 : "";
             return `<li class="strategy-catalog-item${sel}" data-id="${s.id}" title="${escapeHtml(tip)}">
                 <div class="meta">
@@ -581,6 +619,7 @@ export function renderBotPanel(state) {
                         <span class="stype">${escapeHtml(s.type).toUpperCase()}</span>
                     </div>
                     ${descHtml}
+                    ${rulesHtml}
                 </div>
                 <button type="button" class="btn-strat-add" data-action="load" data-id="${s.id}" title="Add to bot" aria-label="Add" ${isActive ? "disabled" : ""}><i class="bi bi-plus-lg" aria-hidden="true"></i></button>
             </li>`;

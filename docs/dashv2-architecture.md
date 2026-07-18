@@ -860,49 +860,58 @@ Qualsiasi UI che espone liste di round, history, nomi file, tooltip, chart “fu
 | Concetto | Cos’è | Dove vive |
 |----------|-------|-----------|
 | **Bot** | Processo OS sempre spawnato; client Socket.IO `role=bot` | `bot_process.py` / `run_bot_process` |
-| **Strategy** | Logica decisionale caricata *dentro* il bot | oggi shim `*_bot.py`; domani tipi sotto |
-| **Engine (plugin)** | Fonte di verità round + `selected_bot_id` / `bot_active` | plugin attiva in `dashv2-engine` |
+| **Strategy** | Logica decisionale caricata *dentro* il bot | moduli `strategy_{id}.py` + JSON catalogo |
+| **Engine (plugin)** | Fonte di verità round + `active_strategy_ids` / `bot_active` | plugin attiva in `dashv2-engine` |
 
 Il server scambia comandi/eventi di trading **solo** col bot. La strategy non è un peer Socket.IO.
 
-### Tipi di Strategy (solo documentale — piano implementativo separato)
+### Tipi di Strategy
 
-| Tipo | Idea | Input tipico | Output |
-|------|------|--------------|--------|
-| **DETERMINISTICA** | Regole statiche su soglie/intervalli delle variabili del round | sec, quote, Rq/Rs, vol, DWin, … | `order.place` / `close` / `cancel` |
-| **INFERENZIALE** | Modello ML (es. random forest o oltre) trainato su settimane Lighter e/o Polymarket | feature per tick | entrate/uscite |
-| **AGENTICA** | Agente (locale o cloud) con interfaccia di controllo nel processo bot | contesto round secondo-per-secondo | decisioni open/close |
+| Tipo | Stato | Input tipico | Output |
+|------|-------|--------------|--------|
+| **DETERMINISTICA** | Implementata: `rules` → codegen Cursor → `.py` eseguito dal bot | tick pubblico (sec, quote bid/ask, Rq/Rs, vol, DWin, open_orders) | `order.place` / `close` / `cancel` + `strategy_id` |
+| **INFERENZIALE** | Solo metadata catalogo (runtime TBD) | feature per tick | entrate/uscite |
+| **AGENTICA** | Solo metadata catalogo (runtime TBD) | contesto round | decisioni open/close |
 
-Genesi diversa, stesso contratto verso l’esterno: usano il bot come unica interfaccia operativa.
+### Deterministic: rules → Python
+
+1. UI modal: name, description, **rules** (testo).
+2. Server (`strategy.create` / `update` se rules cambiano): Cursor SDK (`cursor_label` + `cursor_models` in `setup.json`) genera il modulo; progress via evento `strategy.generate`.
+3. Persistenza: `history/strategies/strategy_{id}.json` (`rules`, `module_file`) + `strategy_{id}.py`.
+4. Human `strategy.load` → engine aggiorna `active_strategy_ids` → server emit `strategy.sync` `{strategy_ids}` al bot.
+5. Bot: `importlib` del `.py`, fan-out `on_tick` / `on_round_start` / `on_round_end`; crash per-strategy → skip tick (log).
+
+Contratto modulo: `on_tick(ctx) -> list[dict]` (azioni `order.place|close|cancel`).
+Su ogni `order.place` la strategy sceglie `size_usd` (float libero per ordine; può cambiare tra scommesse dello stesso round). Le size già aperte sono in `open_orders[].size_usd`.
+
+Config codegen: `cursor_label` (es. `"Composer 2.5"`) punta a un `label` in `cursor_models` (`id` SDK + `params`). System prompt: file `dashv2/strategy_system_prompt.md` (riletto a ogni create/update deterministic). Env: `CURSOR_API_KEY` (`.env`).
 
 ### Multi-strategy
 
-Il processo bot deve poter tenere **più strategy attive insieme**. Esempio: strategy A apre, strategy B chiude lo stesso ordine.  
-Oggi lo shim `bot.select` carica **una** strategy alla volta (replace). Il processo bot già fa fan-out degli hook su un dict `strategies`.
+Più id attivi contemporaneamente; fan-out su ogni tick. Ordini bot portano `strategy_id`.
 
 Attivazione:
 
 - master switch globale `bot.set_active` (implementato);
-- per-strategy `active` (documentato, non ancora in UI/API dedicata).
+- coda attiva via `strategy.load` / `strategy.unload` (persistita in `_state.json`).
 
-### Load
+### Load / sync
 
-1. **UI:** human `bot.select` → engine aggiorna stato → server emit `strategy.load` al bot.
-2. **Setup allo start (target):** chiave in `setup.json` letta dal bot o forward post-connect — non ancora implementata.
-3. **(Ri)connect bot:** server re-sync via `bot.list` + `strategy.load`.
+1. **UI:** human `strategy.load` / `unload` → engine → server emit `strategy.sync` al bot.
+2. **(Ri)connect bot:** server re-sync via `bot.list` + `strategy.sync`.
 
 ### File attuali
 
 | File | Ruolo |
 |------|--------|
-| `protocol.py` | Contratto `BotPlugin` (shim strategy) |
-| `__init__.py` | `list_bot_infos` / `load_bot` (discovery `*_bot.py`) |
-| `bot_process.py` | Processo bot Socket.IO; shell vuota + `strategy.load` |
-| `random_bot.py` + `.json` | Strategy di test deterministica-random |
+| `strategies.py` | Repository JSON + `.py` |
+| `strategy_codegen.py` / `cursor_client.py` | Generazione modulo via Cursor SDK |
+| `strategy_system_prompt.md` | System prompt codegen (hot-reload pre-create) |
+| `bots/runner.py` | importlib cache + dispatch hook |
+| `bots/bot_process.py` | Processo bot Socket.IO + runner |
+| `bots/protocol.py` | Contratto legacy `BotPlugin` (shim) |
 
-- Attach/detach strategy (`bot.select`): solo mentre `playing=False`; durante play la dropdown è disabilitata. UI: tab **BOT** → pannello *Bot and strategy management*.
-- Toggle Active (`bot.set_active`): real-time; off → bot non emette trade + bridge/engine rifiutano `order.*` del bot; umano continua a tradare.
-- Kind legacy plugin: `code`, `config`, `ai` (solo `code` oggi). Tipi target: deterministic / inferential / agentic.
+- Toggle Active (`bot.set_active`): off → bot non emette trade + bridge/engine rifiutano `order.*` del bot; umano continua a tradare.
 
 ## 18ter. Plugin Engine live (`dashv2/engine/plugins/live.py`)
 

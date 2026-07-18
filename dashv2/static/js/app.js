@@ -235,27 +235,57 @@ function openStrategyModal(mode, strategy = null) {
     document.getElementById("strategyModalId").value = strategy?.id || "";
     document.getElementById("strategyModalName").value = strategy?.name || "";
     document.getElementById("strategyModalDescription").value = strategy?.description || "";
+    document.getElementById("strategyModalRules").value = strategy?.rules || "";
+    document.getElementById("strategyModalRules").dataset.original = strategy?.rules || "";
     document.getElementById("strategyModalTitle").textContent = mode === "create" ? "New strategy" : "Edit strategy";
+    const showRules = state.strategyType === "deterministic" || strategy?.type === "deterministic";
+    document.getElementById("strategyModalRulesWrap").classList.toggle("d-none", !showRules);
+    setStrategyModalBusy(false);
     strategyModal.show();
+}
+
+function setStrategyModalBusy(busy, text = "") {
+    const prog = document.getElementById("strategyModalProgress");
+    const saveBtn = document.getElementById("strategyModalSaveBtn");
+    const cancelBtn = document.getElementById("strategyModalCancelBtn");
+    prog.classList.toggle("d-none", !busy);
+    if (text) document.getElementById("strategyModalProgressText").textContent = text;
+    saveBtn.disabled = busy;
+    cancelBtn.disabled = busy;
 }
 
 function saveStrategyModal() {
     const mode = document.getElementById("strategyModalMode").value;
     const name = document.getElementById("strategyModalName").value.trim();
     const description = document.getElementById("strategyModalDescription").value;
+    const rules = document.getElementById("strategyModalRules").value;
     const strategyId = document.getElementById("strategyModalId").value;
     if (!name) return alert("Name required");
+    const isDet = state.strategyType === "deterministic" || (
+        mode === "edit" && state.strategies.find((s) => s.id === strategyId)?.type === "deterministic"
+    );
+    if (isDet && !rules.trim()) return alert("Rules required for deterministic strategy");
     let req;
     if (mode === "create") {
-        req = emitAck("strategy.create", { name, type: state.strategyType, description });
+        setStrategyModalBusy(true, isDet ? "Generating Python module…" : "Saving…");
+        req = emitAck("strategy.create", { name, type: state.strategyType, description, rules });
     } else {
-        req = emitAck("strategy.update", { strategy_id: strategyId, name, description });
+        const original = document.getElementById("strategyModalRules").dataset.original || "";
+        const rulesChanged = isDet && rules !== original;
+        setStrategyModalBusy(true, rulesChanged ? "Regenerating Python module…" : "Saving…");
+        req = emitAck("strategy.update", {
+            strategy_id: strategyId, name, description, rules, rules_changed: rulesChanged,
+        });
     }
     req.then((res) => {
         if (res.strategy) state.selectedStrategyId = res.strategy.id;
+        setStrategyModalBusy(false);
         strategyModal.hide();
         renderBotPanel(state);
-    }).catch(alert);
+    }).catch((err) => {
+        setStrategyModalBusy(false);
+        alert(err);
+    });
 }
 
 function selectLeftTab(tabId) {
@@ -354,7 +384,25 @@ socket.on("round_end", (payload) => {
     selectLeftTab("accounts-tab");
 });
 
+socket.on("action", (payload) => {
+    if (payload.cmd === "order.close") selectLeftTab("accounts-tab");
+});
+
 socket.on("error", (payload) => alert(payload.message || "error"));
+
+socket.on("strategy.generate", (payload) => {
+    const phase = payload.phase || "";
+    const msg = payload.message || phase;
+    if (phase === "error") {
+        setStrategyModalBusy(false);
+        return;
+    }
+    if (phase === "done") {
+        setStrategyModalBusy(false, msg);
+        return;
+    }
+    setStrategyModalBusy(true, msg);
+});
 
 socket.on("bot.status", (payload) => {
     if (payload.bot_attach_allowed !== undefined) state.botAttachAllowed = payload.bot_attach_allowed;

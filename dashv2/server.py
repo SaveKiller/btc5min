@@ -11,6 +11,9 @@ from flask import Flask, send_from_directory
 from flask_socketio import SocketIO
 
 from dashv2 import ipc
+from dashv2.config import reload_strategy_codegen_system_prompt
+from dashv2.strategies import strategies_dir, write_module
+from dashv2.strategy_codegen import generate_strategy_module
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _ACK_TIMEOUT_SEC = 30.0
@@ -30,6 +33,7 @@ _HUMAN_CMDS = frozenset({
     "strategy.list", "strategy.create", "strategy.update", "strategy.delete",
     "strategy.load", "strategy.unload", "session.sync", "consult.send",
 })
+_STRATEGY_GEN_CMDS = frozenset({"strategy.create", "strategy.update"})
 
 
 class ServerBridge:
@@ -48,6 +52,7 @@ class ServerBridge:
         self._sid_role: dict[str, str] = {}
         self._bot_active = False
         self._active_strategy_ids: list[str] = []
+        self.strategies_root = strategies_dir(Path(cfg["history_dir"]))
         self._register_routes()
         self._register_socketio()
         threading.Thread(target=self._evt_reader_loop, daemon=True).start()
@@ -67,6 +72,13 @@ class ServerBridge:
         for sid in (self._human_sid, self._bot_sid):
             if sid:
                 self.socketio.emit(name, payload, to=sid)
+
+    def _emit_generate(self, phase: str, message: str = "", strategy_id: str | None = None) -> None:
+        payload = {"phase": phase, "message": message}
+        if strategy_id is not None:
+            payload["strategy_id"] = strategy_id
+        if self._human_sid:
+            self.socketio.emit("strategy.generate", payload, to=self._human_sid)
 
     def _forward_strategy_sync(self, strategy_ids: list[str] | None) -> None:
         """Stato già in engine; push esplicito al processo bot."""
@@ -139,8 +151,10 @@ class ServerBridge:
             self.socketio.emit("consult.message", msg, to=request.sid)
             return {"ok": True}
 
-        for evt in sorted(_HUMAN_CMDS - {"consult.send"}):
+        for evt in sorted(_HUMAN_CMDS - {"consult.send"} - _STRATEGY_GEN_CMDS):
             self._bind_command(evt)
+        self._bind_strategy_create()
+        self._bind_strategy_update()
 
     def _bind_command(self, cmd: str) -> None:
         @self.socketio.on(cmd)
@@ -168,6 +182,84 @@ class ServerBridge:
                 return result
             except Exception as e:
                 return {"error": str(e)}
+
+    def _bind_strategy_create(self) -> None:
+        @self.socketio.on("strategy.create")
+        def handler(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            try:
+                return self._strategy_create_with_codegen(payload or {})
+            except Exception as e:
+                self._emit_generate("error", str(e))
+                return {"error": str(e)}
+
+    def _bind_strategy_update(self) -> None:
+        @self.socketio.on("strategy.update")
+        def handler(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            try:
+                return self._strategy_update_with_codegen(payload or {})
+            except Exception as e:
+                self._emit_generate("error", str(e))
+                return {"error": str(e)}
+
+    def _codegen_source(self, rules: str) -> str:
+        model = self.cfg["cursor_model"]
+        system_prompt = reload_strategy_codegen_system_prompt()
+        self.cfg["strategy_codegen_system_prompt"] = system_prompt
+        self._emit_generate("generating", f"Generating with {model['label']}…")
+        source = generate_strategy_module(
+            rules, model_id=model["id"], params=model["params"],
+            system_prompt=system_prompt,
+        )
+        self._emit_generate("validating", "Validating generated module…")
+        return source
+
+    def _strategy_create_with_codegen(self, body: dict) -> dict:
+        stype = body["type"]
+        rules = body.get("rules") or ""
+        module_file = None
+        strategy_id = None
+        if stype == "deterministic":
+            source = self._codegen_source(rules)
+            strategy_id = uuid.uuid4().hex[:12]
+            self._emit_generate("saving", "Saving strategy…", strategy_id)
+            module_file = write_module(self.strategies_root, strategy_id, source)
+        ipc_payload = {
+            "name": body["name"], "type": stype, "description": body.get("description") or "",
+            "rules": rules, "module_file": module_file, "strategy_id": strategy_id,
+        }
+        try:
+            result = self._request_to_data("strategy.create", ipc_payload, actor="user")
+        except Exception:
+            if strategy_id is not None:
+                py = self.strategies_root / f"strategy_{strategy_id}.py"
+                if py.is_file():
+                    py.unlink()
+            raise
+        self._emit_generate("done", "Strategy ready", (result.get("strategy") or {}).get("id"))
+        return result
+
+    def _strategy_update_with_codegen(self, body: dict) -> dict:
+        sid = body["strategy_id"]
+        rules = body.get("rules")
+        module_file = None
+        if body.get("rules_changed") and rules is not None:
+            source = self._codegen_source(rules)
+            self._emit_generate("saving", "Saving strategy…", sid)
+            module_file = write_module(self.strategies_root, sid, source)
+        ipc_payload = {
+            "strategy_id": sid, "name": body["name"],
+            "description": body.get("description") or "",
+            "rules": rules, "module_file": module_file,
+        }
+        result = self._request_to_data("strategy.update", ipc_payload, actor="user")
+        self._emit_generate("done", "Strategy updated", sid)
+        return result
 
     def _round_load_async(self, payload: dict, actor: str) -> None:
         def _run():

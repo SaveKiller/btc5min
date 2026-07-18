@@ -30,9 +30,17 @@ class TestActorSource(unittest.TestCase):
         tick = {"chainlink_btc": 90000.0, "partial": False, "gap": False, "up_ask": 0.55, "up_bid": 0.53, "down_ask": 0.45, "down_bid": 0.43}
         book = _book()
         u = eng.place("Up", 10.0, 200, tick, book, 0.02, "acc1", "user")
-        b = eng.place("Down", 10.0, 190, tick, book, 0.02, "acc1", "bot")
+        b = eng.place("Down", 10.0, 190, tick, book, 0.02, "acc1", "bot", strategy_id="strat1")
         self.assertEqual(u["source"], "user")
+        self.assertIsNone(u["strategy_id"])
         self.assertEqual(b["source"], "bot")
+        self.assertEqual(b["strategy_id"], "strat1")
+
+    def test_bot_place_requires_strategy_id(self):
+        eng = OrderEngine(100, 100)
+        tick = {"chainlink_btc": 90000.0, "partial": False, "gap": False, "up_ask": 0.55, "up_bid": 0.53, "down_ask": 0.45, "down_bid": 0.43}
+        with self.assertRaises(Exception):
+            eng.place("Up", 10.0, 200, tick, _book(), 0.02, "acc1", "bot")
 
     def test_actor_from_payload(self):
         self.assertEqual(_actor_from_payload({"actor": "bot"}), "bot")
@@ -80,7 +88,10 @@ class TestBotAttach(unittest.TestCase):
 
     def test_load_unload_strategy(self):
         eng = self._engine()
-        created = eng._cmd_strategy_create({"name": "Alpha", "type": "deterministic", "description": "test"})
+        created = eng._cmd_strategy_create({
+            "name": "Alpha", "type": "deterministic", "description": "test",
+            "rules": "buy up", "module_file": "strategy_x.py", "strategy_id": "aaa111bbb222",
+        })
         sid = created["strategy"]["id"]
         res = eng._cmd_strategy_load({"strategy_id": sid})
         self.assertEqual(res["active_strategy_ids"], [sid])
@@ -107,19 +118,41 @@ class TestBotAttach(unittest.TestCase):
         self.assertEqual(eng.active_strategy_ids, [])
         self.assertEqual(list_strategies(eng.strategies_root), [])
 
+    def test_restart_after_round_end_new_session(self):
+        eng = self._engine()
+        eng.loaded = MagicMock()
+        eng.loaded.market_start_ts = 1
+        eng.loaded.ptb_chainlink = 90000.0
+        eng.loaded.ticks_by_sec = {}
+        eng.loaded.books_by_sec = {}
+        eng.session_id = "oldsession01"
+        eng.session_started_at_utc = "2026-01-01T00:00:00Z"
+        eng.round_ended = True
+        eng.repo = MagicMock()
+        eng.repo.current_candle = MagicMock(return_value=None)
+        eng.repo.previous_candles = MagicMock(return_value=[])
+        res = eng._restart_round(playing=False, sec=300)
+        self.assertTrue(res["restarted"])
+        self.assertFalse(eng.round_ended)
+        self.assertNotEqual(eng.session_id, "oldsession01")
+        self.assertNotEqual(eng.session_started_at_utc, "2026-01-01T00:00:00Z")
+
 
 class TestStrategiesRepo(unittest.TestCase):
     def test_create_list_update_by_type(self):
         with tempfile.TemporaryDirectory() as td:
             root = strategies_dir(Path(td))
-            a = create_strategy(root, "A", "deterministic", "alpha desc")
+            a = create_strategy(
+                root, "A", "deterministic", "alpha desc",
+                rules="r", module_file="strategy_a.py", strategy_id="abc123abc123")
             create_strategy(root, "B", "inferential", "")
             self.assertEqual(len(list_strategies(root)), 2)
             self.assertEqual(len(list_strategies(root, "deterministic")), 1)
             from dashv2.strategies import update_strategy
-            updated = update_strategy(root, a["id"], "A2", "new desc")
+            updated = update_strategy(root, a["id"], "A2", "new desc", rules="r2")
             self.assertEqual(updated["name"], "A2")
             self.assertEqual(updated["description"], "new desc")
+            self.assertEqual(updated["rules"], "r2")
 
 
 class TestServerAcl(unittest.TestCase):

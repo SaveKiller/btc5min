@@ -48,6 +48,7 @@ def _public_tick(tick: dict | None, sec: int, seq: int, gap: bool) -> dict:
         return {
             "seq": seq, "sec": sec, "gap": True, "chainlink_btc": None, "delta_usd": None,
             "up_mid_c": None, "down_mid_c": None, "up_ask_c": None, "down_ask_c": None,
+            "up_bid_c": None, "down_bid_c": None,
             "vol": {}, "risk": _empty_side_risk(), "dwin_ref_side": None,
             "dwin_a": None, "dwin_b": None, "tradable": False,
         }
@@ -58,6 +59,8 @@ def _public_tick(tick: dict | None, sec: int, seq: int, gap: bool) -> dict:
         "up_mid_c": tick["up_mid_c"], "down_mid_c": tick["down_mid_c"],
         "up_ask_c": int(round(tick["up_ask"] * 100)) if tick["up_ask"] is not None else None,
         "down_ask_c": int(round(tick["down_ask"] * 100)) if tick["down_ask"] is not None else None,
+        "up_bid_c": int(round(tick["up_bid"] * 100)) if tick["up_bid"] is not None else None,
+        "down_bid_c": int(round(tick["down_bid"] * 100)) if tick["down_bid"] is not None else None,
         "majority_side": tick["majority_side"], "vol": tick["vol"], "risk": tick["side_risk"],
         "dwin_ref_side": dwin["dwin_ref_side"], "dwin_a": dwin["dwin_a"], "dwin_b": dwin["dwin_b"],
         "tradable": not tick["partial"] and not tick["gap"] and tick["chainlink_btc"] is not None,
@@ -204,6 +207,9 @@ class ReplayEngine:
         self.sec = sec
         self.playing = playing
         self.round_ended = False
+        # Nuova sessione: il round precedente è concluso (sec=0); le scommesse future non si mischiano.
+        self.session_id = uuid.uuid4().hex[:12]
+        self.session_started_at_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.seq = 0
         self._round_advanced = sec != 300
         self.orders.clear_positions()
@@ -361,10 +367,15 @@ class ReplayEngine:
         account_id = self._require_active_account()
         tick, book = self._require_tick_book()
         side, size = payload["side"], float(payload["size_usd"])
-        order = self.orders.place(side, size, self.sec, tick, book, self.loaded.fee_rate, account_id, actor)
+        strategy_id = payload.get("strategy_id") if actor == "bot" else None
+        order = self.orders.place(
+            side, size, self.sec, tick, book, self.loaded.fee_rate, account_id, actor,
+            strategy_id=strategy_id)
         self.orders.revalue_mtm(self.sec, tick, book, self.loaded.fee_rate)
         self._emit_orders(actor=actor)
-        self._emit_action(actor, "order.place", {"order_id": order["id"], "side": side, "size_usd": size})
+        self._emit_action(actor, "order.place", {
+            "order_id": order["id"], "side": side, "size_usd": size, "strategy_id": strategy_id,
+        })
         self._emit_session()
         return {"ok": True, "order": order}
 
@@ -470,13 +481,20 @@ class ReplayEngine:
 
     def _cmd_strategy_create(self, payload: dict) -> dict:
         data = create_strategy(
-            self.strategies_root, payload["name"], payload["type"], payload["description"])
+            self.strategies_root, payload["name"], payload["type"], payload["description"],
+            rules=payload.get("rules") or "",
+            module_file=payload.get("module_file"),
+            strategy_id=payload.get("strategy_id"),
+        )
         self._emit_strategies()
         return {"ok": True, "strategy": strategy_summary(data)}
 
     def _cmd_strategy_update(self, payload: dict) -> dict:
         data = update_strategy(
-            self.strategies_root, payload["strategy_id"], payload["name"], payload["description"])
+            self.strategies_root, payload["strategy_id"], payload["name"], payload["description"],
+            rules=payload.get("rules"),
+            module_file=payload.get("module_file"),
+        )
         self._emit_strategies()
         self._emit_bot_status()
         return {"ok": True, "strategy": strategy_summary(data)}

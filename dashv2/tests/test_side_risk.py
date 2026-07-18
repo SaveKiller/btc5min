@@ -10,7 +10,7 @@ def _tick(**kw):
         "chainlink_btc": 90000.0, "chainlink_stale": False, "delta_usd": -50,
         "dwin_a": {"p_win": 0.29, "n": 409}, "dwin_b_pct": 28,
         "partial": False, "gap": False, "up_mid_c": 12, "down_mid_c": 89,
-        "up_ask": 0.12, "down_ask": 0.89, "majority_side": "Down",
+        "up_ask": 0.12, "down_ask": 0.89, "up_bid": 0.11, "down_bid": 0.88, "majority_side": "Down",
         "vol": {}, "side_risk": {
             "Up": {"rq": 8, "rs": 7},
             "Down": {"rq": 3, "rs": 1},

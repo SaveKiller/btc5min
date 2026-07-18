@@ -74,7 +74,7 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
   border-radius:.4rem; min-height:8rem;
 }
 .strategy-catalog-item {
-  display:flex; align-items:center; gap:.65rem;
+  display:flex; align-items:flex-start; gap:.65rem;
   border-bottom:1px solid rgba(255,255,255,.06);
   padding:.5rem .65rem; cursor:pointer;
 }
@@ -86,7 +86,7 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
   display:flex; align-items:baseline; gap:1.1rem; min-width:0;
 }
 .strategy-catalog-item .name {
-  font-size:1.05rem; font-weight:600;
+  font-size: calc(1.05rem + 1pt); font-weight:600;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 .strategy-catalog-item .stype {
@@ -94,8 +94,13 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
   color:var(--muted); text-transform:uppercase;
 }
 .strategy-catalog-item .desc {
-  font-size:.88rem; color:var(--muted); line-height:1.35;
+  font-size: calc(1.05rem + 1pt); color:var(--muted); line-height:1.35;
   white-space:normal; overflow-wrap:anywhere;
+}
+.strategy-catalog-item .rules {
+  font-size: calc(1.05rem - 1pt); color:#fff; line-height:1.4;
+  white-space:pre-wrap; overflow-wrap:anywhere;
+  margin-top:.2rem; max-height:6.5rem; overflow:auto;
 }
 .strategy-catalog-item .btn-strat-add {
   flex:0 0 auto; width:2.4rem; height:2.4rem; padding:0; margin:0;

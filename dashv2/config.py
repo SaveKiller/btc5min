@@ -2,10 +2,27 @@ import json
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent
+_STRATEGY_SYSTEM_PROMPT_PATH = _ROOT / "strategy_system_prompt.md"
 _REQUIRED = (
     "data_dir", "history_dir", "host", "port", "chart_previous_candles",
     "default_order_size_usd", "stall_reconnect_sec", "engine_plugin",
+    "cursor_label", "cursor_models",
 )
+
+
+def resolve_cursor_model(cursor_label: str, cursor_models: list[dict]) -> dict:
+    """Risolve cursor_label → entry {id, label, params}."""
+    for entry in cursor_models:
+        if entry["label"] == cursor_label:
+            return entry
+    raise Exception(f"cursor_label not found in cursor_models: {cursor_label!r}")
+
+
+def reload_strategy_codegen_system_prompt() -> str:
+    """Rilegge dashv2/strategy_system_prompt.md (hot-reload pre-codegen)."""
+    if not _STRATEGY_SYSTEM_PROMPT_PATH.is_file():
+        raise Exception(f"strategy system prompt not found: {_STRATEGY_SYSTEM_PROMPT_PATH}")
+    return _STRATEGY_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 
 def load_config() -> dict:
@@ -17,6 +34,18 @@ def load_config() -> dict:
         engine_plugin = str(engine_plugin)
         if engine_plugin not in ("replay", "live"):
             raise Exception(f"invalid engine_plugin: {engine_plugin}")
+    cursor_models = raw["cursor_models"]
+    if not cursor_models:
+        raise Exception("cursor_models must not be empty")
+    labels = [e["label"] for e in cursor_models]
+    if len(labels) != len(set(labels)):
+        raise Exception("cursor_models labels must be unique")
+    for e in cursor_models:
+        if "id" not in e or "label" not in e or "params" not in e:
+            raise Exception(f"invalid cursor_models entry: {e!r}")
+    cursor_label = str(raw["cursor_label"])
+    cursor_model = resolve_cursor_model(cursor_label, cursor_models)
+    system_prompt = reload_strategy_codegen_system_prompt()
     data_dir = (_ROOT / raw["data_dir"]).resolve()
     history_dir = (_ROOT / raw["history_dir"]).resolve()
     if not data_dir.is_dir(): raise Exception(f"data_dir not found: {data_dir}")
@@ -28,4 +57,8 @@ def load_config() -> dict:
         "default_order_size_usd": float(raw["default_order_size_usd"]),
         "stall_reconnect_sec": float(raw["stall_reconnect_sec"]),
         "engine_plugin": engine_plugin,
+        "cursor_label": cursor_label,
+        "cursor_models": cursor_models,
+        "cursor_model": cursor_model,
+        "strategy_codegen_system_prompt": system_prompt,
     }

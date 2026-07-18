@@ -44,12 +44,15 @@ class OrderEngine:
             "roi_if_win": roi, "payout_if_win_usd": payout, "profit_if_win_usd": payout - size_usd,
         }
 
-    def place(self, side: str, size_usd: float, sec: int, tick: dict, book: BookSnapshot, fee_rate: float, account_id: str, source: str) -> dict:
+    def place(self, side: str, size_usd: float, sec: int, tick: dict, book: BookSnapshot, fee_rate: float, account_id: str, source: str, strategy_id: str | None = None) -> dict:
         if source not in ("user", "bot"):
             raise Exception(f"invalid order source: {source!r}")
+        if source == "bot" and not strategy_id:
+            raise Exception("bot order requires strategy_id")
         preview = self.preview(side, size_usd, sec, tick, book, fee_rate)
         order = {
-            "id": uuid4().hex[:12], "account_id": account_id, "source": source, "side": side, "entry_sec": sec,
+            "id": uuid4().hex[:12], "account_id": account_id, "source": source,
+            "strategy_id": strategy_id, "side": side, "entry_sec": sec,
             "size_usd": size_usd, "shares": preview["shares"], "entry_btc": tick["chainlink_btc"],
             "best_ask": preview["avg_price"], "best_ask_c": preview["best_ask_c"],
             "avg_entry_price": preview["avg_price"], "entry_fee_usd": preview["fee_usd"],

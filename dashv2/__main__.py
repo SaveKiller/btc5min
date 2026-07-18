@@ -9,6 +9,8 @@ import sys
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from dashv2.bots.bot_process import run_bot_process
 from dashv2.config import load_config
 from dashv2.engine import run_engine_process
@@ -16,6 +18,7 @@ from dashv2.server import run_server_process
 
 
 def main() -> None:
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")  # CURSOR_API_KEY
     mp.set_start_method("spawn", force=True)
     cfg = load_config()
     sentinel = Path(cfg["data_dir"]) / "restart"
