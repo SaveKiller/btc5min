@@ -129,6 +129,40 @@ def delete_strategy(root: Path, strategy_id: str) -> None:
         py.unlink()
 
 
+def unique_clone_name(root: Path, base_name: str) -> str:
+    names = {s["name"] for s in list_strategies(root)}
+    candidate = f"{base_name} (copy)"
+    if candidate not in names:
+        return candidate
+    n = 2
+    while f"{base_name} (copy {n})" in names:
+        n += 1
+    return f"{base_name} (copy {n})"
+
+
+def clone_strategy(root: Path, strategy_id: str) -> dict:
+    """Copia JSON + modulo .py; nome = originale + ' (copy)' / ' (copy N)'."""
+    src = load_strategy(root, strategy_id)
+    new_id = uuid.uuid4().hex[:12]
+    new_name = unique_clone_name(root, src["name"])
+    now = _utc_now_iso()
+    module_file = None
+    src_py = module_path(root, strategy_id)
+    if src_py.is_file():
+        module_file = write_module(root, new_id, src_py.read_text(encoding="utf-8"))
+    elif src["type"] == "deterministic":
+        raise Exception(f"missing module for deterministic strategy: {strategy_id}")
+    payload = {
+        "schema_version": SCHEMA_VERSION, "id": new_id, "name": new_name,
+        "type": src["type"], "description": src["description"],
+        "rules": src["rules"], "module_file": module_file,
+        "params": dict(src["params"]),
+        "created_at_utc": now, "updated_at_utc": now,
+    }
+    _atomic_write(_strategy_path(root, new_id), payload)
+    return payload
+
+
 def load_active_ids(root: Path) -> list[str]:
     path = _state_path(root)
     if not path.is_file():

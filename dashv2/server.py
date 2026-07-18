@@ -30,7 +30,7 @@ _HUMAN_CMDS = frozenset({
     "replay.seek", "replay.preview", "order.size", "order.preview", "order.place",
     "order.close", "order.cancel", "account.list", "account.select", "account.create",
     "account.rename", "account.update", "bot.list", "bot.set_active",
-    "strategy.list", "strategy.create", "strategy.update", "strategy.delete",
+    "strategy.list", "strategy.create", "strategy.update", "strategy.clone", "strategy.delete",
     "strategy.load", "strategy.unload", "session.sync", "consult.send",
 })
 _STRATEGY_GEN_CMDS = frozenset({"strategy.create", "strategy.update"})

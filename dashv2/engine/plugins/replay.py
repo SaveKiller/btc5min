@@ -17,8 +17,8 @@ from dashv2.history import (
 from dashv2.orders import OrderEngine
 from dashv2.rounds import LoadedRound, RoundRepository
 from dashv2.strategies import (
-    create_strategy, delete_strategy, list_strategies, load_active_ids, load_strategy,
-    save_active_ids, strategies_dir, strategy_summary, update_strategy,
+    clone_strategy, create_strategy, delete_strategy, list_strategies, load_active_ids,
+    load_strategy, save_active_ids, strategies_dir, strategy_summary, update_strategy,
 )
 
 
@@ -163,6 +163,7 @@ class ReplayEngine:
             elif cmd == "strategy.list": result = self._cmd_strategy_list(payload)
             elif cmd == "strategy.create": result = self._cmd_strategy_create(payload)
             elif cmd == "strategy.update": result = self._cmd_strategy_update(payload)
+            elif cmd == "strategy.clone": result = self._cmd_strategy_clone(payload)
             elif cmd == "strategy.delete": result = self._cmd_strategy_delete(payload)
             elif cmd == "strategy.load": result = self._cmd_strategy_load(payload)
             elif cmd == "strategy.unload": result = self._cmd_strategy_unload(payload)
@@ -267,6 +268,7 @@ class ReplayEngine:
         mm, ss = divmod(max(sec, 0), 60)
         self._emit_event("session", {
             "loaded": True, "market_start_ts": self.loaded.market_start_ts,
+            "session_id": self.session_id,
             "replay_timestamp": dt.strftime("%d/%m/%Y | %H:%M:%S"),
             "sec": sec, "countdown": f"{sec} | {mm}:{ss:02d}",
             "progress": 300 - sec, "playing": False, "round_ended": self.round_ended,
@@ -499,6 +501,11 @@ class ReplayEngine:
         self._emit_bot_status()
         return {"ok": True, "strategy": strategy_summary(data)}
 
+    def _cmd_strategy_clone(self, payload: dict) -> dict:
+        data = clone_strategy(self.strategies_root, payload["strategy_id"])
+        self._emit_strategies()
+        return {"ok": True, "strategy": strategy_summary(data)}
+
     def _cmd_strategy_delete(self, payload: dict) -> dict:
         sid = payload["strategy_id"]
         if sid in self.active_strategy_ids:
@@ -629,7 +636,7 @@ class ReplayEngine:
     def _emit_session(self) -> None:
         if not self.loaded:
             self._emit_event("session", {
-                "loaded": False, "active_account_id": self.active_account_id,
+                "loaded": False, "session_id": None, "active_account_id": self.active_account_id,
                 "account_switch_locked": bool(self.orders.open_orders),
                 "replay_speed": self.replay_speed, "engine_plugin": self.engine_plugin,
                 "account_backend": self.account_backend,
@@ -644,6 +651,7 @@ class ReplayEngine:
         )
         self._emit_event("session", {
             "loaded": True, "market_start_ts": self.loaded.market_start_ts,
+            "session_id": self.session_id,
             "replay_timestamp": dt.strftime("%d/%m/%Y | %H:%M:%S"),
             "sec": self.sec, "countdown": f"{self.sec} | {mm}:{ss:02d}",
             "progress": 300 - self.sec, "playing": self.playing, "round_ended": self.round_ended,
@@ -713,7 +721,11 @@ class ReplayEngine:
                 self.session_id or "", self.session_started_at_utc or "")
             rows = live + rows
         rows.sort(key=lambda r: (r["session_sort_ts"], r["market_start_ts"], r.get("entry_sec", 0)), reverse=True)
-        self._emit_event("history", {"rows": rows, "active_account_id": self.active_account_id})
+        self._emit_event("history", {
+            "rows": rows,
+            "active_account_id": self.active_account_id,
+            "session_id": self.session_id if self.loaded else None,
+        })
 
     def _emit_event(self, name: str, payload: dict) -> None:
         self.evt_conn.send(ipc.make_event(name, payload))

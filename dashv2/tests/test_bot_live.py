@@ -164,6 +164,7 @@ class TestServerAcl(unittest.TestCase):
         self.assertNotIn("bot.set_active", _BOT_CMDS)
         self.assertIn("strategy.create", _HUMAN_CMDS)
         self.assertIn("strategy.update", _HUMAN_CMDS)
+        self.assertIn("strategy.clone", _HUMAN_CMDS)
         self.assertNotIn("bot.select", _HUMAN_CMDS)
         self.assertNotIn("strategy.rename", _HUMAN_CMDS)
 

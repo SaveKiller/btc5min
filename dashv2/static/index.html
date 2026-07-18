@@ -74,13 +74,26 @@
       </ul>
       <div class="tab-content workspace-tab-content flex-grow-1 min-h-0">
         <div class="tab-pane fade h-100" id="candlesPane" role="tabpanel" aria-labelledby="candles-tab" tabindex="0">
-          <article class="chart-panel h-100 d-flex flex-column">
-            <div class="panel-head d-flex justify-content-between align-items-center">
-              <span class="panel-title">BTC/USD · Candlestick</span>
-              <div class="btn-group btn-group-sm"><button class="btn btn-outline-secondary active" type="button">5m</button></div>
-            </div>
-            <div class="chart-wrap flex-grow-1"><div id="chartContainer"></div></div>
-          </article>
+          <div class="candles-stack h-100 d-flex flex-column min-h-0">
+            <article class="chart-panel candles-chart-panel d-flex flex-column min-h-0">
+              <div class="panel-head d-flex justify-content-between align-items-center">
+                <span class="panel-title">BTC/USD · Candlestick</span>
+                <div class="btn-group btn-group-sm"><button class="btn btn-outline-secondary active" type="button">5m</button></div>
+              </div>
+              <div class="chart-wrap flex-grow-1"><div id="chartContainer"></div></div>
+            </article>
+            <article class="app-panel account-history-panel candles-session-history-panel d-flex flex-column min-h-0">
+              <div class="panel-head">
+                <span class="panel-title">Session history</span>
+              </div>
+              <div class="table-responsive account-history-scroll flex-grow-1 px-3 pb-2">
+                <table class="table table-sm mb-0 align-middle">
+                  <thead><tr><th>Session</th><th class="history-toggle-col"></th><th>Date</th><th>Time</th><th>Who</th><th>Direction</th><th>Outcome</th><th>Size</th><th>Entry</th><th>Exit</th><th class="text-end">Final</th><th class="text-end">PnL</th></tr></thead>
+                  <tbody id="sessionHistoryTableBody"></tbody>
+                </table>
+              </div>
+            </article>
+          </div>
         </div>
         <div class="tab-pane fade show active h-100" id="accountsPane" role="tabpanel" aria-labelledby="accounts-tab" tabindex="0">
           <div class="accounts-stack h-100 d-flex flex-column">
@@ -143,12 +156,13 @@
                 <div class="ms-auto d-flex gap-2">
                   <button class="btn btn-sm btn-primary" id="strategyNewBtn" type="button">NEW</button>
                   <button class="btn btn-sm btn-outline-secondary" id="strategyEditBtn" type="button" disabled>EDIT</button>
+                  <button class="btn btn-sm btn-outline-secondary" id="strategyCloneBtn" type="button" disabled>CLONE</button>
                   <button class="btn btn-sm btn-outline-secondary" id="strategyDeleteBtn" type="button" disabled>DELETE</button>
                 </div>
               </div>
               <div class="px-3 pb-3 flex-grow-1 min-h-0 d-flex flex-column">
                 <ul class="strategy-catalog-list flex-grow-1 mb-0" id="strategyCatalogList"></ul>
-                <p class="tiny text-muted-app mt-2 mb-0">Use + or double-click to add; remove from LOADED labels or double-click again.</p>
+                <p class="tiny text-muted-app mt-2 mb-0">Use + to add to bot; remove from LOADED labels. Double-click to edit.</p>
               </div>
             </article>
           </div>
@@ -293,7 +307,7 @@
 </div>
 
 <div class="modal fade" id="strategyModal" tabindex="-1" aria-labelledby="strategyModalTitle" aria-hidden="true">
-  <div class="modal-dialog">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="strategyModalTitle">Strategy</h5>
@@ -302,17 +316,19 @@
       <div class="modal-body">
         <input type="hidden" id="strategyModalMode" value="create">
         <input type="hidden" id="strategyModalId" value="">
-        <div class="mb-3">
-          <label class="form-label" for="strategyModalName">Name</label>
-          <input class="form-control" id="strategyModalName" type="text">
-        </div>
-        <div class="mb-3">
-          <label class="form-label" for="strategyModalDescription">Description</label>
-          <textarea class="form-control" id="strategyModalDescription" rows="3" placeholder="Plain-language description of this strategy"></textarea>
+        <div class="row g-3 mb-3">
+          <div class="col-md-4">
+            <label class="form-label" for="strategyModalName">Name</label>
+            <input class="form-control" id="strategyModalName" type="text">
+          </div>
+          <div class="col-md-8">
+            <label class="form-label" for="strategyModalDescription">Description</label>
+            <textarea class="form-control strategy-desc-input" id="strategyModalDescription" rows="2" placeholder="Plain-language description of this strategy"></textarea>
+          </div>
         </div>
         <div class="mb-3" id="strategyModalRulesWrap">
           <label class="form-label" for="strategyModalRules">Rules</label>
-          <textarea class="form-control" id="strategyModalRules" rows="5" placeholder="Describe the trading rules in plain language; the model will generate the Python module"></textarea>
+          <textarea class="form-control strategy-rules-input" id="strategyModalRules" rows="12" placeholder="Describe the trading rules in plain language; the model will generate the Python module"></textarea>
         </div>
         <div id="strategyModalProgress" class="d-none small text-info">
           <div class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></div>

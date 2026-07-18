@@ -1,8 +1,9 @@
 import { initChart, relayoutChart, resizeChart, setCandles, updateCurrentCandle } from "./chart.js";
 import {
-    applyButtonPreviews, layoutReplayScale, renderAccounts, renderBotPanel, renderEnginePlugin, renderHistory,
-    renderOrders, renderOutcome, renderRoundPickerDays, renderRoundPickerHours, renderRoundPickerRounds,
-    renderStakeButtons, renderTick, setDisconnectBanner, toggleHistorySession,
+    applyButtonPreviews, layoutReplayScale, markStrategySelected, renderAccounts, renderBotPanel,
+    renderEnginePlugin, renderHistory, renderOrders, renderOutcome, renderRoundPickerDays,
+    renderRoundPickerHours, renderRoundPickerRounds, renderSessionHistory, renderStakeButtons,
+    renderTick, setDisconnectBanner, toggleHistorySession,
 } from "./render.js";
 
 const REPLAY_SPEED_KEY = "dashv2_replay_speed";
@@ -52,6 +53,12 @@ function loadStoredLeftTab() {
 function persistLeftTab(tabId) {
     if (!LEFT_TAB_IDS.includes(tabId)) return;
     localStorage.setItem(LEFT_TAB_KEY, tabId);
+}
+
+
+function refreshHistoryViews() {
+    renderHistory(state.historyRows);
+    renderSessionHistory(state.historyRows, state.session?.session_id);
 }
 
 
@@ -238,6 +245,13 @@ function saveAccountModal() {
     req.then(() => accountModal.hide()).catch(alert);
 }
 
+function fitStrategyRulesHeight() {
+    const el = document.getElementById("strategyModalRules");
+    el.style.height = "auto";
+    const maxPx = Math.floor(window.innerHeight - 14 * 16);
+    el.style.height = `${Math.min(el.scrollHeight, maxPx)}px`;
+}
+
 function openStrategyModal(mode, strategy = null) {
     document.getElementById("strategyModalMode").value = mode;
     document.getElementById("strategyModalId").value = strategy?.id || "";
@@ -250,6 +264,9 @@ function openStrategyModal(mode, strategy = null) {
     document.getElementById("strategyModalRulesWrap").classList.toggle("d-none", !showRules);
     setStrategyModalBusy(false);
     strategyModal.show();
+    if (showRules) {
+        requestAnimationFrame(() => fitStrategyRulesHeight());
+    }
 }
 
 function setStrategyModalBusy(busy, text = "") {
@@ -369,7 +386,10 @@ socket.on("accounts", (payload) => applyAccountsPayload(payload));
 socket.on("history", (payload) => {
     state.historyRows = payload.rows || [];
     if (payload.active_account_id !== undefined) state.activeAccountId = payload.active_account_id;
-    renderHistory(state.historyRows);
+    if (payload.session_id !== undefined && state.session) {
+        state.session = { ...state.session, session_id: payload.session_id };
+    }
+    refreshHistoryViews();
 });
 
 socket.on("chart", (payload) => {
@@ -389,11 +409,6 @@ socket.on("round_end", (payload) => {
     renderOutcome(payload);
     state.session = { ...state.session, round_ended: true, tradable: false };
     renderTick(state);
-    selectLeftTab("accounts-tab");
-});
-
-socket.on("action", (payload) => {
-    if (payload.cmd === "order.close") selectLeftTab("accounts-tab");
 });
 
 socket.on("error", (payload) => alert(payload.message || "error"));
@@ -521,7 +536,7 @@ document.getElementById("historyTableBody").addEventListener("click", (e) => {
     const row = e.target.closest(".history-session-row");
     if (!row) return;
     toggleHistorySession(row.dataset.sessionId);
-    renderHistory(state.historyRows);
+    refreshHistoryViews();
 });
 
 document.getElementById("accountSelect").addEventListener("change", (e) => {
@@ -556,6 +571,20 @@ document.getElementById("strategyEditBtn").addEventListener("click", () => {
     openStrategyModal("edit", cur);
 });
 
+document.getElementById("strategyCloneBtn").addEventListener("click", () => {
+    const id = state.selectedStrategyId;
+    if (!id) return;
+    emitAck("strategy.clone", { strategy_id: id }).then((res) => {
+        const s = res.strategy;
+        state.selectedStrategyId = s.id;
+        if (!state.strategies.some((x) => x.id === s.id)) {
+            state.strategies = [s, ...state.strategies];
+        }
+        renderBotPanel(state);
+        openStrategyModal("edit", s);
+    }).catch(alert);
+});
+
 document.getElementById("strategyDeleteBtn").addEventListener("click", () => {
     const id = state.selectedStrategyId;
     if (!id) return;
@@ -566,20 +595,25 @@ document.getElementById("strategyDeleteBtn").addEventListener("click", () => {
 });
 
 document.getElementById("strategyModalSaveBtn").addEventListener("click", saveStrategyModal);
+document.getElementById("strategyModalRules").addEventListener("input", fitStrategyRulesHeight);
+document.getElementById("strategyModal").addEventListener("shown.bs.modal", () => {
+    if (!document.getElementById("strategyModalRulesWrap").classList.contains("d-none")) {
+        fitStrategyRulesHeight();
+    }
+});
 
 document.getElementById("strategyCatalogList").addEventListener("click", (e) => {
     const actionBtn = e.target.closest("[data-action]");
     if (actionBtn) {
         e.stopPropagation();
         const id = actionBtn.dataset.id;
-        state.selectedStrategyId = id;
+        markStrategySelected(state, id);
         if (actionBtn.dataset.action === "load") activateStrategy(id);
         return;
     }
     const item = e.target.closest(".strategy-catalog-item");
     if (!item) return;
-    state.selectedStrategyId = item.dataset.id;
-    renderBotPanel(state);
+    markStrategySelected(state, item.dataset.id);
 });
 
 document.getElementById("strategyCatalogList").addEventListener("dblclick", (e) => {
@@ -587,9 +621,10 @@ document.getElementById("strategyCatalogList").addEventListener("dblclick", (e) 
     const item = e.target.closest(".strategy-catalog-item");
     if (!item) return;
     const id = item.dataset.id;
-    state.selectedStrategyId = id;
-    if (state.activeStrategyIds.includes(id)) deactivateStrategy(id);
-    else activateStrategy(id);
+    markStrategySelected(state, id);
+    const cur = state.strategies.find((s) => s.id === id);
+    if (!cur) return;
+    openStrategyModal("edit", cur);
 });
 
 document.getElementById("botActiveList").addEventListener("click", (e) => {

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from dashv2.bots.runner import StrategyRunner
 from dashv2.config import reload_strategy_codegen_system_prompt
-from dashv2.strategies import create_strategy, delete_strategy, strategies_dir, write_module
+from dashv2.strategies import clone_strategy, create_strategy, delete_strategy, module_path, strategies_dir, write_module
 from dashv2.strategy_codegen import build_codegen_prompt, extract_python_source, validate_module_source
 
 
@@ -86,6 +86,25 @@ class TestStrategyRunner(unittest.TestCase):
             delete_strategy(root, data["id"])
             self.assertFalse(py.is_file())
             self.assertFalse((root / f"strategy_{data['id']}.json").is_file())
+
+    def test_clone_copies_module_and_name(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = strategies_dir(Path(td))
+            src = create_strategy(
+                root, "Alpha", "deterministic", "desc", rules="buy up",
+                module_file="strategy_srcid000001.py", strategy_id="srcid000001")
+            write_module(root, src["id"], _STUB)
+            c1 = clone_strategy(root, src["id"])
+            self.assertEqual(c1["name"], "Alpha (copy)")
+            self.assertEqual(c1["rules"], "buy up")
+            self.assertNotEqual(c1["id"], src["id"])
+            self.assertTrue(module_path(root, c1["id"]).is_file())
+            self.assertEqual(
+                module_path(root, c1["id"]).read_text(encoding="utf-8"),
+                module_path(root, src["id"]).read_text(encoding="utf-8"),
+            )
+            c2 = clone_strategy(root, src["id"])
+            self.assertEqual(c2["name"], "Alpha (copy 2)")
 
 
 if __name__ == "__main__":

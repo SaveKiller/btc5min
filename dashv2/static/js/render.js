@@ -526,8 +526,7 @@ function groupHistoryRows(rows) {
 const expandedHistorySessions = new Set();
 
 
-function historySessionRow(g) {
-    const expanded = expandedHistorySessions.has(g.sessionId);
+function historySessionRow(g, expanded) {
     const icon = expanded ? "−" : "+";
     const betCount = g.bets.length;
     const countLabel = betCount > 1 ? `<span class="history-session-count">${betCount}</span>` : "";
@@ -536,15 +535,22 @@ function historySessionRow(g) {
 }
 
 
-export function renderHistory(rows) {
+export function renderHistory(rows, { tbodyId = "historyTableBody", forceExpanded = false } = {}) {
     const groups = groupHistoryRows(rows);
     const html = [];
     for (const g of groups) {
-        html.push(historySessionRow(g));
-        const hidden = !expandedHistorySessions.has(g.sessionId);
-        for (const r of g.bets) html.push(historyBetRow(r, hidden));
+        const expanded = forceExpanded || expandedHistorySessions.has(g.sessionId);
+        html.push(historySessionRow(g, expanded));
+        for (const r of g.bets) html.push(historyBetRow(r, !expanded));
     }
-    $("historyTableBody").innerHTML = html.join("");
+    $(tbodyId).innerHTML = html.join("");
+}
+
+
+/** History chiusa della sola session_id corrente (tab Candles). */
+export function renderSessionHistory(rows, sessionId) {
+    const filtered = sessionId ? rows.filter((r) => r.session_id === sessionId) : [];
+    renderHistory(filtered, { tbodyId: "sessionHistoryTableBody", forceExpanded: true });
 }
 
 
@@ -612,13 +618,9 @@ export function renderBotPanel(state) {
             const sel = s.id === selectedId ? " selected" : "";
             const isActive = activeIds.includes(s.id);
             const desc = (s.description || "").trim();
-            const rules = (s.rules || "").trim();
-            const tip = desc || "Double-click to toggle in bot";
+            const tip = desc || "Double-click to edit";
             const descHtml = desc
                 ? `<span class="desc">${escapeHtml(desc)}</span>`
-                : "";
-            const rulesHtml = rules
-                ? `<span class="rules">${escapeHtml(rules)}</span>`
                 : "";
             return `<li class="strategy-catalog-item${sel}" data-id="${s.id}" title="${escapeHtml(tip)}">
                 <div class="meta">
@@ -627,7 +629,6 @@ export function renderBotPanel(state) {
                         <span class="stype">${escapeHtml(s.type).toUpperCase()}</span>
                     </div>
                     ${descHtml}
-                    ${rulesHtml}
                 </div>
                 <button type="button" class="btn-strat-add" data-action="load" data-id="${s.id}" title="Add to bot" aria-label="Add" ${isActive ? "disabled" : ""}><i class="bi bi-plus-lg" aria-hidden="true"></i></button>
             </li>`;
@@ -635,6 +636,21 @@ export function renderBotPanel(state) {
     }
     const hasSel = !!selectedId && catalog.some((s) => s.id === selectedId);
     $("strategyEditBtn").disabled = !hasSel;
+    $("strategyCloneBtn").disabled = !hasSel;
+    $("strategyDeleteBtn").disabled = !hasSel;
+}
+
+
+/** Solo selezione UI: non ricostruire il catalogo (altrimenti il dblclick non parte). */
+export function markStrategySelected(state, strategyId) {
+    state.selectedStrategyId = strategyId;
+    const catalogList = $("strategyCatalogList");
+    catalogList.querySelectorAll(".strategy-catalog-item").forEach((el) => {
+        el.classList.toggle("selected", el.dataset.id === strategyId);
+    });
+    const hasSel = !!strategyId && !!catalogList.querySelector(`.strategy-catalog-item[data-id="${strategyId}"]`);
+    $("strategyEditBtn").disabled = !hasSel;
+    $("strategyCloneBtn").disabled = !hasSel;
     $("strategyDeleteBtn").disabled = !hasSel;
 }
 
