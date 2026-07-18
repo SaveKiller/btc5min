@@ -4,16 +4,16 @@ overview: Limitare lo snapshot salvato nel `.bin` ai top-8 livelli per lato, res
 todos:
   - id: truncate-snapshot
     content: BOOK_DEPTH=8 + truncate_side in snapshot_books (book RAM resta full)
-    status: pending
+    status: completed
   - id: config-docs-test
     content: setup.json/setup.py se config; docs/round-format.md; unit test truncate/BBO
-    status: pending
+    status: completed
   - id: local-round-verify
     content: "Test locale: 1 round intero in cartella test → size/depth/verify; STOP e chiedere OK utente"
-    status: pending
+    status: completed
   - id: deploy-poly
     content: "SOLO dopo OK utente: sync+restart metà round; attendere 1° round; verify su poly"
-    status: pending
+    status: completed
 isProject: false
 ---
 

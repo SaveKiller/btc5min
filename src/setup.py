@@ -22,6 +22,10 @@ PING_INTERVAL_SEC = float(_req("ping_interval_sec"))
 RECONNECT_COOLDOWN_SEC = float(_req("reconnect_cooldown_sec"))
 RATE_LIMIT_BACKOFF_SEC = float(_req("rate_limit_backoff_sec"))
 
+BOOK_DEPTH = int(_req("book_depth"))
+if BOOK_DEPTH <= 0:
+    raise Exception("book_depth must be > 0")
+
 _raw_windows = _req("volatility_windows_sec")
 if not isinstance(_raw_windows, list) or len(_raw_windows) == 0:
     raise Exception("volatility_windows_sec must be a non-empty list")

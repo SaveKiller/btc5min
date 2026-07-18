@@ -29,6 +29,15 @@ le normali vincite/perdite che si annullano a vicenda.
 
 E' inclusa una webapp dashboard che permetta di eseguire i replay dei round in una ui personalizzata e completa di tutte le info possibili, sia quelle fornite dall'api di polymarket sia info statistiche calcolate successivamente.
 
+
+### Note round persi (obbligo agente)
+
+Ogni volta che, per qualsiasi motivo (deploy, restart, bug, gap su disco, procedura manuale), l’agente **si accorge** che uno o più round 5m non sono stati salvati, deve subito scrivere una nota in `docs/` con nome:
+
+`nota-round-persi-GG-MM-AA.md`
+
+(es. [`docs/nota-round-persi-18-07-26.md`](docs/nota-round-persi-18-07-26.md)). La nota deve riportare almeno: macchina/path dati, quanti round, `market_start_ts` e ora UTC, causa nota, timeline utile alle analisi future. Non basta menzionarlo in chat.
+
 ---
 
 
@@ -138,6 +147,9 @@ Se il task riguarda build, backfill, analisi o studio dei round sintetici Lighte
 
 In lan, nella macchina preoxmox, esiste un container debian chiamato
 poly (proxmox id 103, ip 10.1.1.73) che è pensata per stare attiva 24h e salvara i tick di questo progetto. In questa macchina deve essere presente un app "btc5min" dentro opt che parte all'avvio come servizio e scrive nella propria cartella data i file bin e txt dei vari round in modo continuativo.
+
+Deploy / cutover del collector su poly: vedi [`docs/nota-ticksaver-deploy.md`](docs/nota-ticksaver-deploy.md).
+
 
 ## Sanity check round
 

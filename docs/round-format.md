@@ -75,6 +75,8 @@ Ogni tick:
 
 Subito dopo: **book snapshot** = 4× uint16 (conteggi livelli up_bids, up_asks, down_bids, down_asks) + per ogni livello `(price: float64, size: float64)`. I best bid/ask nel record tick devono coincidere con il primo livello dello snapshot (verificato da `verify`).
 
+Il collector salva al più i **top N livelli per lato** (`setup.json` → `book_depth`, default **8**). Il book live in RAM resta completo; il troncamento avviene solo allo snapshot. I file storici pre-cutover possono avere profondità maggiore: `read_round` li legge comunque.
+
 Tick partial: quote e gain = `NaN`, snapshot vuoto (tutti i conteggi 0).
 
 ---

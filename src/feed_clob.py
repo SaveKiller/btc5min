@@ -125,10 +125,11 @@ def snapshot_books(state: RoundState):
         ptb = state.ptb_gamma if state.ptb_gamma is not None else state.ptb_chainlink
     if cl is None or cl_recv is None:
         raise Exception("chainlink price missing at sample")
-    from src.book import BookSnapshot
+    from src.book import BookSnapshot, truncate_side
+    from src.setup import BOOK_DEPTH
     return BookSnapshot(
-        copy.deepcopy(up.bids), copy.deepcopy(up.asks),
-        copy.deepcopy(down.bids), copy.deepcopy(down.asks),
+        truncate_side(up.bids, BOOK_DEPTH), truncate_side(up.asks, BOOK_DEPTH),
+        truncate_side(down.bids, BOOK_DEPTH), truncate_side(down.asks, BOOK_DEPTH),
         up.best_bid(), up.quote_ask(), down.best_bid(), down.quote_ask()), cl, ptb, cl_recv
 
 

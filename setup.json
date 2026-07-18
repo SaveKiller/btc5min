@@ -8,6 +8,7 @@
     "ping_interval_sec": 3,
     "reconnect_cooldown_sec": 5,
     "rate_limit_backoff_sec": 180,
+    "book_depth": 8,
     "volatility_windows_sec": [30, 60, 90, 120],
     "volatility_min_changes": 5,
     "risk_model_version": 1,

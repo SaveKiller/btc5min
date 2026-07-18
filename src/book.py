@@ -27,6 +27,10 @@ def book_side_from_bytes(raw: bytes, offset: int, count: int) -> tuple[BookSide,
     return levels, offset
 
 
+def truncate_side(levels: BookSide, n: int) -> BookSide:
+    """Primi n livelli (book già ordinato: bid desc / ask asc)."""
+    return levels[:n]
+
 @dataclass
 class OrderBook:
     bids: BookSide = field(default_factory=list)
