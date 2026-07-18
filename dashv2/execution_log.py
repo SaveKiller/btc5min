@@ -17,6 +17,12 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def delete_execution_session(history_dir: Path, session_id: str) -> None:
+    path = executions_dir(history_dir) / f"{session_id}.jsonl"
+    if path.is_file():
+        path.unlink()
+
+
 def append_execution(history_dir: Path, row: dict) -> None:
     session_id = row["session_id"]
     path = executions_dir(history_dir) / f"{session_id}.jsonl"

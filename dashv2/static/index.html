@@ -72,7 +72,7 @@
           <button class="nav-link" id="bot-tab" data-bs-toggle="tab" data-bs-target="#botPane" type="button" role="tab" aria-controls="botPane" aria-selected="false">BOT</button>
         </li>
         <li class="nav-item ms-auto" role="presentation">
-          <button class="nav-link" id="agent-tab" data-bs-toggle="tab" data-bs-target="#agentPane" type="button" role="tab" aria-controls="agentPane" aria-selected="false">AI AGENT</button>
+          <button class="nav-link" id="agent-tab" data-bs-toggle="tab" data-bs-target="#agentPane" type="button" role="tab" aria-controls="agentPane" aria-selected="false">AGENT SESSION</button>
         </li>
       </ul>
       <div class="tab-content workspace-tab-content flex-grow-1 min-h-0">
@@ -138,6 +138,7 @@
             <article class="app-panel flex-grow-1 min-h-0 d-flex flex-column">
               <div class="panel-head"><span class="panel-title">BOT AND STRATEGIES</span></div>
               <div class="bot-status-row px-3 pt-3 d-flex align-items-center gap-3">
+                <img class="bot-status-icon" src="/imgs/cpu_ai.png" alt="" width="40" height="40">
                 <div class="bot-switch-wrap d-flex align-items-center gap-2 flex-shrink-0">
                   <span class="tiny text-muted-app mb-0">BOT</span>
                   <div class="form-check form-switch mb-0">
@@ -146,11 +147,12 @@
                   <span class="tiny text-muted-app" id="botStatusLabel">PAUSED</span>
                 </div>
                 <div class="bot-status-sep" aria-hidden="true"></div>
-                <span class="tiny text-muted-app mb-0 flex-shrink-0">LOADED</span>
+                <span class="tiny text-muted-app mb-0 flex-shrink-0">LOADED STRATEGIES</span>
                 <div class="bot-active-queue flex-grow-1 min-w-0" id="botActiveList" aria-label="Active strategies"></div>
               </div>
-              <div class="p-3 d-flex flex-wrap align-items-center gap-2">
-                <label class="tiny text-muted-app mb-0" for="strategyTypeSelect">TYPE</label>
+              <div class="p-3 d-flex flex-wrap align-items-center gap-2 strategy-toolbar">
+                <span class="bot-section-label text-muted-app mb-0">STRATEGIES</span>
+                <label class="tiny text-muted-app mb-0 ms-3" for="strategyTypeSelect">TYPE</label>
                 <select class="form-select form-select-sm" id="strategyTypeSelect" style="max-width:12rem" aria-label="Strategy type">
                   <option value="deterministic">Deterministic</option>
                   <option value="inferential">Inferential</option>
@@ -173,13 +175,13 @@
         <div class="tab-pane fade h-100" id="agentPane" role="tabpanel" aria-labelledby="agent-tab" tabindex="0">
           <div class="agent-stack h-100 d-flex flex-column min-h-0 gap-2">
             <aside class="app-panel agent-context-panel d-flex flex-column">
-              <div class="panel-head"><span class="panel-title">Context</span></div>
+              <div class="panel-head"><span class="panel-title">Agent Session</span></div>
               <div class="px-2 py-1 tiny agent-context-body" id="agentContextBody"></div>
             </aside>
             <article class="app-panel agent-chat-panel flex-grow-1 min-h-0 d-flex flex-column">
               <div class="panel-head d-flex justify-content-between align-items-center">
-                <span class="panel-title">AI Agent · Grok 4.5</span>
-                <button class="btn btn-sm btn-outline-secondary" id="agentClearBtn" type="button">Clear</button>
+                <span class="panel-title">Agent Session · Grok 4.5</span>
+                <button class="btn btn-sm btn-outline-danger" id="agentDeleteSessionBtn" type="button">Delete session</button>
               </div>
               <div class="agent-chat-log flex-grow-1 min-h-0 px-3 py-2" id="agentChatLog"></div>
               <div class="agent-proposed d-none px-3 pb-2" id="agentProposedWrap">
@@ -231,6 +233,11 @@
           <div class="order-head-stat">
             <div class="tiny text-muted-app">SEC TO END</div>
             <div class="order-head-stat-value" id="orderSecToEnd">—</div>
+          </div>
+          <span class="order-head-divider" aria-hidden="true"></span>
+          <div class="order-head-stat">
+            <div class="tiny text-muted-app">LIQ2</div>
+            <div class="order-head-stat-value" id="orderLiq2">—</div>
           </div>
         </div>
         <div class="order-book-body p-3 d-flex flex-column flex-grow-1 min-h-0">
@@ -347,23 +354,23 @@
         <div class="row g-3 mb-3">
           <div class="col-md-4">
             <label class="form-label" for="strategyModalName">Name</label>
-            <input class="form-control" id="strategyModalName" type="text">
+            <input class="form-control" id="strategyModalName" placeholder="Name of strategy" type="text">
           </div>
           <div class="col-md-8">
             <label class="form-label" for="strategyModalDescription">Description</label>
-            <textarea class="form-control strategy-desc-input" id="strategyModalDescription" rows="2" placeholder="Plain-language description of this strategy"></textarea>
+            <textarea class="form-control strategy-desc-input" id="strategyModalDescription" rows="2" placeholder="Description of strategy"></textarea>
           </div>
         </div>
         <div class="mb-3" id="strategyModalRulesWrap">
           <label class="form-label" for="strategyModalRules">Rules</label>
           <textarea class="form-control strategy-rules-input" id="strategyModalRules" rows="12" placeholder="Describe the trading rules in plain language; the model will generate the Python module"></textarea>
         </div>
-        <div id="strategyModalProgress" class="d-none small text-info">
+      </div>
+      <div class="modal-footer">
+        <div id="strategyModalProgress" class="d-none align-items-center text-success me-auto">
           <div class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></div>
           <span id="strategyModalProgressText">Generating…</span>
         </div>
-      </div>
-      <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" id="strategyModalCancelBtn">Cancel</button>
         <button type="button" class="btn btn-primary" id="strategyModalSaveBtn">Save</button>
       </div>

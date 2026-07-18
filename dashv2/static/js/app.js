@@ -59,8 +59,9 @@ function persistLeftTab(tabId) {
 
 
 function refreshHistoryViews() {
-    renderHistory(state.historyRows);
-    renderSessionHistory(state.historyRows, state.session?.session_id);
+    renderHistory(state.historyRows, { agentSessionId: state.agentSessionId });
+    renderSessionHistory(state.historyRows, state.session?.session_id, state.agentSessionId);
+    renderAgentContext(state);
 }
 
 
@@ -225,7 +226,10 @@ function applyAccountsPayload(payload) {
     state.activeAccount = payload.active ?? null;
     renderAccounts(state);
     renderAgentContext(state);
-    if (state.activeAccountId && state.activeAccountId !== prevId) loadAgentHistory();
+    if (state.activeAccountId && state.activeAccountId !== prevId) {
+        // Lista sessioni + chat aggiornate via agent.session dal server.
+        loadAgentExecutions();
+    }
 }
 
 function setAgentStatus(text) {
@@ -240,6 +244,7 @@ function setAgentStatus(text) {
 }
 
 function applyAgentFocus(payload) {
+    const prevSid = state.agentSessionId;
     state.agentSessionId = payload.agent_session_id ?? null;
     if (payload.sessions) state.executionSessions = payload.sessions;
     state.agentFocus = {
@@ -250,6 +255,11 @@ function applyAgentFocus(payload) {
         strategy_ids: payload.strategy_ids || [],
     };
     renderAgentContext(state);
+    if (state.agentSessionId !== prevSid) {
+        loadAgentHistory();
+        renderHistory(state.historyRows, { agentSessionId: state.agentSessionId });
+        renderSessionHistory(state.historyRows, state.session?.session_id, state.agentSessionId);
+    }
 }
 
 function loadAgentExecutions() {
@@ -264,12 +274,12 @@ function finishAgentTurn() {
 }
 
 function loadAgentHistory() {
-    if (!state.activeAccountId) {
+    if (!state.agentSessionId) {
         state.agentMessages = [];
         renderAgentChat([]);
         return Promise.resolve();
     }
-    return emitAck("agent.chat.history", { account_id: state.activeAccountId }).then((res) => {
+    return emitAck("agent.chat.history", { session_id: state.agentSessionId }).then((res) => {
         state.agentMessages = res.messages || [];
         renderAgentChat(state.agentMessages, { thinking: state.agentBusy });
     }).catch(() => {});
@@ -281,17 +291,18 @@ function sendAgentMessage() {
     const text = input.value.trim();
     if (!text) return;
     if (!state.activeAccountId) return alert("Seleziona un account");
+    if (!state.agentSessionId) return alert("Seleziona una sessione");
     state.agentBusy = true;
     document.getElementById("agentSendBtn").disabled = true;
     input.value = "";
     state.agentMessages = [...state.agentMessages, { role: "user", content: text }];
     renderAgentChat(state.agentMessages, { thinking: true });
     setAgentStatus("Thinking…");
-    // Ack solo "accepted": la risposta arriva via agent.chat.message (turno async).
     emitAck("agent.chat.send", {
         text,
         account_id: state.activeAccountId,
         selected_strategy_id: state.selectedStrategyId,
+        session_id: state.agentSessionId,
         agent_session_id: state.agentSessionId,
     }).catch((err) => {
         alert(err);
@@ -360,6 +371,7 @@ function setStrategyModalBusy(busy, text = "") {
     const saveBtn = document.getElementById("strategyModalSaveBtn");
     const cancelBtn = document.getElementById("strategyModalCancelBtn");
     prog.classList.toggle("d-none", !busy);
+    prog.classList.toggle("d-flex", busy);
     if (text) document.getElementById("strategyModalProgressText").textContent = text;
     saveBtn.disabled = busy;
     cancelBtn.disabled = busy;
@@ -421,7 +433,6 @@ socket.on("bootstrap", (payload) => {
     applyOrderSizes({ size_up_usd: payload.default_order_size_usd, size_down_usd: payload.default_order_size_usd });
     renderAccounts(state);
     renderAgentContext(state);
-    loadAgentHistory();
     loadAgentExecutions();
 });
 
@@ -440,6 +451,7 @@ socket.on("session", (payload) => {
         state.activeRoundTs = payload.market_start_ts;
         state.syncSizesOnNextOrders = true;
     }
+    if (!payload.loaded) state.activeRoundTs = null;
     const roundStart = payload.loaded && payload.sec === 300 && (
         !prev?.loaded || prev.market_start_ts !== payload.market_start_ts || prev.round_ended
     );
@@ -537,6 +549,7 @@ socket.on("strategies", (payload) => {
 });
 
 socket.on("agent.chat.message", (payload) => {
+    if (payload.session_id && payload.session_id !== state.agentSessionId) return;
     if (payload.message) {
         const last = state.agentMessages[state.agentMessages.length - 1];
         if (!last || last.ts !== payload.message.ts || last.content !== payload.message.content) {
@@ -550,10 +563,11 @@ socket.on("agent.chat.message", (payload) => {
     finishAgentTurn();
 });
 
-socket.on("agent.chat.cleared", () => {
+socket.on("agent.session.deleted", (payload) => {
+    applyAgentFocus(payload);
     state.agentMessages = [];
     state.agentProposed = null;
-    finishAgentTurn();
+    renderAgentChat([]);
     renderAgentProposed(null, null);
 });
 
@@ -804,11 +818,24 @@ document.getElementById("agentChatInput").addEventListener("keydown", (e) => {
 });
 document.getElementById("agentContextBody").addEventListener("change", (e) => {
     if (e.target.id !== "agentSessionSelect") return;
-    emitAck("agent.session.select", { session_id: e.target.value }).then(applyAgentFocus).catch(alert);
+    const sid = e.target.value;
+    if (sid === "__unload__") {
+        emitAck("round.unload", {}).catch(alert);
+        return;
+    }
+    emitAck("agent.session.select", { session_id: sid }).then(applyAgentFocus).catch(alert);
 });
-document.getElementById("agentClearBtn").addEventListener("click", () => {
-    if (!state.activeAccountId) return;
-    emitAck("agent.chat.clear", { account_id: state.activeAccountId }).catch(alert);
+document.getElementById("agentDeleteSessionBtn").addEventListener("click", () => {
+    if (!state.agentSessionId) return alert("Seleziona una sessione");
+    const sid = state.agentSessionId;
+    if (!confirm(`Delete session ${sid} permanently (chat, orders, exec log)?`)) return;
+    emitAck("agent.session.delete", { session_id: sid }).then((res) => {
+        applyAgentFocus(res);
+        state.agentMessages = [];
+        state.agentProposed = null;
+        renderAgentChat([]);
+        renderAgentProposed(null, null);
+    }).catch(alert);
 });
 document.getElementById("agentApplyRulesBtn").addEventListener("click", () => {
     const btn = document.getElementById("agentApplyRulesBtn");

@@ -11,12 +11,13 @@ from flask import Flask, send_from_directory
 from flask_socketio import SocketIO
 
 from dashv2 import ipc
-from dashv2.agent_chat import clear_thread, load_thread
+from dashv2.agent_chat import load_thread
 from dashv2.agent_round_tools import AgentRoundTools
 from dashv2.agent_service import AgentService
 from dashv2.config import reload_strategy_codegen_system_prompt
-from dashv2.execution_log import execution_session_meta, list_execution_sessions
+from dashv2.execution_log import execution_session_meta
 from dashv2.rounds import RoundRepository
+from dashv2.sessions import delete_session, list_sessions_for_account
 from dashv2.strategies import load_strategy, strategies_dir, write_module
 from dashv2.strategy_codegen import generate_strategy_module
 
@@ -32,19 +33,19 @@ _BOT_CMDS = frozenset({
 })
 _BOT_TRADE_CMDS = frozenset({"order.place", "order.close", "order.cancel"})
 _HUMAN_CMDS = frozenset({
-    "round.load", "rounds.list", "replay.play", "replay.pause", "replay.speed",
+    "round.load", "round.unload", "rounds.list", "replay.play", "replay.pause", "replay.speed",
     "replay.seek", "replay.preview", "order.size", "order.preview", "order.place",
     "order.close", "order.cancel", "account.list", "account.select", "account.create",
     "account.rename", "account.update", "bot.list", "bot.set_active",
     "strategy.list", "strategy.create", "strategy.update", "strategy.clone", "strategy.delete",
     "strategy.load", "strategy.unload", "session.sync", "consult.send",
-    "agent.chat.send", "agent.chat.clear", "agent.chat.history", "agent.rules.apply",
-    "agent.executions.list", "agent.session.select",
+    "agent.chat.send", "agent.chat.history", "agent.rules.apply",
+    "agent.executions.list", "agent.session.select", "agent.session.delete",
 })
 _STRATEGY_GEN_CMDS = frozenset({"strategy.create", "strategy.update"})
 _AGENT_CMDS = frozenset({
-    "agent.chat.send", "agent.chat.clear", "agent.chat.history", "agent.rules.apply",
-    "agent.executions.list", "agent.session.select",
+    "agent.chat.send", "agent.chat.history", "agent.rules.apply",
+    "agent.executions.list", "agent.session.select", "agent.session.delete",
 })
 
 
@@ -254,20 +255,35 @@ class ServerBridge:
         return {"ok": True, "strategy": result.get("strategy")}
 
     def _agent_focus_payload(self) -> dict:
-        focus = self._live_ctx.get("agent_session_id") or self._live_ctx.get("session_id")
+        history_dir = Path(self.cfg["history_dir"])
+        account_id = self._active_account_id
         live_sid = self._live_ctx.get("session_id")
+        sessions = (
+            list_sessions_for_account(history_dir, account_id, live_session_id=live_sid)
+            if account_id else []
+        )
+        focus = self._live_ctx.get("agent_session_id") or live_sid
+        session_ids = {s["session_id"] for s in sessions}
+        if focus and focus not in session_ids and focus != live_sid:
+            focus = sessions[0]["session_id"] if sessions else None
+            self._live_ctx["agent_session_id"] = focus
+        elif not focus and sessions:
+            focus = sessions[0]["session_id"]
+            self._live_ctx["agent_session_id"] = focus
         is_live = bool(focus and focus == live_sid)
-        meta = execution_session_meta(Path(self.cfg["history_dir"]), focus) if focus else {
+        meta = execution_session_meta(history_dir, focus) if focus else {
             "session_id": None, "market_start_ts": None, "last_sec": None, "n_events": 0,
+            "strategy_ids": [],
         }
         if is_live:
             mts = self._live_ctx.get("market_start_ts") or meta.get("market_start_ts")
             sec = self._live_ctx.get("sec")
             strategy_ids = list(self._live_ctx.get("active_strategy_ids") or [])
         else:
-            mts = meta.get("market_start_ts")
-            sec = 0  # sessione storica conclusa
-            strategy_ids = list(meta.get("strategy_ids") or [])
+            row = next((s for s in sessions if s["session_id"] == focus), None)
+            mts = (row or {}).get("market_start_ts") or meta.get("market_start_ts")
+            sec = 0
+            strategy_ids = list((row or {}).get("strategy_ids") or meta.get("strategy_ids") or [])
         return {
             "agent_session_id": focus,
             "is_live": is_live,
@@ -276,8 +292,7 @@ class ServerBridge:
             "n_events": meta.get("n_events") or 0,
             "strategy_ids": strategy_ids,
             "live_session_id": live_sid,
-            "sessions": list_execution_sessions(
-                Path(self.cfg["history_dir"]), live_session_id=live_sid),
+            "sessions": sessions,
         }
 
     def _emit_agent_focus(self) -> None:
@@ -290,29 +305,60 @@ class ServerBridge:
         self._emit_agent_focus()
         return payload
 
+    def _resolve_agent_session_id(self, payload: dict | None) -> str:
+        sid = (payload or {}).get("session_id") or (payload or {}).get("agent_session_id")
+        sid = sid or self._live_ctx.get("agent_session_id") or self._live_ctx.get("session_id")
+        if not sid:
+            raise Exception("no session_id")
+        return sid
+
     def _bind_agent_chat(self) -> None:
         @self.socketio.on("agent.chat.history")
         def on_history(payload):
             from flask import request
             if self._role_for_sid(request.sid) != "human":
                 return {"error": "not allowed"}
-            account_id = (payload or {}).get("account_id") or self._active_account_id
-            if not account_id:
-                return {"error": "no active account"}
-            return {"ok": True, "messages": load_thread(Path(self.cfg["history_dir"]), account_id)}
+            try:
+                session_id = self._resolve_agent_session_id(payload)
+            except Exception as e:
+                return {"error": str(e)}
+            return {
+                "ok": True,
+                "session_id": session_id,
+                "messages": load_thread(Path(self.cfg["history_dir"]), session_id),
+            }
 
-        @self.socketio.on("agent.chat.clear")
-        def on_clear(payload):
+        @self.socketio.on("agent.session.delete")
+        def on_session_delete(payload):
             from flask import request
             if self._role_for_sid(request.sid) != "human":
                 return {"error": "not allowed"}
-            account_id = (payload or {}).get("account_id") or self._active_account_id
-            if not account_id:
-                return {"error": "no active account"}
-            clear_thread(Path(self.cfg["history_dir"]), account_id)
+            try:
+                session_id = self._resolve_agent_session_id(payload)
+            except Exception as e:
+                return {"error": str(e)}
+            live_sid = self._live_ctx.get("session_id")
+            if live_sid and live_sid == session_id:
+                try:
+                    self._request_to_data("round.unload", {}, actor="user")
+                except Exception as e:
+                    return {"error": str(e)}
+            try:
+                deleted = delete_session(Path(self.cfg["history_dir"]), session_id)
+            except Exception as e:
+                return {"error": str(e)}
+            if self._live_ctx.get("agent_session_id") == session_id:
+                self._live_ctx["agent_session_id"] = None
+            focus = self._agent_focus_payload()
+            self._emit_agent_focus()
+            self._request_to_data("session.sync", {}, actor="user")
             if self._human_sid:
-                self.socketio.emit("agent.chat.cleared", {"account_id": account_id}, to=self._human_sid)
-            return {"ok": True}
+                self.socketio.emit("agent.session.deleted", {
+                    "session_id": deleted["session_id"],
+                    "account_id": deleted["account_id"],
+                    **focus,
+                }, to=self._human_sid)
+            return {"ok": True, **deleted, **focus}
 
         @self.socketio.on("agent.executions.list")
         def on_exec_list(_payload=None):
@@ -347,8 +393,6 @@ class ServerBridge:
 
         @self.socketio.on("agent.chat.send")
         def on_send(payload):
-            # Ack immediato: run_turn (Cursor) dura minuti e se blocca il handler
-            # il websocket scade → ack/evento non arrivano e la UI resta su Thinking.
             from flask import request
             if self._role_for_sid(request.sid) != "human":
                 return {"error": "not allowed"}
@@ -356,6 +400,10 @@ class ServerBridge:
             account_id = body.get("account_id") or self._active_account_id
             if not account_id:
                 return {"error": "no active account"}
+            try:
+                session_id = self._resolve_agent_session_id(body)
+            except Exception as e:
+                return {"error": str(e)}
             text = (body.get("text") or "").strip()
             if not text:
                 return {"error": "empty message"}
@@ -363,19 +411,19 @@ class ServerBridge:
                 return {"error": "agent busy"}
             if body.get("selected_strategy_id") is not None:
                 self._live_ctx["selected_strategy_id"] = body.get("selected_strategy_id")
-            if body.get("agent_session_id"):
-                self._live_ctx["agent_session_id"] = body.get("agent_session_id")
+            self._live_ctx["agent_session_id"] = session_id
             self._agent_busy = True
             if self._human_sid:
                 self.socketio.emit("agent.chat.status", {"phase": "thinking"}, to=self._human_sid)
 
             def _run_agent_turn():
                 try:
-                    result = self.agent_service.run_turn(account_id, text)
+                    result = self.agent_service.run_turn(session_id, account_id, text)
                     if self._human_sid:
                         self.socketio.emit("agent.chat.message", {
                             "message": result["message"],
                             "proposed_rules": result.get("proposed_rules"),
+                            "session_id": session_id,
                             "account_id": account_id,
                         }, to=self._human_sid)
                 except Exception as e:
@@ -393,10 +441,10 @@ class ServerBridge:
         model = self.cfg["cursor_model"]
         system_prompt = reload_strategy_codegen_system_prompt()
         self.cfg["strategy_codegen_system_prompt"] = system_prompt
-        self._emit_generate("generating", f"Generating with {model['label']}…")
+        self._emit_generate("generating", f"Generating strategy with {model['label']}")
         source = generate_strategy_module(
             rules, model_id=model["id"], params=model["params"],
-            system_prompt=system_prompt,
+            system_prompt=system_prompt, max_attempts=3,
         )
         self._emit_generate("validating", "Validating generated module…")
         return source
@@ -493,6 +541,7 @@ class ServerBridge:
             if name == "session":
                 prev_live = self._live_ctx.get("session_id")
                 new_live = payload.get("session_id")
+                was_loaded = self._live_ctx.get("loaded")
                 self._live_ctx["loaded"] = bool(payload.get("loaded"))
                 self._live_ctx["market_start_ts"] = payload.get("market_start_ts")
                 self._live_ctx["session_id"] = new_live
@@ -511,6 +560,11 @@ class ServerBridge:
                     self._broadcast(name, payload)
                     self._emit_agent_focus()
                     continue
+                # Unload: live sparisce → ricalcola focus su storico account.
+                if was_loaded and not self._live_ctx["loaded"]:
+                    self._broadcast(name, payload)
+                    self._emit_agent_focus()
+                    continue
                 if self._live_ctx.get("agent_session_id") == new_live:
                     # Aggiorna Round/Sec live nel context senza cambiare focus.
                     self._broadcast(name, payload)
@@ -523,7 +577,13 @@ class ServerBridge:
                     self._active_strategy_ids = list(payload.get("active_strategy_ids") or [])
                     self._live_ctx["active_strategy_ids"] = list(self._active_strategy_ids)
             if name == "accounts" and "active_account_id" in payload:
+                prev_acc = self._active_account_id
                 self._active_account_id = payload.get("active_account_id")
+                self._broadcast(name, payload)
+                if self._active_account_id != prev_acc:
+                    self._live_ctx["agent_session_id"] = None
+                    self._emit_agent_focus()
+                continue
             self._broadcast(name, payload)
 
 

@@ -42,6 +42,15 @@ class TestDwinPublic(unittest.TestCase):
         pub = _public_tick(None, 200, 1, True)
         self.assertIsNone(pub["dwin_a"])
         self.assertIsNone(pub["dwin_ref_side"])
+        self.assertIsNone(pub["liq2_ask_usd"])
+
+    def test_liq2_caps_at_two_ask_levels(self):
+        # 10 livelli; notional = sum(p*size) solo sui primi 2 (no fee)
+        asks = [(0.50 + i * 0.01, 100.0) for i in range(10)]
+        book = type("B", (), {"up_asks": [], "down_asks": asks})()
+        pub = _public_tick(_tick(), 200, 1, False, book)
+        expected = sum(p * s for p, s in asks[:2])
+        self.assertAlmostEqual(pub["liq2_ask_usd"], expected)
 
 
 if __name__ == "__main__":

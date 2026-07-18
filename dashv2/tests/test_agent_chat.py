@@ -1,8 +1,7 @@
-"""Test AI agent chat persistenza, tool parse, exec log (senza Cursor live)."""
+"""Test AI agent chat persistenza, sessioni, tool parse, exec log (senza Cursor live)."""
 
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,19 +11,64 @@ from dashv2.agent_chat import append_message, clear_thread, load_thread
 from dashv2.agent_service import AgentService
 from dashv2.execution_log import append_execution, read_execution_session
 from dashv2.history import accounts_dir, create_account
+from dashv2.sessions import create_session, list_sessions_for_account, load_session
+
+
+class TestSessionsStore(unittest.TestCase):
+    def test_create_and_list_by_account(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            create_session(root, "s1", "accA", 100, "2026-01-01T00:00:00Z", ["st1"])
+            create_session(root, "s2", "accB", 200, "2026-01-02T00:00:00Z", [])
+            create_session(root, "s3", "accA", 300, "2026-01-03T00:00:00Z", [])
+            data = load_session(root, "s1")
+            self.assertEqual(data["account_id"], "accA")
+            listed = list_sessions_for_account(root, "accA")
+            self.assertEqual([x["session_id"] for x in listed], ["s3", "s1"])
+            self.assertEqual(list_sessions_for_account(root, "accB")[0]["session_id"], "s2")
+
+
+    def test_delete_session_clears_artifacts(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            from dashv2.history import append_settled_orders, load_account
+            from dashv2.sessions import delete_session
+            accounts = accounts_dir(root)
+            acc = create_account(accounts, "A", 1000, "")
+            create_session(root, "del1", acc["id"], 100, "2026-01-01T00:00:00Z", [])
+            append_settled_orders(
+                accounts, acc["id"], 100, "del1", "2026-01-01T00:00:00Z", "Up",
+                [{"id": "o1", "side": "Up", "size_usd": 10, "entry_sec": 100,
+                  "close_type": "settlement", "pnl_usd": 1, "source": "user"}],
+                "replay",
+            )
+            append_execution(root, {
+                "session_id": "del1", "market_start_ts": 100, "sec": 50,
+                "cmd": "order.place", "side": "Up", "size_usd": 10, "source": "user",
+            })
+            append_message(root, "del1", "user", "ciao", account_id=acc["id"])
+            delete_session(root, "del1")
+            with self.assertRaises(Exception):
+                load_session(root, "del1")
+            self.assertEqual(load_thread(root, "del1"), [])
+            self.assertFalse((root / "executions" / "del1.jsonl").is_file())
+            data = load_account(accounts, acc["id"])
+            self.assertEqual(data["orders"], [])
 
 
 class TestAgentChat(unittest.TestCase):
     def test_thread_roundtrip(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            append_message(root, "acc1", "user", "ciao")
-            append_message(root, "acc1", "assistant", "risposta")
-            msgs = load_thread(root, "acc1")
+            append_message(root, "sess1", "user", "ciao", account_id="acc1")
+            append_message(root, "sess1", "assistant", "risposta", account_id="acc1")
+            msgs = load_thread(root, "sess1")
             self.assertEqual(len(msgs), 2)
             self.assertEqual(msgs[0]["role"], "user")
-            clear_thread(root, "acc1")
-            self.assertEqual(load_thread(root, "acc1"), [])
+            path = root / "agent" / "session_sess1" / "thread.json"
+            self.assertTrue(path.is_file())
+            clear_thread(root, "sess1")
+            self.assertEqual(load_thread(root, "sess1"), [])
 
 
 class TestExecutionLog(unittest.TestCase):
@@ -111,13 +155,14 @@ class TestAgentServiceTools(unittest.TestCase):
                 "agent_cursor_model": {"id": "grok-4.5", "label": "Grok 4.5 High", "params": {"effort": "high"}},
             }
             svc = AgentService(cfg, lambda: {
-                "loaded": False, "selected_strategy_id": None, "session_id": None,
+                "loaded": False, "selected_strategy_id": None, "session_id": "sessX",
+                "agent_session_id": "sessX",
                 "round_tools": None, "bot_active": False, "active_strategy_ids": [],
             })
             with patch("dashv2.agent_service.call_model", return_value="Ciao, parliamo di strategie."):
-                res = svc.run_turn(acc["id"], "aiuto")
+                res = svc.run_turn("sessX", acc["id"], "aiuto")
             self.assertIn("strategie", res["message"]["content"])
-            self.assertEqual(len(load_thread(history, acc["id"])), 2)
+            self.assertEqual(len(load_thread(history, "sessX")), 2)
 
 
 if __name__ == "__main__":

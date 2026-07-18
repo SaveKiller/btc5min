@@ -134,6 +134,15 @@ def update_account(accounts_root: Path, account_id: str, name: str, initial_bala
     return data
 
 
+def remove_session_orders(accounts_root: Path, account_id: str, session_id: str) -> dict:
+    """Rimuove dal ledger tutti gli ordini della session_id."""
+    data = load_account(accounts_root, account_id)
+    data["orders"] = [o for o in data.get("orders", []) if o.get("session_id") != session_id]
+    data["updated_at_utc"] = _utc_now_iso()
+    _atomic_write(_account_path(accounts_root, account_id), data)
+    return data
+
+
 def append_settled_orders(accounts_root: Path, account_id: str, market_start_ts: int, session_id: str, session_started_at_utc: str, outcome: str, orders: list[dict], round_source: str) -> dict:
     data = load_account(accounts_root, account_id)
     for o in orders:

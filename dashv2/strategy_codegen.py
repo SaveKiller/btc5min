@@ -52,6 +52,7 @@ CRITICO SULL'OUTPUT:
 - NON usare tool, NON creare o modificare file su disco
 - NON descrivere cosa hai fatto: l'output deve ESSERE il codice, non un riepilogo
 - Niente markdown fuori dal fence del codice
+- Indentazione: SOLO 4 spazi per livello, mai tab; blocchi allineati in modo coerente
 
 {_CONTRACT}
 
@@ -87,11 +88,22 @@ def validate_module_source(source: str) -> None:
 
 def generate_strategy_module(
     rules: str, *, model_id: str, params: dict[str, str], system_prompt: str,
+    max_attempts: int,
 ) -> str:
-    """Chiama Cursor, estrae e valida il sorgente Python."""
+    """Chiama Cursor, estrae e valida il sorgente Python.
+
+    Su SyntaxError/IndentationError ritenta fino a max_attempts senza propagare
+    l'errore intermedio (il popup UI arriva solo se falliscono tutti i tentativi).
+    """
     prompt = build_codegen_prompt(rules, system_prompt)
-    with tempfile.TemporaryDirectory(prefix="dashv2-cursor-") as tmp:
-        raw = call_model(prompt, model_id=model_id, params=params, cwd=tmp)
-    source = extract_python_source(raw)
-    validate_module_source(source)
-    return source
+    last_err: BaseException | None = None
+    for _ in range(max_attempts):
+        with tempfile.TemporaryDirectory(prefix="dashv2-cursor-") as tmp:
+            raw = call_model(prompt, model_id=model_id, params=params, cwd=tmp)
+        source = extract_python_source(raw)
+        try:
+            validate_module_source(source)
+            return source
+        except SyntaxError as e:
+            last_err = e
+    raise last_err

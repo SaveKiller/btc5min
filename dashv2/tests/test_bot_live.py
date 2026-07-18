@@ -120,6 +120,8 @@ class TestBotAttach(unittest.TestCase):
 
     def test_restart_after_round_end_new_session(self):
         eng = self._engine()
+        acc = eng._cmd_account_create({"name": "T", "initial_balance_usd": 1000, "note": ""})
+        eng.active_account_id = acc["account"]["id"]
         eng.loaded = MagicMock()
         eng.loaded.market_start_ts = 1
         eng.loaded.ptb_chainlink = 90000.0
@@ -136,6 +138,27 @@ class TestBotAttach(unittest.TestCase):
         self.assertFalse(eng.round_ended)
         self.assertNotEqual(eng.session_id, "oldsession01")
         self.assertNotEqual(eng.session_started_at_utc, "2026-01-01T00:00:00Z")
+        from dashv2.sessions import load_session
+        reg = load_session(Path(eng.cfg["history_dir"]), eng.session_id)
+        self.assertEqual(reg["account_id"], eng.active_account_id)
+
+    def test_unload_and_account_lock(self):
+        eng = self._engine()
+        acc = eng._cmd_account_create({"name": "T", "initial_balance_usd": 1000, "note": ""})
+        aid = acc["account"]["id"]
+        eng.loaded = MagicMock()
+        eng.loaded.market_start_ts = 1
+        eng.session_id = "livesess0001"
+        eng.session_started_at_utc = "2026-01-01T00:00:00Z"
+        with self.assertRaises(Exception):
+            eng._cmd_account_select({"account_id": aid})
+        eng.orders.open_orders.clear()
+        res = eng._cmd_round_unload()
+        self.assertTrue(res["ok"])
+        self.assertIsNone(eng.loaded)
+        self.assertIsNone(eng.session_id)
+        eng._cmd_account_select({"account_id": aid})
+        self.assertEqual(eng.active_account_id, aid)
 
 
 class TestStrategiesRepo(unittest.TestCase):
@@ -165,6 +188,7 @@ class TestServerAcl(unittest.TestCase):
         self.assertIn("strategy.create", _HUMAN_CMDS)
         self.assertIn("strategy.update", _HUMAN_CMDS)
         self.assertIn("strategy.clone", _HUMAN_CMDS)
+        self.assertIn("round.unload", _HUMAN_CMDS)
         self.assertIn("agent.chat.send", _HUMAN_CMDS)
         self.assertIn("agent.executions.list", _HUMAN_CMDS)
         self.assertIn("agent.session.select", _HUMAN_CMDS)

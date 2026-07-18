@@ -212,7 +212,7 @@ Timeout IPC → `Exception("ipc timeout waiting for {cmd}")` → ack `{error: ".
 ### Comandi Socket.IO bindati
 
 ```
-round.load, rounds.list,
+round.load, round.unload, rounds.list,
 replay.play, replay.pause, replay.speed, replay.seek, replay.preview,
 order.size, order.preview, order.place, order.close, order.cancel,
 account.list, account.select, account.create, account.rename, account.update,
@@ -261,7 +261,7 @@ Stato interno rilevante (invariato rispetto al motore replay precedente):
 | `playing` | clock attivo |
 | `round_ended` | settlement già eseguito |
 | `seq` | monotono su ogni tick pubblico (anche preview scrub) |
-| `session_id` / `session_started_at_utc` | run corrente (nuovo a ogni `round.load`) |
+| `session_id` / `session_started_at_utc` | run corrente (nuovo a ogni `round.load` / restart; clear su `round.unload`) |
 | `replay_speed` | 1, 2 o 5 |
 | `selected_bot_id` / `bot_active` | strategy shim selezionata / master switch |
 | `engine_plugin` / `round_source` / `account_backend` | `"replay"` / `"replay"` / `"local"` |
@@ -430,9 +430,23 @@ dashv2/history/          # history_dir da setup.json (gitignored tipicamente)
   accounts/
     _state.json          # { active_account_id, saved_at_utc }
     account_<id>.json    # un file per account
+  sessions/
+    session_<id>.json    # registro sessione (account_id ownership alla mint)
+  executions/
+    <session_id>.jsonl   # exec log bot/engine
+  agent/
+    session_<id>/thread.json  # chat AI Agent per sessione
 ```
 
 `SCHEMA_VERSION = 1`. Scrittura atomica: `.tmp` + `os.replace`.
+
+### Sessioni (cittadino di prima classe)
+
+Alla mint (`round.load` / `_restart_round`) l’engine scrive `history/sessions/session_{id}.json` con `account_id` attivo, `market_start_ts`, `started_at_utc`, `active_strategy_ids`.
+
+- `round.unload`: scarica round dall’engine (`loaded=False`, clear `session_id`/ordini RAM); **non** cancella registro/exec/chat su disco. Rifiuta se open orders. UI: prima voce del dropdown Session in tab AI AGENT («Unload session»), non più pulsante in Accounts.
+- Cambio account / NEW: vietati se `loaded`. Sblocco solo dopo unload (o avvio senza round).
+- Dropdown sessioni AI Agent: `list_sessions_for_account(active_account_id)`.
 
 ### Schema account
 
@@ -553,6 +567,7 @@ Ack sincrono tranne `round.load` (ack immediato `{ok:true}`, errori via evento `
 | Comando | Payload tipico | Response tipica |
 |---------|----------------|-----------------|
 | `round.load` | `{market_start_ts}` | `{ok: true}` (async) |
+| `round.unload` | `{}` | `{ok}` — scarica sessione; sblocca account |
 | `rounds.list` | `{day_utc}` | `{ok, rounds:[{market_start_ts,label,valid,reason}]}` |
 | `replay.play` | `{}` | `{ok, playing}` o `{ok, sec, playing, restarted}` |
 | `replay.pause` | `{}` | `{ok, playing:false}` |
@@ -565,8 +580,8 @@ Ack sincrono tranne `round.load` (ack immediato `{ok:true}`, errori via evento `
 | `order.close` | `{order_id}` | `{ok, order}` |
 | `order.cancel` | `{order_id}` | `{ok, order}` |
 | `account.list` | `{}` | `{ok, accounts, active_account_id}` |
-| `account.select` | `{account_id}` | `{ok, active_account_id}` |
-| `account.create` | `{name, initial_balance_usd, note?}` | `{ok, account}` |
+| `account.select` | `{account_id}` | `{ok, active_account_id}` — rifiutato se round loaded |
+| `account.create` | `{name, initial_balance_usd, note?}` | `{ok, account}` — rifiutato se round loaded |
 | `account.rename` | `{account_id, name}` | `{ok, account}` |
 | `account.update` | `{account_id, name, initial_balance_usd, note?}` | `{ok, account}` |
 | `bot.list` | `{}` | `{ok, bots, selected_bot_id, strategies, bot_active, ...}` |
@@ -687,11 +702,12 @@ Chat human-only con **Grok 4.5 High** (`agent_cursor_label` in setup), Cursor SD
 
 | Pezzo | Path / comando |
 |-------|----------------|
-| Persistenza thread | `history/agent/account_{id}/thread.json` (`agent_chat.py`) — **prossimo step:** thread per `session_id` (chat a tema sessione) |
+| Persistenza thread | `history/agent/session_{session_id}/thread.json` (`agent_chat.py`) — chat a tema sessione |
+| Registro sessioni | `history/sessions/session_{id}.json` (`sessions.py`); ownership `account_id` alla mint |
 | Orchestrazione | `agent_service.py` + `agent_system_prompt.md` (cita sempre `session_id` nelle analisi) |
 | Tool round | `agent_round_tools.py` |
-| Exec log | `history/executions/{session_id}.jsonl` (`execution_log.py`); lista meta in Context dropdown |
-| Socket | `agent.chat.send` ack immediato `{accepted:true}` (turno in background); `agent.executions.list` / `agent.session.select`; eventi `agent.chat.message` / `status` / `error` / `agent.session`. Nuova sessione live → focus forzato su di essa. |
+| Exec log | `history/executions/{session_id}.jsonl` (`execution_log.py`); lista meta nel Context dropdown **filtrata per account** |
+| Socket | `agent.chat.*` keyed su `session_id`; `agent.session.select` / `agent.session.delete` (cancella registro+chat+exec+ledger); `round.unload` sblocca account. |
 
 Rules-first: proposte in chat (fence `rules`); apply solo con conferma UI o tool `strategy.apply_rules` + `confirm:true` → codegen update. Vietato write diretto del `.py`.
 
@@ -775,6 +791,7 @@ Env vars previsti per live reale (non letti dallo stub): `POLY_API_KEY`, `POLY_A
 | `dashv2/orders.py` | Simulazione CLOB (usata dal plugin replay) |
 | `dashv2/history.py` | Account ledger JSON — **backend del plugin replay** |
 | `dashv2/execution_log.py` | Jsonl esecuzione ordini per session_id |
+| `dashv2/sessions.py` | Registro sessioni (ownership account) |
 | `dashv2/agent_chat.py` / `agent_service.py` / `agent_round_tools.py` | Chat AI Agent + tool |
 | `dashv2/agent_system_prompt.md` | System prompt agent (IT, domain, rules-first) |
 | `dashv2/txt_rows.py` | Parse indicatori dal `.txt` |
@@ -810,7 +827,7 @@ python -m unittest discover -s dashv2/tests
 | `test_dwin_public.py` | Proiezione DWin nel tick pubblico |
 | `test_side_risk.py` | Risk per lato in tick |
 | `test_bot_live.py` | Bot list/select/active + live stub + ACL agent |
-| `test_agent_chat.py` | Thread chat, exec log, tool parse, turn mock |
+| `test_agent_chat.py` | Thread chat per session, registro sessions, exec log, tool parse, turn mock |
 | `test_strategy_codegen.py` | Codegen parse/validate + clone |
 
 Smoke manuale: `dashv2.bat` → load → play → seek → BUY → close/cancel o settlement → history/CSV; tab AI AGENT con account attivo.

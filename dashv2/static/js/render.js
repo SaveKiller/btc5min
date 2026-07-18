@@ -315,6 +315,8 @@ export function renderTick(state) {
         countdown.textContent = formatMmSs(session.sec);
         applySecBandClass(countdown, session.sec);
     }
+    const liq2 = tick?.liq2_ask_usd;
+    $("orderLiq2").textContent = liq2 != null ? `$${Math.round(liq2).toLocaleString("en-US")}` : "—";
     if (tick?.chainlink_btc != null) {
         const btc = Math.round(tick.chainlink_btc).toLocaleString("en-US");
         $("btcPrice").textContent = `${btc} $`;
@@ -441,7 +443,8 @@ function historyBetRow(r, hidden) {
     const entry = `${entryQ} / ${r.entry_sec}s`;
     const exit = r.exit_sec != null ? `${exitQ} / ${r.exit_sec}s` : "—";
     const hiddenCls = hidden ? " history-bet-row-hidden" : "";
-    return `<tr class="history-bet-row${hiddenCls}" data-session-id="${r.session_id || ""}"><td></td><td></td><td></td><td></td><td>${sourceBadge(r.source)}</td><td>${sideBadge(r.direction)}</td><td>${sideBadge(r.outcome)}</td><td>$${r.size_usd.toFixed(2)}</td><td>${entry}</td><td>${exit}</td>${valCell(r.final_pnl_usd)}${valCell(r.pnl_usd)}</tr>`;
+    const sid = escapeHtml(r.session_id || "");
+    return `<tr class="history-bet-row${hiddenCls}" data-session-id="${sid}"><td class="history-bet-session-id" title="${sid}">${sid}</td><td></td><td></td><td></td><td>${sourceBadge(r.source)}</td><td>${sideBadge(r.direction)}</td><td>${sideBadge(r.outcome)}</td><td>$${r.size_usd.toFixed(2)}</td><td>${entry}</td><td>${exit}</td>${valCell(r.final_pnl_usd)}${valCell(r.pnl_usd)}</tr>`;
 }
 
 
@@ -526,21 +529,22 @@ function groupHistoryRows(rows) {
 const expandedHistorySessions = new Set();
 
 
-function historySessionRow(g, expanded) {
+function historySessionRow(g, expanded, agentSessionId) {
     const icon = expanded ? "−" : "+";
     const betCount = g.bets.length;
     const countLabel = betCount > 1 ? `<span class="history-session-count">${betCount}</span>` : "";
     const sessionLabel = g.session_date_utc === "—" ? "—" : `${g.session_date_utc} ${g.session_time_utc}`;
-    return `<tr class="history-session-row${expanded ? " history-session-row-expanded" : ""}" data-session-id="${g.sessionId}"><td class="history-session-datetime">${sessionLabel}${countLabel}</td><td class="history-toggle-col"><span class="history-toggle-icon" aria-hidden="true">${icon}</span></td><td>${g.date_utc}</td><td>${g.time_utc}</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td>$${g.size_usd.toFixed(2)}</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td>${valCell(g.final_pnl_usd, "history-session-val")}${valCell(g.pnl_usd, "history-session-val")}</tr>`;
+    const focused = agentSessionId && g.sessionId === agentSessionId ? " history-session-row-agent-focus" : "";
+    return `<tr class="history-session-row${expanded ? " history-session-row-expanded" : ""}${focused}" data-session-id="${g.sessionId}"><td class="history-session-datetime">${sessionLabel}${countLabel}</td><td class="history-toggle-col"><span class="history-toggle-icon" aria-hidden="true">${icon}</span></td><td>${g.date_utc}</td><td>${g.time_utc}</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td><td>$${g.size_usd.toFixed(2)}</td><td class="text-muted-app">—</td><td class="text-muted-app">—</td>${valCell(g.final_pnl_usd, "history-session-val")}${valCell(g.pnl_usd, "history-session-val")}</tr>`;
 }
 
 
-export function renderHistory(rows, { tbodyId = "historyTableBody", forceExpanded = false } = {}) {
+export function renderHistory(rows, { tbodyId = "historyTableBody", forceExpanded = false, agentSessionId = null } = {}) {
     const groups = groupHistoryRows(rows);
     const html = [];
     for (const g of groups) {
         const expanded = forceExpanded || expandedHistorySessions.has(g.sessionId);
-        html.push(historySessionRow(g, expanded));
+        html.push(historySessionRow(g, expanded, agentSessionId));
         for (const r of g.bets) html.push(historyBetRow(r, !expanded));
     }
     $(tbodyId).innerHTML = html.join("");
@@ -548,9 +552,9 @@ export function renderHistory(rows, { tbodyId = "historyTableBody", forceExpande
 
 
 /** History chiusa della sola session_id corrente (tab Candles). */
-export function renderSessionHistory(rows, sessionId) {
+export function renderSessionHistory(rows, sessionId, agentSessionId = null) {
     const filtered = sessionId ? rows.filter((r) => r.session_id === sessionId) : [];
-    renderHistory(filtered, { tbodyId: "sessionHistoryTableBody", forceExpanded: true });
+    renderHistory(filtered, { tbodyId: "sessionHistoryTableBody", forceExpanded: true, agentSessionId });
 }
 
 
@@ -563,7 +567,7 @@ export function toggleHistorySession(sessionId) {
 export function renderAccounts(state) {
     const accounts = state.accounts || [];
     const activeId = state.activeAccountId;
-    const locked = !!state.session?.account_switch_locked;
+    const locked = !!state.session?.loaded || !!state.session?.account_switch_locked;
     const count = accounts.length;
     $("accountCountLabel").textContent = `${count} account${count === 1 ? "" : "s"}`;
     const select = $("accountSelect");
@@ -575,6 +579,7 @@ export function renderAccounts(state) {
         select.innerHTML = accounts.map((a) => `<option value="${a.id}"${a.id === activeId ? " selected" : ""}>${a.name}</option>`).join("");
     }
     const hasActive = activeId != null;
+    $("newAccountBtn").disabled = locked;
     $("renameAccountBtn").disabled = !hasActive;
     $("editAccountBtn").disabled = !hasActive;
     $("exportCsvBtn").disabled = !hasActive;
@@ -688,16 +693,20 @@ export function renderAgentContext(state) {
     const secVal = isLive ? (focus.sec != null ? String(focus.sec) : "—") : "0";
     const sessions = state.executionSessions || [];
     const focusId = state.agentSessionId || "";
-    const opts = sessions.map((s) => {
+    const canUnload = !!state.session?.loaded;
+    const unloadOpt = canUnload
+        ? `<option value="__unload__">Unload session</option>`
+        : `<option value="__unload__" disabled>Unload session</option>`;
+    const opts = unloadOpt + sessions.map((s) => {
         const liveMark = s.session_id === state.session?.session_id ? " · live" : "";
         const when = formatSessionClock(s.market_start_ts);
         const label = `${s.session_id} · ${when} · ${s.n_events || 0} events${liveMark}`;
         const selected = s.session_id === focusId ? " selected" : "";
         return `<option value="${escapeHtml(s.session_id)}"${selected}>${escapeHtml(label)}</option>`;
     }).join("");
-    const sessionControl = sessions.length
-        ? `<select class="form-select form-select-sm agent-session-select" id="agentSessionSelect">${opts}</select>`
-        : `<span title="—">—</span>`;
+    const sessionControl =
+        `<select class="form-select form-select-sm agent-session-select" id="agentSessionSelect">${opts}</select>`;
+    const statsLine = formatSessionFocusStats(state);
     const parts = [
         cell("Account", acc ? acc.name : "—"),
         cell("Round", roundVal),
@@ -706,8 +715,23 @@ export function renderAgentContext(state) {
         cell("Bot", state.botActive ? "ACTIVE" : "PAUSED"),
         `<span class="agent-ctx-item agent-ctx-loaded"><strong>Loaded strategies</strong>`
             + `<span title="${escapeHtml(loadedLabel)}">${escapeHtml(loadedLabel)}</span></span>`,
+        cell("Session result", statsLine),
     ];
     $("agentContextBody").innerHTML = parts.join("");
+}
+
+function formatSessionFocusStats(state) {
+    const sid = state.agentSessionId;
+    if (!sid) return "—";
+    const bets = (state.historyRows || []).filter((r) => r.session_id === sid);
+    if (!bets.length) return "0 · PnL — · Size —";
+    const pnl = sumField(bets, "final_pnl_usd");
+    const pnlFallback = pnl == null ? sumField(bets, "pnl_usd") : pnl;
+    const size = sessionCapitalSizeUsd(bets);
+    const pnlStr = pnlFallback == null
+        ? "—"
+        : `${pnlFallback >= 0 ? "+" : ""}$${pnlFallback.toFixed(2)}`;
+    return `${bets.length} · PnL ${pnlStr} · Size $${size.toFixed(2)}`;
 }
 
 function cell(label, value) {

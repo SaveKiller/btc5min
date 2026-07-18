@@ -35,12 +35,12 @@ class AgentService:
     def set_apply_rules_fn(self, fn) -> None:
         self._apply_rules_fn = fn
 
-    def run_turn(self, account_id: str, user_text: str) -> dict:
-        append_message(self.history_dir, account_id, "user", user_text)
+    def run_turn(self, session_id: str, account_id: str, user_text: str) -> dict:
+        append_message(self.history_dir, session_id, "user", user_text, account_id=account_id)
         system = reload_agent_system_prompt()
         live = self._tool_ctx_fn()
         context = self._build_context(account_id, live)
-        thread = load_thread(self.history_dir, account_id)[-_THREAD_TAIL:]
+        thread = load_thread(self.history_dir, session_id)[-_THREAD_TAIL:]
         tool_catalog = self._tool_catalog_text()
         messages_blob = self._format_thread(thread)
         prompt = (
@@ -77,7 +77,7 @@ class AgentService:
                 )
             if reply is None:
                 reply = raw.strip()
-        msg = append_message(self.history_dir, account_id, "assistant", reply)
+        msg = append_message(self.history_dir, session_id, "assistant", reply, account_id=account_id)
         proposed = self._extract_proposed_rules(reply)
         return {"message": msg, "proposed_rules": proposed}
 

@@ -15,6 +15,7 @@ from dashv2.history import (
     list_accounts, load_account, load_active_account_id, order_rows_for_run, order_rows_from_ledger,
     rename_account, save_active_account_id, update_account,
 )
+from dashv2.sessions import create_session
 from dashv2.orders import OrderEngine
 from dashv2.rounds import LoadedRound, RoundRepository
 from dashv2.strategies import (
@@ -44,16 +45,28 @@ def _dwin_public(tick: dict) -> dict:
     }
 
 
-def _public_tick(tick: dict | None, sec: int, seq: int, gap: bool) -> dict:
+def _ask_liq_usd(asks: list, depth: int) -> float:
+    """Notional ask USD sui primi `depth` livelli (price × size, senza fee)."""
+    return sum(p * size for p, size in asks[:depth])
+
+
+def _public_tick(tick: dict | None, sec: int, seq: int, gap: bool, book=None) -> dict:
     if tick is None or gap:
         return {
             "seq": seq, "sec": sec, "gap": True, "chainlink_btc": None, "delta_usd": None,
             "up_mid_c": None, "down_mid_c": None, "up_ask_c": None, "down_ask_c": None,
             "up_bid_c": None, "down_bid_c": None,
             "vol": {}, "risk": _empty_side_risk(), "dwin_ref_side": None,
-            "dwin_a": None, "dwin_b": None, "tradable": False,
+            "dwin_a": None, "dwin_b": None, "tradable": False, "liq2_ask_usd": None,
         }
     dwin = _dwin_public(tick)
+    liq2 = None
+    if book is not None:
+        side = tick.get("majority_side")
+        if side == "Up":
+            liq2 = _ask_liq_usd(book.up_asks, 2)
+        elif side == "Down":
+            liq2 = _ask_liq_usd(book.down_asks, 2)
     return {
         "seq": seq, "sec": sec, "gap": False, "chainlink_btc": tick["chainlink_btc"],
         "chainlink_stale": tick["chainlink_stale"], "delta_usd": tick["delta_usd"],
@@ -65,6 +78,7 @@ def _public_tick(tick: dict | None, sec: int, seq: int, gap: bool) -> dict:
         "majority_side": tick["majority_side"], "vol": tick["vol"], "risk": tick["side_risk"],
         "dwin_ref_side": dwin["dwin_ref_side"], "dwin_a": dwin["dwin_a"], "dwin_b": dwin["dwin_b"],
         "tradable": not tick["partial"] and not tick["gap"] and tick["chainlink_btc"] is not None,
+        "liq2_ask_usd": liq2,
     }
 
 
@@ -143,7 +157,8 @@ class ReplayEngine:
                 self.evt_conn.send(ipc.make_response(rid, result))
                 after()
                 return
-            if cmd == "rounds.list": result = self._cmd_rounds_list(payload)
+            if cmd == "round.unload": result = self._cmd_round_unload()
+            elif cmd == "rounds.list": result = self._cmd_rounds_list(payload)
             elif cmd == "replay.play": result = self._cmd_replay_play()
             elif cmd == "replay.pause": result = self._cmd_replay_pause()
             elif cmd == "replay.speed": result = self._cmd_replay_speed(payload)
@@ -177,6 +192,8 @@ class ReplayEngine:
             self.evt_conn.send(ipc.make_error(rid, str(e)))
 
     def _cmd_round_load(self, payload: dict) -> tuple[dict, callable]:
+        if self.active_account_id is None:
+            raise Exception("no active account")
         mts = int(payload["market_start_ts"])
         self.loaded = self.repo.load(mts)
         self.sec = 300
@@ -200,6 +217,31 @@ class ReplayEngine:
             self._emit_bot_status()
         return result, after
 
+    def _cmd_round_unload(self) -> dict:
+        if not self.loaded:
+            raise Exception("no round loaded")
+        if self.orders.open_orders:
+            raise Exception("cannot unload session with open orders")
+        self.playing = False
+        self.loaded = None
+        self.session_id = None
+        self.session_started_at_utc = None
+        self.round_ended = False
+        self.sec = 300
+        self.seq = 0
+        self._last_tick = None
+        self._prev_candles = []
+        self._round_advanced = False
+        self.orders.reset(self.cfg["default_order_size_usd"], self.cfg["default_order_size_usd"])
+        self._emit_session()
+        self._emit_event("chart", {"previous": [], "current": None, "full_reset": True})
+        self._emit_event("tick", _public_tick(None, self.sec, self.seq, True))
+        self._emit_orders()
+        self._emit_history()
+        self._emit_accounts()
+        self._emit_bot_status()
+        return {"ok": True}
+
     def _cmd_rounds_list(self, payload: dict) -> dict:
         day_utc = payload["day_utc"]
         return {"ok": True, "rounds": self.repo.list_picker_day(day_utc)}
@@ -207,6 +249,8 @@ class ReplayEngine:
     def _restart_round(self, *, playing: bool, sec: int) -> dict:
         if not self.loaded:
             raise Exception("no round loaded")
+        if self.active_account_id is None:
+            raise Exception("no active account")
         self.sec = sec
         self.playing = playing
         self.round_ended = False
@@ -279,12 +323,13 @@ class ReplayEngine:
             "tradable": not self.round_ended and sec >= 1,
             "preview": True,
             "active_account_id": self.active_account_id,
-            "account_switch_locked": bool(self.orders.open_orders),
+            "account_switch_locked": bool(self.loaded),
         })
         self.seq += 1
         tick = self.loaded.ticks_by_sec.get(sec)
         gap = tick is None or tick.get("gap", False)
-        public = _public_tick(tick, sec, self.seq, gap)
+        book = None if gap else self.loaded.books_by_sec.get(sec)
+        public = _public_tick(tick, sec, self.seq, gap, book)
         previews = self._previews_at(sec) if not gap and public.get("tradable") else {}
         self._emit_event("tick", {**public, "previews": previews, "preview": True})
         current = self.repo.current_candle(self.loaded, sec)
@@ -430,11 +475,22 @@ class ReplayEngine:
         })
 
     def _write_session_begin(self) -> None:
-        """Snapshot strategie caricate all'avvio sessione (anche senza ordini)."""
+        """Snapshot strategie + registro sessione all'avvio."""
         if not self.session_id or not self.loaded:
             return
+        if self.active_account_id is None:
+            raise Exception("no active account")
+        create_session(
+            Path(self.cfg["history_dir"]),
+            self.session_id,
+            self.active_account_id,
+            self.loaded.market_start_ts,
+            self.session_started_at_utc,
+            list(self.active_strategy_ids),
+        )
         append_execution(Path(self.cfg["history_dir"]), {
             "session_id": self.session_id,
+            "account_id": self.active_account_id,
             "market_start_ts": self.loaded.market_start_ts,
             "sec": self.sec,
             "cmd": "session.begin",
@@ -456,6 +512,8 @@ class ReplayEngine:
         return {"ok": True, "accounts": list_accounts(self.accounts_root), "active_account_id": self.active_account_id}
 
     def _cmd_account_select(self, payload: dict) -> dict:
+        if self.loaded:
+            raise Exception("cannot switch account while a session is loaded")
         if self.orders.open_orders:
             raise Exception("cannot switch account with open orders")
         account_id = payload["account_id"]
@@ -469,6 +527,8 @@ class ReplayEngine:
         return {"ok": True, "active_account_id": account_id}
 
     def _cmd_account_create(self, payload: dict) -> dict:
+        if self.loaded:
+            raise Exception("cannot create account while a session is loaded")
         data = create_account(
             self.accounts_root, payload["name"], float(payload["initial_balance_usd"]), payload.get("note", ""))
         self.active_account_id = data["id"]
@@ -657,7 +717,8 @@ class ReplayEngine:
         self.seq += 1
         tick = self.loaded.ticks_by_sec.get(sec)
         gap = tick is None or tick.get("gap", False)
-        public = _public_tick(tick, sec, self.seq, gap)
+        book = None if gap else self.loaded.books_by_sec.get(sec)
+        public = _public_tick(tick, sec, self.seq, gap, book)
         self._last_tick = public
         if self.loaded and not gap and tick:
             book = self.loaded.books_by_sec[sec]
@@ -686,7 +747,7 @@ class ReplayEngine:
         if not self.loaded:
             self._emit_event("session", {
                 "loaded": False, "session_id": None, "active_account_id": self.active_account_id,
-                "account_switch_locked": bool(self.orders.open_orders),
+                "account_switch_locked": bool(self.loaded),
                 "replay_speed": self.replay_speed, "engine_plugin": self.engine_plugin,
                 "account_backend": self.account_backend,
                 "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
@@ -706,7 +767,7 @@ class ReplayEngine:
             "progress": 300 - self.sec, "playing": self.playing, "round_ended": self.round_ended,
             "ptb_chainlink": self.loaded.ptb_chainlink, "tradable": tradable,
             "active_account_id": self.active_account_id,
-            "account_switch_locked": bool(self.orders.open_orders),
+            "account_switch_locked": bool(self.loaded),
             "replay_speed": self.replay_speed, "engine_plugin": self.engine_plugin,
             "account_backend": self.account_backend,
             "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,

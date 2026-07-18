@@ -107,7 +107,7 @@ Se il task richiede comandi/eventi Socket.IO, ACL human/bot, payload o asse temp
 - **Open orders + Close / Cancel**: `render.js` (`renderOrders`) + `orders.py`
 - **Accounts**: `render.js` + comandi `account.*`
 - **Bot / Strategy**: tab BOT — `render.js` (`renderBotSelect`) + comandi `bot.*`
-- **AI Agent**: tab AI AGENT — chat Grok + contesto; `agent.chat.*` / `agent.rules.apply` in `app.js` + `agent_service.py`
+- **AI Agent**: tab AI AGENT — chat Grok keyed su `session_id`; dropdown Session (incl. Unload session); `agent.chat.*` / `agent.rules.apply` in `app.js` + `agent_service.py`
 - **Closed order history + Export CSV**: `render.js` (`renderHistory`) + `history.py`; CSV generato lato client in `app.js`
 - **Stile / responsive**: `dashboard.css`
 

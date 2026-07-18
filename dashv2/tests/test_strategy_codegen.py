@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from dashv2.bots.runner import StrategyRunner
@@ -53,6 +54,38 @@ class TestCodegenParse(unittest.TestCase):
         text = reload_strategy_codegen_system_prompt()
         self.assertIn("COUNTDOWN", text)
         self.assertIn("QUOTA SENZA ASK/BID", text)
+        self.assertIn("INDENTAZIONE", text)
+
+    def test_codegen_retries_syntax_error_silently(self):
+        bad = "```python\ndef on_tick(ctx):\n  return []\n    return []\n```\n"
+        good = "```python\ndef on_tick(ctx):\n    return []\n```\n"
+        calls = {"n": 0}
+
+        def fake_call(prompt, model_id, params, cwd):
+            calls["n"] += 1
+            return bad if calls["n"] == 1 else good
+
+        with unittest.mock.patch("dashv2.strategy_codegen.call_model", side_effect=fake_call):
+            from dashv2.strategy_codegen import generate_strategy_module
+            src = generate_strategy_module(
+                "buy", model_id="m", params={}, system_prompt="INDENTAZIONE note",
+                max_attempts=3,
+            )
+        self.assertIn("def on_tick", src)
+        self.assertEqual(calls["n"], 2)
+
+    def test_codegen_raises_after_exhausted_retries(self):
+        bad = "```python\ndef on_tick(ctx):\n  return []\n    return []\n```\n"
+
+        def fake_call(prompt, model_id, params, cwd):
+            return bad
+
+        with unittest.mock.patch("dashv2.strategy_codegen.call_model", side_effect=fake_call):
+            from dashv2.strategy_codegen import generate_strategy_module
+            with self.assertRaises(SyntaxError):
+                generate_strategy_module(
+                    "buy", model_id="m", params={}, system_prompt="x", max_attempts=2,
+                )
 
 
 class TestStrategyRunner(unittest.TestCase):

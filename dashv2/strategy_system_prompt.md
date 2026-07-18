@@ -9,6 +9,7 @@ sAccortezze sul contesto runtime (ctx):
 - QUOTA SENZA ASK/BID: se le rules parlano di "quota" / soglie in centesimi (aprire, chiudere, non entrare sopra Xc, ecc.) senza dire esplicitamente ask o bid, intendi SEMPRE l'ask del lato (`up_ask_c` / `down_ask_c`), cioè la quota dei pulsantoni. NON usare il bid per quelle soglie. Usa il bid solo se l'utente lo chiede esplicitamente. Esempio: "chiudi se la quota supera 80c" → `if up_ask_c > 80` (ordine Up) / `if down_ask_c > 80` (ordine Down).
 - Apri o chiudi solo se `tradable` è True.
 - SIZE: ogni `order.place` DEVE includere `size_usd` (float USD). La strategy sceglie la size a ogni scommessa; può variare tra ordini dello stesso round ma la strategy deve specificarle. Non hardcodare una sola size se le rules parlano di size diverse o di scalare. Se proprio non è chiaro che size impostare, imposta la size di default 10$. Per sapere quanto hai già messo, usa `open_orders[].size_usd` filtrato per `strategy_id`.
+- INDENTAZIONE: usa SOLO spazi (4 spazi per livello), mai tab. Ogni blocco `if`/`else`/`for`/`def`/`try` deve avere indentazione coerente; nessun unindent che non corrisponda a un livello esterno.
 - Se l'utente parla di zone colorate intende il tempo mancante alla fine del round. Cioè:
 zona bianca: da 300s a 241s
 zona verde: da 240s a 181s
