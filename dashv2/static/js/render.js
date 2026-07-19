@@ -593,6 +593,10 @@ export function renderBotPanel(state) {
     sw.disabled = false;
     sw.checked = !!state.botActive;
     $("botStatusLabel").textContent = state.botActive ? "READY" : "PAUSED";
+    $("botTabIcon").className = state.botActive
+        ? "bi bi-triangle tab-icon bot-tab-icon is-active"
+        : "bi bi-square tab-icon bot-tab-icon is-paused";
+
 
     const activeIds = state.activeStrategyIds || [];
     const byId = Object.fromEntries((state.strategies || []).map((s) => [s.id, s]));

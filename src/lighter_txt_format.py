@@ -61,7 +61,7 @@ def _checkpoint_stale_in_vol_window(indexed: dict[int, int], ticks: np.ndarray, 
     from src.vol_stats import vol_window_countdown_secs
     for s in vol_window_countdown_secs(sec, window):
         if s not in indexed:
-            raise Exception(f"missing sec {s} in ticks")
+            return True  # gap: finestra vol non affidabile
         ti = indexed[s]
         if _lighter_stale_row(ticks[ti, 0], ticks[ti, 8]):
             return True

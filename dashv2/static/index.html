@@ -63,16 +63,16 @@
     <div class="workspace-left app-panel">
       <ul class="nav nav-tabs workspace-tabs" id="leftTabs" role="tablist">
         <li class="nav-item" role="presentation">
-          <button class="nav-link" id="candles-tab" data-bs-toggle="tab" data-bs-target="#candlesPane" type="button" role="tab" aria-controls="candlesPane" aria-selected="false">CANDLES</button>
+          <button class="nav-link" id="candles-tab" data-bs-toggle="tab" data-bs-target="#candlesPane" type="button" role="tab" aria-controls="candlesPane" aria-selected="false"><i class="bi bi-graph-up tab-icon" aria-hidden="true"></i><span>CANDLES</span></button>
         </li>
         <li class="nav-item" role="presentation">
-          <button class="nav-link active" id="accounts-tab" data-bs-toggle="tab" data-bs-target="#accountsPane" type="button" role="tab" aria-controls="accountsPane" aria-selected="true">ACCOUNTS</button>
+          <button class="nav-link active" id="accounts-tab" data-bs-toggle="tab" data-bs-target="#accountsPane" type="button" role="tab" aria-controls="accountsPane" aria-selected="true"><i class="bi bi-person tab-icon accounts-tab-icon" aria-hidden="true"></i><span>ACCOUNTS</span></button>
         </li>
         <li class="nav-item" role="presentation">
-          <button class="nav-link" id="bot-tab" data-bs-toggle="tab" data-bs-target="#botPane" type="button" role="tab" aria-controls="botPane" aria-selected="false">BOT</button>
+          <button class="nav-link" id="bot-tab" data-bs-toggle="tab" data-bs-target="#botPane" type="button" role="tab" aria-controls="botPane" aria-selected="false"><i class="bi bi-square tab-icon bot-tab-icon is-paused" id="botTabIcon" aria-hidden="true"></i><span>BOT</span></button>
         </li>
         <li class="nav-item ms-auto" role="presentation">
-          <button class="nav-link" id="agent-tab" data-bs-toggle="tab" data-bs-target="#agentPane" type="button" role="tab" aria-controls="agentPane" aria-selected="false">AGENT SESSION</button>
+          <button class="nav-link" id="agent-tab" data-bs-toggle="tab" data-bs-target="#agentPane" type="button" role="tab" aria-controls="agentPane" aria-selected="false"><i class="bi bi-chat-square-text tab-icon agent-tab-icon" aria-hidden="true"></i><span>AGENT SESSION</span></button>
         </li>
       </ul>
       <div class="tab-content workspace-tab-content flex-grow-1 min-h-0">
@@ -147,7 +147,7 @@
                   <span class="tiny text-muted-app" id="botStatusLabel">PAUSED</span>
                 </div>
                 <div class="bot-status-sep" aria-hidden="true"></div>
-                <span class="tiny text-muted-app mb-0 flex-shrink-0">LOADED STRATEGIES</span>
+                <span class="tiny text-muted-app mb-0 flex-shrink-0">LOADED</span>
                 <div class="bot-active-queue flex-grow-1 min-w-0" id="botActiveList" aria-label="Active strategies"></div>
               </div>
               <div class="p-3 d-flex flex-wrap align-items-center gap-2 strategy-toolbar">
@@ -180,7 +180,7 @@
             </aside>
             <article class="app-panel agent-chat-panel flex-grow-1 min-h-0 d-flex flex-column">
               <div class="panel-head d-flex justify-content-between align-items-center">
-                <span class="panel-title">Agent Session · Grok 4.5</span>
+                <span class="panel-title">Agent Session · Grok 4.5 High</span>
                 <button class="btn btn-sm btn-outline-danger" id="agentDeleteSessionBtn" type="button">Delete session</button>
               </div>
               <div class="agent-chat-log flex-grow-1 min-h-0 px-3 py-2" id="agentChatLog"></div>

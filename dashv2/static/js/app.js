@@ -11,6 +11,7 @@ const REPLAY_SPEEDS = [1, 2, 5];
 const LEFT_TAB_KEY = "dashv2_left_tab";
 const LEFT_TAB_IDS = ["candles-tab", "accounts-tab", "bot-tab", "agent-tab"];
 const DEFAULT_LEFT_TAB = "accounts-tab";
+const AGENT_HISTORY_POLL_MS = 5000;
 
 const state = {
     session: null, tick: null, orders: null, historyRows: [],
@@ -28,6 +29,7 @@ const state = {
 const socket = io({ transports: ["websocket", "polling"] });
 let accountModal = null;
 let strategyModal = null;
+let agentHistoryPollTimer = null;
 
 
 function emitAck(event, payload = {}) {
@@ -102,13 +104,9 @@ socket.on("connect", () => {
     emitAck("session.sync")
         .then(() => applyReplaySpeed(state.replaySpeed, { persist: false }))
         .catch(console.error);
-    // Se il turno agent era in corso e il WS è ricollegato, ricarica la history
-    // (la risposta può essere già su disco anche se l'ack era andato perso).
+    // Riallinea chat/busy dal server (risposta può essere su disco anche se l'evento era perso).
     if (state.activeAccountId) {
-        const wasBusy = state.agentBusy;
-        loadAgentHistory().finally(() => {
-            if (wasBusy) finishAgentTurn();
-        });
+        loadAgentHistory();
     }
     loadAgentExecutions();
 });
@@ -269,10 +267,37 @@ function loadAgentExecutions() {
 }
 
 function finishAgentTurn() {
+    stopAgentHistoryPoll();
     state.agentBusy = false;
     document.getElementById("agentSendBtn").disabled = false;
     setAgentStatus("");
     renderAgentChat(state.agentMessages);
+}
+
+function startAgentHistoryPoll() {
+    if (agentHistoryPollTimer != null) return;
+    agentHistoryPollTimer = setInterval(() => {
+        if (!state.agentBusy) {
+            stopAgentHistoryPoll();
+            return;
+        }
+        loadAgentHistory();
+    }, AGENT_HISTORY_POLL_MS);
+}
+
+function stopAgentHistoryPoll() {
+    if (agentHistoryPollTimer == null) return;
+    clearInterval(agentHistoryPollTimer);
+    agentHistoryPollTimer = null;
+}
+
+function setAgentBusyUi(busy) {
+    state.agentBusy = busy;
+    document.getElementById("agentSendBtn").disabled = busy;
+    setAgentStatus(busy ? "Thinking…" : "");
+    renderAgentChat(state.agentMessages, { thinking: busy });
+    if (busy) startAgentHistoryPoll();
+    else stopAgentHistoryPoll();
 }
 
 function loadAgentHistory() {
@@ -283,7 +308,14 @@ function loadAgentHistory() {
     }
     return emitAck("agent.chat.history", { session_id: state.agentSessionId }).then((res) => {
         state.agentMessages = res.messages || [];
-        renderAgentChat(state.agentMessages, { thinking: state.agentBusy });
+        if (res.busy) {
+            setAgentBusyUi(true);
+        } else if (state.agentBusy) {
+            finishAgentTurn();
+        } else {
+            renderAgentChat(state.agentMessages);
+        }
+        return res;
     }).catch(() => {});
 }
 
@@ -294,12 +326,9 @@ function sendAgentMessage() {
     if (!text) return;
     if (!state.activeAccountId) return alert("Seleziona un account");
     if (!state.agentSessionId) return alert("Seleziona una sessione");
-    state.agentBusy = true;
-    document.getElementById("agentSendBtn").disabled = true;
     input.value = "";
     state.agentMessages = [...state.agentMessages, { role: "user", content: text }];
-    renderAgentChat(state.agentMessages, { thinking: true });
-    setAgentStatus("Thinking…");
+    setAgentBusyUi(true);
     emitAck("agent.chat.send", {
         text,
         account_id: state.activeAccountId,
@@ -578,6 +607,11 @@ socket.on("agent.session.deleted", (payload) => {
 socket.on("agent.chat.status", (payload) => {
     if (payload.phase === "thinking") {
         setAgentStatus("Thinking…");
+        return;
+    }
+    // idle: riallinea da disco (evento message può essere andato perso).
+    if (state.agentBusy) {
+        loadAgentHistory();
         return;
     }
     setAgentStatus("");

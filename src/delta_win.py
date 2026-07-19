@@ -331,7 +331,7 @@ def checkpoint_stale_in_vol_window(rows_by_sec: dict[int, dict], sec: int, windo
     for s in vol_window_countdown_secs(sec, window):
         row = rows_by_sec.get(s)
         if row is None:
-            raise Exception(f"missing sec {s} in round rows")
+            return True  # gap: finestra vol non affidabile
         if row["delta_stale"]:
             return True
     return False

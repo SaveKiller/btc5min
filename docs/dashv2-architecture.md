@@ -190,7 +190,7 @@ Entry: `run_server_process(cfg, cmd_conn, evt_conn)`.
 
 - Connect con `auth.role == "bot"` → slot `bot_sid` (un solo bot).
 - Altrimenti → slot `human_sid` (un solo browser).
-- Secondo human o secondo bot: `connect` rifiutato.
+- Secondo bot: `connect` rifiutato. Secondo human: **replace** dello slot (ri-connect dopo drop/zombie).
 - Eventi engine: broadcast a **entrambi** i sid presenti.
 - ACL: bot solo `order.*`, `session.sync`, `consult.send`; human tutto il resto + `bot.*`.
 - Bridge inietta `actor: user|bot` su ogni request IPC (non spoofabile dal client).
@@ -708,6 +708,7 @@ Chat human-only con **Grok 4.5 High** (`agent_cursor_label` in setup), Cursor SD
 | Tool round | `agent_round_tools.py` |
 | Exec log | `history/executions/{session_id}.jsonl` (`execution_log.py`); lista meta nel Context dropdown **filtrata per account** |
 | Socket | `agent.chat.*` keyed su `session_id`; `agent.session.select` / `agent.session.delete` (cancella registro+chat+exec+ledger); `round.unload` sblocca account. |
+| Turni lunghi | `run_turn` in **thread OS** (non greenlet); `agent.chat.history` ack include `busy`; UI poll history ogni 5s mentre Thinking; human reconnect = replace `human_sid`. |
 
 Rules-first: proposte in chat (fence `rules`); apply solo con conferma UI o tool `strategy.apply_rules` + `confirm:true` → codegen update. Vietato write diretto del `.py`.
 
@@ -715,7 +716,7 @@ Rules-first: proposte in chat (fence `rules`); apply solo con conferma UI o tool
 
 Campi tipici: `session`, `tick`, `orders`, `historyRows`, `accounts` / `activeAccount*`, `chartPrevious` / `chartCurrent`, `scrubbing`, `replaySpeed`, `roundDays` / `roundNav`, ecc.
 
-Su `connect`: `session.sync` + sync speed da `localStorage` (`dashv2_replay_speed`).
+Su `connect`: `session.sync` + sync speed da `localStorage` (`dashv2_replay_speed`); se c’è account attivo, `agent.chat.history` per riallineare messaggi/`busy`.
 
 Slider: `pointerdown` → pause; `input` → `replay.preview`; `pointerup` → `replay.seek` + eventuale resume.
 

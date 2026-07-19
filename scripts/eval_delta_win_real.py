@@ -50,7 +50,7 @@ def _stale_in_vol_window(ticks: np.ndarray, sec_index: dict[int, int], sec: int,
     from src.vol_stats import vol_window_countdown_secs
     for s in vol_window_countdown_secs(sec, window):
         if s not in sec_index:
-            raise Exception(f"missing sec {s}")
+            return True  # gap: finestra vol non affidabile
         ti = sec_index[s]
         if chainlink_stale_row(ticks[ti, 0], ticks[ti, 8]):
             return True

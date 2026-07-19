@@ -30,17 +30,32 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .workspace-left { flex:1 1 auto; min-width:320px; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .workspace-right { flex:0 0 900px; width:900px; min-height:0; display:flex; flex-direction:column; }
 .workspace-tabs { flex-shrink:0; display:flex; gap:.35rem; padding:.5rem .65rem 0; border-bottom:1px solid var(--border); background:var(--panel-2); }
-.workspace-tabs .nav-item { margin-bottom:-1px; }
+.workspace-tabs .nav-item { margin-bottom:-1px; display:flex; }
 .workspace-tabs .nav-link {
   color:var(--muted); font-size:.72rem; font-weight:700; letter-spacing:.08em;
   border:1px solid #2a3548; border-bottom:none; border-radius:.45rem .45rem 0 0;
   padding:.5rem 1rem; background:#0c121c;
+  display:inline-flex; align-items:center; justify-content:center; gap:.4rem;
+  height:100%; box-sizing:border-box;
 }
 .workspace-tabs .nav-link:hover { color:#c5d0e4; background:#151f2f; border-color:#3c4960; }
 .workspace-tabs .nav-link.active {
   color:#eef2f9; background:var(--panel); border-color:var(--border);
   border-bottom:1px solid var(--panel); margin-bottom:-1px; position:relative; z-index:1;
 }
+.workspace-tabs .nav-link .tab-icon {
+  font-size:2em; line-height:0; flex-shrink:0;
+  width:1em; height:1em;
+  display:inline-flex; align-items:center; justify-content:center;
+}
+.workspace-tabs .nav-link .tab-icon::before { line-height:1; }
+.workspace-tabs .nav-link .accounts-tab-icon { font-size:2.25em; }
+.workspace-tabs .nav-link .bot-tab-icon {
+  font-size:1.65em;
+  width:1.212em; height:1.212em; /* stesso slot delle altre icone a 2em */
+}
+.workspace-tabs .nav-link .bot-tab-icon.is-active { color:var(--up); transform:rotate(90deg); }
+.workspace-tabs .nav-link .bot-tab-icon.is-paused { color:var(--down); }
 .workspace-tab-content { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
 .workspace-tab-content > .tab-pane { min-height:0; }
 .workspace-tab-content > .tab-pane.active { display:flex; flex-direction:column; }
@@ -76,6 +91,9 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .bot-switch-wrap .form-switch .form-check-input {
   width:2.5em; height:1.35em; margin-left:-2.75em;
   cursor:pointer;
+}
+#botStatusLabel {
+  display:inline-block; min-width:7ch; /* PAUSED più lungo di READY */
 }
 .bot-status-sep {
   flex:0 0 auto; width:1px; align-self:stretch; min-height:1.5rem;

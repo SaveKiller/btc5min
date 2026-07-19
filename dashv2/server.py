@@ -131,8 +131,9 @@ class ServerBridge:
             if isinstance(auth, dict) and auth.get("role") == "bot":
                 role = "bot"
             if role == "human":
-                if self._human_sid is not None:
-                    return False
+                old = self._human_sid
+                if old is not None and old != request.sid:
+                    self._sid_role.pop(old, None)
                 self._human_sid = request.sid
             else:
                 if self._bot_sid is not None:
@@ -326,6 +327,10 @@ class ServerBridge:
                 "ok": True,
                 "session_id": session_id,
                 "messages": load_thread(Path(self.cfg["history_dir"]), session_id),
+                "busy": bool(
+                    self._agent_busy
+                    and self._live_ctx.get("agent_session_id") == session_id
+                ),
             }
 
         @self.socketio.on("agent.session.delete")
@@ -417,24 +422,28 @@ class ServerBridge:
                 self.socketio.emit("agent.chat.status", {"phase": "thinking"}, to=self._human_sid)
 
             def _run_agent_turn():
+                # Thread OS: call_model non deve bloccare l'hub eventlet (ping/reconnect).
                 try:
                     result = self.agent_service.run_turn(session_id, account_id, text)
-                    if self._human_sid:
+                    sid = self._human_sid
+                    if sid:
                         self.socketio.emit("agent.chat.message", {
                             "message": result["message"],
                             "proposed_rules": result.get("proposed_rules"),
                             "session_id": session_id,
                             "account_id": account_id,
-                        }, to=self._human_sid)
+                        }, to=sid)
                 except Exception as e:
-                    if self._human_sid:
-                        self.socketio.emit("agent.chat.error", {"message": str(e)}, to=self._human_sid)
+                    sid = self._human_sid
+                    if sid:
+                        self.socketio.emit("agent.chat.error", {"message": str(e)}, to=sid)
                 finally:
                     self._agent_busy = False
-                    if self._human_sid:
-                        self.socketio.emit("agent.chat.status", {"phase": "idle"}, to=self._human_sid)
+                    sid = self._human_sid
+                    if sid:
+                        self.socketio.emit("agent.chat.status", {"phase": "idle"}, to=sid)
 
-            self.socketio.start_background_task(_run_agent_turn)
+            threading.Thread(target=_run_agent_turn, daemon=True, name="agent-turn").start()
             return {"ok": True, "accepted": True}
 
     def _codegen_source(self, rules: str) -> str:
