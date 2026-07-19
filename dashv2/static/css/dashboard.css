@@ -7,14 +7,25 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .panel-title { font-size:.76rem; letter-spacing:.08em; text-transform:uppercase; color:#b9c4d9; font-weight:700; }
 .engine-plugin-label { color:var(--amber); font-weight:800; font-size:.85rem; letter-spacing:.12em; }
 .text-muted-app { color:var(--muted)!important; }
+.toolbar .btn-group[aria-label="Round navigation"] .btn,
+.toolbar .btn-group[aria-label="Playback"] .btn,
+.toolbar .btn-group[aria-label="Playback speed"] .btn {
+  font-size:calc(1rem + 2pt);
+}
+.toolbar .btn-group[aria-label="Round navigation"] .btn .bi,
+.toolbar .btn-group[aria-label="Playback"] .btn .bi {
+  font-size:calc(1rem + 2pt);
+  line-height:1;
+}
 .toolbar .btn-group[aria-label="Playback speed"] .btn { min-width:2.6rem; font-weight:700; }
 .toolbar .divider { height:36px; width:1px; background:var(--border); }
 .toolbar .btn-group[aria-label="Round navigation"] > .btn#prevRoundBtn { border-top-left-radius:var(--bs-border-radius); border-bottom-left-radius:var(--bs-border-radius); }
 .toolbar .btn-group[aria-label="Round navigation"] > .btn#loadRoundBtn { border-radius:0; margin-left:calc(-1 * var(--bs-border-width)); z-index:2; }
 .toolbar .btn-group[aria-label="Round navigation"] > .btn#nextRoundBtn { border-top-right-radius:var(--bs-border-radius); border-bottom-right-radius:var(--bs-border-radius); margin-left:calc(-1 * var(--bs-border-width)); }
-.toolbar-timeline { min-width:240px; gap:.5rem; }
-.quote { flex:0 0 auto; white-space:nowrap; display:flex; flex-direction:column; gap:.4rem; align-items:flex-end; }
-.quote .price { font-size:1.5rem; font-weight:700; line-height:1; display:block; min-width:10ch; text-align:right; }
+.toolbar-timeline { min-width:240px; gap:0; }
+.quote { flex:0 0 auto; white-space:nowrap; display:flex; flex-direction:column; gap:.25rem; align-items:flex-end; margin-left:.15rem; }
+/* Riserva sempre la larghezza di un prezzo tipo "63,056 $" anche con "—" */
+.quote .price { font-size:1.5rem; font-weight:400; line-height:1; display:block; min-width:8ch; text-align:right; }
 .workspace { display:flex; flex-wrap:nowrap; gap:1rem; flex:1 1 auto; min-height:0; margin-bottom:0; }
 .workspace-left { flex:1 1 auto; min-width:320px; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .workspace-right { flex:0 0 900px; width:900px; min-height:0; display:flex; flex-direction:column; }
@@ -256,7 +267,8 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
   border:1px solid rgba(255,255,255,.7);
   box-sizing:border-box;
 }
-.timeline-block { position:relative; padding-bottom:.15rem; margin:0 30px; }
+/* margin sx: thumb/label a 300; dx ridotto per avvicinare il quote BTC */
+.timeline-block { position:relative; padding-bottom:.15rem; margin:0 10px 0 28px; }
 .timeline-wrap { position:relative; z-index:1; }
 .replay-scale { position:relative; z-index:1; height:1.45rem; font-size:1.1rem; font-weight:600; }
 .replay-scale-bands { position:absolute; inset:0; pointer-events:none; z-index:0; }
@@ -279,7 +291,7 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 .order-head-divider { height:1.6rem; width:1px; background:var(--border); flex:0 0 auto; }
 .order-head-stat { min-width:4.5rem; }
 .order-head-stat-time { min-width:7.5rem; }
-.order-head-stat-value { font-size:1.28rem; font-weight:700; color:#8fa4ff; line-height:1.1; letter-spacing:.02em; }
+.order-head-stat-value { font-size:1.28rem; font-weight:400; color:#8fa4ff; line-height:1.1; letter-spacing:.02em; }
 .order-head-stat-value.delta-pos { color:var(--up); }
 .order-head-stat-value.delta-neg { color:var(--down); }
 #orderOutcome { color:var(--amber); }

@@ -28,10 +28,15 @@ class TestSideRiskPublic(unittest.TestCase):
         self.assertEqual(pub["risk"]["Down"]["rq"], 3)
         self.assertEqual(pub["risk"]["Down"]["rs"], 1)
 
-    def test_gap_clears_side_risk(self):
+    def test_missing_tick_clears_side_risk(self):
         pub = _public_tick(None, 200, 1, True)
         self.assertIsNone(pub["risk"]["Up"]["rq"])
         self.assertIsNone(pub["risk"]["Down"]["rs"])
+
+    def test_quote_gap_keeps_side_risk(self):
+        risk = {"Up": {"rq": None, "rs": None}, "Down": {"rq": None, "rs": None}}
+        pub = _public_tick(_tick(gap=True, partial=True, side_risk=risk), 77, 1, True)
+        self.assertEqual(pub["risk"], risk)
 
 
 if __name__ == "__main__":

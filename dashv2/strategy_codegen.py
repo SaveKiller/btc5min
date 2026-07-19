@@ -22,10 +22,20 @@ def on_round_end(ctx: dict) -> list[dict]:
     ...
 
 ctx (input tipico su ogni tick):
-  sec, tradable, chainlink_btc, delta_usd,
+  sec, tradable, chainlink_btc, delta_usd, ptb_chainlink, liq2_ask_usd,
   up_ask_c, up_bid_c, down_ask_c, down_bid_c, up_mid_c, down_mid_c,
-  majority_side, vol, risk, dwin_ref_side, dwin_a, dwin_b,
+  majority_side, vol,
+  dwin_ref_side: "Up"|"Down"|None,
+  dwin_a: {"p_win_pct": int|None, "n": int|None} | None,
+  dwin_b: {"p_win_pct": int|None} | None,
+  risk: {"Up": {"rq": int|None, "rs": int|None}, "Down": {"rq": int|None, "rs": int|None}},
   open_orders (list of order dicts), strategy_id (str), bot_active (bool)
+
+MAPPING UI (obbligatorio):
+  - Model A / indicatore A / DWinA / percentuale A → dwin_a (MAI float(dwin_a))
+  - Model B / indicatore B / DWinB / percentuale B → dwin_b (MAI float(dwin_b))
+  - % Model A/B come in card: raw=p_win_pct; se side!=dwin_ref_side → 100-raw; confronti su 0..100
+  - Rq/Rs → risk[side]["rq"|"rs"]; LIQ2 → liq2_ask_usd; PTB → ptb_chainlink
 
 Azioni ammesse (lista restituita dalle hook):
   {"cmd": "order.place", "side": "Up"|"Down", "size_usd": float, "reason": str opzionale}

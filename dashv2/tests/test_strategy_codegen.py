@@ -55,6 +55,22 @@ class TestCodegenParse(unittest.TestCase):
         self.assertIn("COUNTDOWN", text)
         self.assertIn("QUOTA SENZA ASK/BID", text)
         self.assertIn("INDENTAZIONE", text)
+        self.assertIn("LESSICO DASHBOARD", text)
+        self.assertIn("Model A", text)
+        self.assertIn("p_win_pct", text)
+        self.assertIn("dwin_pct_for_side", text)
+        self.assertIn("Rq", text)
+        self.assertIn("LIQ2", text)
+        self.assertIn("terminologia ufficiale", text)
+        self.assertIn("zona bianca", text)
+
+    def test_contract_documents_dwin_shapes(self):
+        prompt = build_codegen_prompt("Model A >= 75%", "usa dwin_a")
+        self.assertIn("p_win_pct", prompt)
+        self.assertIn("MAI float(dwin_a)", prompt)
+        self.assertIn("liq2_ask_usd", prompt)
+        self.assertIn("ptb_chainlink", prompt)
+        self.assertIn("Model A", prompt)
 
     def test_codegen_retries_syntax_error_silently(self):
         bad = "```python\ndef on_tick(ctx):\n  return []\n    return []\n```\n"

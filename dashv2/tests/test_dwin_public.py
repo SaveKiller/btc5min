@@ -38,11 +38,27 @@ class TestDwinPublic(unittest.TestCase):
         self.assertEqual(pub["risk"]["Down"]["rq"], 3)
         self.assertEqual(pub["risk"]["Up"]["rs"], 7)
 
-    def test_gap_clears_dwin(self):
+    def test_missing_tick_clears_dwin(self):
         pub = _public_tick(None, 200, 1, True)
         self.assertIsNone(pub["dwin_a"])
         self.assertIsNone(pub["dwin_ref_side"])
         self.assertIsNone(pub["liq2_ask_usd"])
+
+    def test_quote_gap_keeps_dwin(self):
+        """Quota CLOB assente: linette sulle quote, DWin/delta dal txt restano."""
+        pub = _public_tick(
+            _tick(gap=True, partial=True, up_ask=None, down_ask=None, up_bid=None, down_bid=None,
+                  up_mid_c=None, down_mid_c=None, majority_side=None),
+            77, 1, True)
+        self.assertTrue(pub["gap"])
+        self.assertFalse(pub["tradable"])
+        self.assertIsNone(pub["up_ask_c"])
+        self.assertIsNone(pub["liq2_ask_usd"])
+        self.assertEqual(pub["delta_usd"], -50)
+        self.assertEqual(pub["dwin_ref_side"], "Down")
+        self.assertEqual(pub["dwin_a"]["p_win_pct"], 29)
+        self.assertEqual(pub["dwin_a"]["n"], 409)
+        self.assertEqual(pub["dwin_b"]["p_win_pct"], 28)
 
     def test_liq2_caps_at_two_ask_levels(self):
         # 10 livelli; notional = sum(p*size) solo sui primi 2 (no fee)

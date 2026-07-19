@@ -372,11 +372,13 @@ function setStrategyModalBusy(busy, text = "") {
     const prog = document.getElementById("strategyModalProgress");
     const saveBtn = document.getElementById("strategyModalSaveBtn");
     const cancelBtn = document.getElementById("strategyModalCancelBtn");
+    const closeBtn = document.getElementById("strategyModalCloseBtn");
     prog.classList.toggle("d-none", !busy);
     prog.classList.toggle("d-flex", busy);
     if (text) document.getElementById("strategyModalProgressText").textContent = text;
     saveBtn.disabled = busy;
     cancelBtn.disabled = busy;
+    closeBtn.disabled = busy;
 }
 
 function saveStrategyModal() {
@@ -894,7 +896,10 @@ initChart(document.getElementById("chartContainer"));
 layoutReplayScale();
 window.addEventListener("resize", () => { layoutReplayScale(); relayoutChart(); });
 accountModal = new bootstrap.Modal(document.getElementById("accountModal"));
-strategyModal = new bootstrap.Modal(document.getElementById("strategyModal"));
+strategyModal = new bootstrap.Modal(document.getElementById("strategyModal"), {
+    backdrop: "static",
+    keyboard: false,
+});
 renderOrders({ open: [] });
 selectLeftTab(loadStoredLeftTab());
 

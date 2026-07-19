@@ -16,6 +16,9 @@ echo [%TIME%] Conversione bin -^> txt ...
 "%PY%" -m src.convert --sync
 if errorlevel 1 goto :err
 echo.
+echo [%TIME%] Sentinella restart dashv2...
+type nul > "data\restart"
+echo.
 pause
 exit /b 0
 

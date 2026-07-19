@@ -51,7 +51,8 @@ def _ask_liq_usd(asks: list, depth: int) -> float:
 
 
 def _public_tick(tick: dict | None, sec: int, seq: int, gap: bool, book=None) -> dict:
-    if tick is None or gap:
+    """Tick UI: gap azzera solo le quote CLOB; DWin/vol/delta restano dal txt se il tick c'è."""
+    if tick is None:
         return {
             "seq": seq, "sec": sec, "gap": True, "chainlink_btc": None, "delta_usd": None,
             "up_mid_c": None, "down_mid_c": None, "up_ask_c": None, "down_ask_c": None,
@@ -61,23 +62,25 @@ def _public_tick(tick: dict | None, sec: int, seq: int, gap: bool, book=None) ->
         }
     dwin = _dwin_public(tick)
     liq2 = None
-    if book is not None:
+    if not gap and book is not None:
         side = tick.get("majority_side")
         if side == "Up":
             liq2 = _ask_liq_usd(book.up_asks, 2)
         elif side == "Down":
             liq2 = _ask_liq_usd(book.down_asks, 2)
     return {
-        "seq": seq, "sec": sec, "gap": False, "chainlink_btc": tick["chainlink_btc"],
+        "seq": seq, "sec": sec, "gap": gap, "chainlink_btc": tick["chainlink_btc"],
         "chainlink_stale": tick["chainlink_stale"], "delta_usd": tick["delta_usd"],
-        "up_mid_c": tick["up_mid_c"], "down_mid_c": tick["down_mid_c"],
-        "up_ask_c": int(round(tick["up_ask"] * 100)) if tick["up_ask"] is not None else None,
-        "down_ask_c": int(round(tick["down_ask"] * 100)) if tick["down_ask"] is not None else None,
-        "up_bid_c": int(round(tick["up_bid"] * 100)) if tick["up_bid"] is not None else None,
-        "down_bid_c": int(round(tick["down_bid"] * 100)) if tick["down_bid"] is not None else None,
-        "majority_side": tick["majority_side"], "vol": tick["vol"], "risk": tick["side_risk"],
+        "up_mid_c": None if gap else tick["up_mid_c"],
+        "down_mid_c": None if gap else tick["down_mid_c"],
+        "up_ask_c": None if gap or tick["up_ask"] is None else int(round(tick["up_ask"] * 100)),
+        "down_ask_c": None if gap or tick["down_ask"] is None else int(round(tick["down_ask"] * 100)),
+        "up_bid_c": None if gap or tick["up_bid"] is None else int(round(tick["up_bid"] * 100)),
+        "down_bid_c": None if gap or tick["down_bid"] is None else int(round(tick["down_bid"] * 100)),
+        "majority_side": None if gap else tick["majority_side"],
+        "vol": tick["vol"], "risk": tick["side_risk"],
         "dwin_ref_side": dwin["dwin_ref_side"], "dwin_a": dwin["dwin_a"], "dwin_b": dwin["dwin_b"],
-        "tradable": not tick["partial"] and not tick["gap"] and tick["chainlink_btc"] is not None,
+        "tradable": not gap and not tick["partial"] and not tick["gap"] and tick["chainlink_btc"] is not None,
         "liq2_ask_usd": liq2,
     }
 

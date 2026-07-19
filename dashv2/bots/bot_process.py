@@ -25,6 +25,7 @@ def _run_bot(cfg: dict) -> None:
     strategy_ids: list[str] = []
     last_tick: dict | None = None
     last_orders: dict | None = None
+    last_session: dict | None = None
 
     def _sync_strategies(ids: list[str]) -> None:
         nonlocal strategy_ids
@@ -45,11 +46,15 @@ def _run_bot(cfg: dict) -> None:
     def _ctx() -> dict:
         tick = last_tick or {}
         orders = last_orders or {}
+        session = last_session or {}
         return {
             "sec": tick.get("sec"),
             "tradable": tick.get("tradable"),
             "chainlink_btc": tick.get("chainlink_btc"),
             "delta_usd": tick.get("delta_usd"),
+            "ptb_chainlink": session.get("ptb_chainlink"),
+            "liq2_ask_usd": tick.get("liq2_ask_usd"),
+            "market_start_ts": session.get("market_start_ts"),
             "up_ask_c": tick.get("up_ask_c"), "up_bid_c": tick.get("up_bid_c"),
             "down_ask_c": tick.get("down_ask_c"), "down_bid_c": tick.get("down_bid_c"),
             "up_mid_c": tick.get("up_mid_c"), "down_mid_c": tick.get("down_mid_c"),
@@ -77,7 +82,8 @@ def _run_bot(cfg: dict) -> None:
 
     @sio.on("session")
     def on_session(payload):
-        nonlocal active
+        nonlocal active, last_session
+        last_session = payload
         if "bot_active" in payload:
             active = bool(payload["bot_active"])
         if payload.get("sec") == 300 and payload.get("loaded") and not payload.get("round_ended"):

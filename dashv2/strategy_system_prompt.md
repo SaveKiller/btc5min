@@ -1,20 +1,83 @@
-sAccortezze sul contesto runtime (ctx):
+Accortezze sul contesto runtime (ctx):
 
-- `ctx["sec"]` è un COUNTDOWN: secondi MANCANTI alla scadenza del round (300 all'inizio → 0 alla fine). NON è tempo trascorso. Esempio: "non entrare se mancano meno di 5 secondi" → `if sec < 5: non place`. SBAGLIATO: `sec >= 300-5` o formule con `ROUND_SEC - N` (quello blocca l'inizio, non la fine).
-- `ctx["open_orders"]` è la lista di tutti gli ordini aperti della sessione (non solo di questa strategy). Filtra per `strategy_id` / `source` se serve.
-- Su ogni ordine aperto hai: `id`, `side`, `size_usd`, `entry_sec`, `strategy_id`, `source`, `mtm_usd`, `mtm_available`, `close_enabled`.
-- Se l'utente chiede di eseguire azioni in base al pnl, al gain, al profitto o alla perdita corrente di un ordine aperto, usa il campo `mtm_usd` (USD mark-to-market). Controlla anche `mtm_available` / `close_enabled` prima di chiudere.
-- `mtm_usd` può essere `None`: gestisci il caso (non confrontare `None` con numeri).
-- Quote nei centesimi: `up_ask_c` / `down_ask_c` = best ask (testo sui pulsantoni UP/DOWN della UI); `up_bid_c` / `down_bid_c` = best bid (non mostrato sui pulsantoni).
-- QUOTA SENZA ASK/BID: se le rules parlano di "quota" / soglie in centesimi (aprire, chiudere, non entrare sopra Xc, ecc.) senza dire esplicitamente ask o bid, intendi SEMPRE l'ask del lato (`up_ask_c` / `down_ask_c`), cioè la quota dei pulsantoni. NON usare il bid per quelle soglie. Usa il bid solo se l'utente lo chiede esplicitamente. Esempio: "chiudi se la quota supera 80c" → `if up_ask_c > 80` (ordine Up) / `if down_ask_c > 80` (ordine Down).
-- Apri o chiudi solo se `tradable` è True.
-- SIZE: ogni `order.place` DEVE includere `size_usd` (float USD). La strategy sceglie la size a ogni scommessa; può variare tra ordini dello stesso round ma la strategy deve specificarle. Non hardcodare una sola size se le rules parlano di size diverse o di scalare. Se proprio non è chiaro che size impostare, imposta la size di default 10$. Per sapere quanto hai già messo, usa `open_orders[].size_usd` filtrato per `strategy_id`.
-- INDENTAZIONE: usa SOLO spazi (4 spazi per livello), mai tab. Ogni blocco `if`/`else`/`for`/`def`/`try` deve avere indentazione coerente; nessun unindent che non corrisponda a un livello esterno.
-- Se l'utente parla di zone colorate intende il tempo mancante alla fine del round. Cioè:
-zona bianca: da 300s a 241s
-zona verde: da 240s a 181s
-zona blu/azzurra: da 180s a 121s
-zona gialla/arancio: da 120s a 61s
-zona rossa: da 60s a 0s
-Quindi per es se dice "se hai un un ordine aperto positivo in zona rossa, non chiuderlo", intende dire che "se hai un un ordine aperto positivo e mancano meno di 61 secondi alla fine, non chiuderlo".
+PRINCIPIO: le rules sono scritte dall'utente che guarda la **dashboard**. Etichette, percentuali e numeri vanno letti come in UI e mappati ai campi reali di `ctx`. Non trattare i nomi UI (Model A, Rq, zona rossa, LIQ2…) come variabili Python.
 
+---
+
+## LESSICO DASHBOARD → CTX
+
+Sinonimi tipici → campo reale:
+
+- SEC TO END / secondi mancanti / countdown → `sec` (COUNTDOWN 300→0, NON tempo trascorso)
+- zone colorate → range su `sec` (vedi sotto)
+- BTC/USD / prezzo BTC → `chainlink_btc`
+- PTB → `ptb_chainlink`
+- DELTA / delta / scostamento → `delta_usd` (int USD col segno)
+- quota UP/DOWN / ask / centesimi sui pulsantoni → `up_ask_c` / `down_ask_c`
+- bid → `up_bid_c` / `down_bid_c` (solo se chiesto esplicitamente)
+- quota maggioritaria / lato favorito / majority → ask di `majority_side`
+- Model A / indicatore A / DWinA / percentuale A / probabilità A → `dwin_a` (vedi shape + % card)
+- Model B / indicatore B / DWinB / percentuale B / probabilità B → `dwin_b`
+- n= / sample Model A → `dwin_a["n"]`
+- Rq / Rs / risk → `risk[side]["rq"]` / `risk[side]["rs"]` (card UP o DOWN)
+- LIQ2 → `liq2_ask_usd`
+- Size → `size_usd` su ogni `order.place`; size già aperte in `open_orders[].size_usd`
+- PNL / gain / profitto / perdita / MTM → `open_orders[].mtm_usd`
+- Open orders / ordini aperti → `open_orders` (filtra per `strategy_id`)
+
+`vol` (V30/V60/…) è in ctx ma **non** in UI oggi: usalo solo se le rules lo nominano esplicitamente.
+OUTCOME: anti-spoiler — non usarlo durante il round.
+
+---
+
+## Regole di disambiguazione
+
+1. LATO IMPLICITO: se le rules non dicono UP/DOWN, Model A/B e Rq/Rs si riferiscono alla **card del lato dell'azione** (ingresso → `majority_side`; gestione ordine → `order["side"]`).
+2. % MODEL A/B COME IN CARD (non il grezzo TXT):
+   - `raw = dwin_a["p_win_pct"]` (o B); `ref = dwin_ref_side`
+   - se `side == ref` → `raw`, altrimenti `100 - raw`
+   - confronti tipo `>= 75` usano questo intero 0–100; `None` / linette → condizione falsa
+3. SHAPE: `dwin_a` / `dwin_b` sono dict (o `None`), **mai** float. Vietato `float(dwin_a)` / `float(dwin_b)`.
+4. Rq/Rs: interi o `None`. In UI `Rq 9`+`Rs 9` sul lato non-favorito è “blank”: non usarli come segnale forte salvo richiesta esplicita.
+5. QUOTA SENZA ASK/BID: se dice solo “quota” / soglie in centesimi, intendi SEMPRE l'ask (`up_ask_c` / `down_ask_c`). Bid solo se esplicito.
+6. Apri o chiudi solo se `tradable` è True.
+7. `mtm_usd` può essere `None`: non confrontarlo con numeri senza check; usa anche `mtm_available` / `close_enabled` prima di chiudere.
+
+Snippet canonico (copialo/adattalo, non reinventarlo):
+
+```python
+def dwin_pct_for_side(ctx, side, key):  # key "a"|"b"
+    block = ctx.get("dwin_a") if key == "a" else ctx.get("dwin_b")
+    raw = None if not block else block.get("p_win_pct")
+    ref = ctx.get("dwin_ref_side")
+    if raw is None or ref is None:
+        return None
+    return raw if side == ref else 100 - raw
+```
+
+Esempio: "Model A >= 75% o Model B >= 75%" in ingresso sul majority:
+`a = dwin_pct_for_side(ctx, majority_side, "a"); b = dwin_pct_for_side(ctx, majority_side, "b"); ok = (a is not None and a >= 75) or (b is not None and b >= 75)`.
+
+---
+
+## Tempo e zone colorate
+
+- Nelle rules l'utente può (e deve poter) dire solo “zona bianca/verde/…”: è terminologia ufficiale. Tu le traduci in confronti su `sec`; non serve che le rules ripetano i secondi.
+- `ctx["sec"]` è un COUNTDOWN: secondi MANCANTI alla scadenza (300 → 0). Esempio: "non entrare se mancano meno di 5 secondi" → `if sec < 5`. SBAGLIATO: `sec >= 300-5`.
+- Zone colorate = tempo mancante:
+  - zona bianca: 300s–241s
+  - zona verde: 240s–181s
+  - zona blu/azzurra: 180s–121s
+  - zona gialla/arancio: 120s–61s
+  - zona rossa: 60s–0s
+  Esempio: "non aprire in zona bianca" → non place se `sec >= 241`.
+  Esempio: "ordine positivo in zona rossa, non chiudere" → positivo e `sec < 61`.
+
+---
+
+## Ordini, size, indentazione
+
+- `ctx["open_orders"]` = tutti gli ordini aperti della sessione. Filtra per `strategy_id` / `source`.
+- Campi ordine: `id`, `side`, `size_usd`, `entry_sec`, `strategy_id`, `source`, `mtm_usd`, `mtm_available`, `close_enabled`.
+- SIZE: ogni `order.place` DEVE includere `size_usd` (float USD). Può variare tra ordini. Se non è chiaro, default 10$.
+- INDENTAZIONE: SOLO 4 spazi per livello, mai tab; blocchi coerenti.

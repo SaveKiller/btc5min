@@ -923,7 +923,7 @@ Il server scambia comandi/eventi di trading **solo** col bot. La strategy non è
 Contratto modulo: `on_tick(ctx) -> list[dict]` (azioni `order.place|close|cancel`).
 Su ogni `order.place` la strategy sceglie `size_usd` (float libero per ordine; può cambiare tra scommesse dello stesso round). Le size già aperte sono in `open_orders[].size_usd`.
 
-Config codegen: `cursor_label` (es. `"Composer 2.5"`) punta a un `label` in `cursor_models` (`id` SDK + `params`). System prompt: file `dashv2/strategy_system_prompt.md` (riletto a ogni create/update deterministic). Env: `CURSOR_API_KEY` (`.env`).
+Config codegen: `cursor_label` (es. `"Composer 2.5"`) punta a un `label` in `cursor_models` (`id` SDK + `params`). System prompt: file `dashv2/strategy_system_prompt.md` (riletto a ogni create/update deterministic) — lessico **dashboard → ctx** (Model A/B, Rq/Rs, zone, LIQ2, quota=ask, …). Shape tipate di `dwin_*` / `risk` / ecc. nel `_CONTRACT` di `strategy_codegen.py`. Env: `CURSOR_API_KEY` (`.env`).
 
 ### Multi-strategy
 

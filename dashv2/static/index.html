@@ -33,7 +33,7 @@
       <button class="btn btn-outline-secondary replay-speed-btn" type="button" data-speed="5">x5</button>
     </div>
     <span class="divider d-none d-md-block" aria-hidden="true"></span>
-    <div class="toolbar-timeline flex-grow-1 d-flex align-items-center gap-2 min-w-0">
+    <div class="toolbar-timeline flex-grow-1 d-flex align-items-center gap-0 min-w-0">
       <div class="timeline-block flex-grow-1 min-w-0">
         <div class="replay-scale-bands" aria-hidden="true">
           <div class="replay-scale-band sec-white" data-from="300" data-until="240"></div>
@@ -346,7 +346,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="strategyModalTitle">Strategy</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" id="strategyModalCloseBtn"></button>
       </div>
       <div class="modal-body">
         <input type="hidden" id="strategyModalMode" value="create">
