@@ -193,6 +193,8 @@ class TestServerAcl(unittest.TestCase):
         self.assertIn("agent.executions.list", _HUMAN_CMDS)
         self.assertIn("agent.session.select", _HUMAN_CMDS)
         self.assertNotIn("agent.chat.send", _BOT_CMDS)
+        self.assertIn("stats.backtest.start", _HUMAN_CMDS)
+        self.assertNotIn("stats.backtest.start", _BOT_CMDS)
         self.assertNotIn("bot.select", _HUMAN_CMDS)
         self.assertNotIn("strategy.rename", _HUMAN_CMDS)
 

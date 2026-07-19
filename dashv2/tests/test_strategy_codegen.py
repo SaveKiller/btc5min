@@ -103,6 +103,57 @@ class TestCodegenParse(unittest.TestCase):
                     "buy", model_id="m", params={}, system_prompt="x", max_attempts=2,
                 )
 
+    def test_coded_rules_prompt_and_validate(self):
+        from dashv2.strategy_codegen import (
+            build_coded_rules_prompt, extract_coded_rules, validate_coded_rules,
+        )
+        prompt = build_coded_rules_prompt("def on_tick(ctx):\n    return []\n")
+        self.assertIn("Apertura:", prompt)
+        self.assertIn("Chiusura:", prompt)
+        self.assertIn("Vincoli:", prompt)
+        self.assertIn("def on_tick", prompt)
+        self.assertIn("COLLOQUIALE", prompt)
+        self.assertIn("VIETATO citare variabili", prompt)
+        self.assertIn("COUNTDOWN", prompt)
+        self.assertIn("primi N secondi", prompt)
+        self.assertIn("SOLO logica SPECIFICA", prompt)
+        self.assertIn("mercato operabile", prompt)
+        self.assertNotIn("majority ask in [80", prompt)
+        good = "Apertura:\n- size 10\n\nChiusura:\n- (nessuna)\n\nVincoli:\n- max 1 ordine\n"
+        validate_coded_rules(good)
+        with self.assertRaises(RuntimeError):
+            validate_coded_rules("Apertura:\n- x\n")
+        fenced = extract_coded_rules("```\n" + good + "```\n")
+        self.assertIn("Vincoli:", fenced)
+
+    def test_generate_coded_rules_mock(self):
+        reply = "Apertura:\n- place Up\n\nChiusura:\n- (nessuna)\n\nVincoli:\n- (nessuna)\n"
+
+        def fake_call(prompt, model_id, params, cwd):
+            self.assertIn("def on_tick", prompt)
+            return reply
+
+        with unittest.mock.patch("dashv2.strategy_codegen.call_model", side_effect=fake_call):
+            from dashv2.strategy_codegen import generate_coded_rules
+            out = generate_coded_rules(
+                "def on_tick(ctx):\n    return []\n", model_id="m", params={},
+            )
+        self.assertIn("Apertura:", out)
+        self.assertIn("place Up", out)
+
+    def test_create_and_clone_coded_rules(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = strategies_dir(Path(td))
+            src = create_strategy(
+                root, "Alpha", "deterministic", "d", rules="buy",
+                module_file="strategy_srcid000001.py", strategy_id="srcid000001",
+                coded_rules="Apertura:\n- x\n\nChiusura:\n- y\n\nVincoli:\n- z\n",
+            )
+            write_module(root, src["id"], _STUB)
+            self.assertIn("Apertura:", src["coded_rules"])
+            c1 = clone_strategy(root, src["id"])
+            self.assertEqual(c1["coded_rules"], src["coded_rules"])
+
 
 class TestStrategyRunner(unittest.TestCase):
     def test_dispatch_place(self):

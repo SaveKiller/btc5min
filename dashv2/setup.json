@@ -5,6 +5,7 @@
     "port": 8780,
     "chart_previous_candles": 60,
     "default_order_size_usd": 100,
+    "stats_workers": 10,
     "stall_reconnect_sec": 15,
     "engine_plugin": "replay",
     "cursor_label": "Composer 2.5",

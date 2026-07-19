@@ -51,6 +51,7 @@ def strategy_summary(data: dict) -> dict:
     return {
         "id": data["id"], "name": data["name"], "type": data["type"],
         "description": data["description"], "rules": data.get("rules", ""),
+        "coded_rules": data.get("coded_rules", ""),
         "module_file": data.get("module_file"),
         "created_at_utc": data["created_at_utc"], "updated_at_utc": data["updated_at_utc"],
     }
@@ -76,6 +77,7 @@ def list_strategies(root: Path, strategy_type: str | None = None) -> list[dict]:
 def create_strategy(
     root: Path, name: str, strategy_type: str, description: str,
     rules: str = "", module_file: str | None = None, strategy_id: str | None = None,
+    coded_rules: str = "",
 ) -> dict:
     name = name.strip()
     if not name:
@@ -91,8 +93,8 @@ def create_strategy(
     payload = {
         "schema_version": SCHEMA_VERSION, "id": sid, "name": name,
         "type": strategy_type, "description": description.strip(),
-        "rules": rules, "module_file": module_file, "params": {},
-        "created_at_utc": now, "updated_at_utc": now,
+        "rules": rules, "coded_rules": coded_rules, "module_file": module_file,
+        "params": {}, "created_at_utc": now, "updated_at_utc": now,
     }
     _atomic_write(_strategy_path(root, sid), payload)
     return payload
@@ -101,6 +103,7 @@ def create_strategy(
 def update_strategy(
     root: Path, strategy_id: str, name: str, description: str,
     rules: str | None = None, module_file: str | None = None,
+    coded_rules: str | None = None,
 ) -> dict:
     name = name.strip()
     if not name:
@@ -114,6 +117,8 @@ def update_strategy(
             raise Exception("deterministic strategy requires rules")
     if module_file is not None:
         data["module_file"] = module_file
+    if coded_rules is not None:
+        data["coded_rules"] = coded_rules
     data["updated_at_utc"] = _utc_now_iso()
     _atomic_write(_strategy_path(root, strategy_id), data)
     return data
@@ -155,8 +160,8 @@ def clone_strategy(root: Path, strategy_id: str) -> dict:
     payload = {
         "schema_version": SCHEMA_VERSION, "id": new_id, "name": new_name,
         "type": src["type"], "description": src["description"],
-        "rules": src["rules"], "module_file": module_file,
-        "params": dict(src["params"]),
+        "rules": src["rules"], "coded_rules": src.get("coded_rules", ""),
+        "module_file": module_file, "params": dict(src["params"]),
         "created_at_utc": now, "updated_at_utc": now,
     }
     _atomic_write(_strategy_path(root, new_id), payload)

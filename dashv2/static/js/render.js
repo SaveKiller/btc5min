@@ -890,6 +890,422 @@ export function renderAgentProposed(proposed, strategyId) {
 }
 
 
+function fmtPnl(n) {
+    const v = Number(n);
+    const sign = v > 0 ? "+" : "";
+    return `${sign}${v.toFixed(2)}`;
+}
+
+
+function fmtPnlInt(n) {
+    const v = Math.round(Number(n));
+    const sign = v > 0 ? "+" : "";
+    return `${sign}${v}`;
+}
+
+
+export function renderStatsMode(mode) {
+    const back = mode === "backtest";
+    $("statsBacktestPanel").classList.toggle("d-none", !back);
+    $("statsAnalyzePanel").classList.toggle("d-none", back);
+    $("statsBacktestHeaderControls").classList.toggle("d-none", !back);
+    const btBtn = $("statsModeBacktestBtn");
+    const anBtn = $("statsModeAnalyzeBtn");
+    btBtn.classList.toggle("btn-primary", back);
+    btBtn.classList.toggle("btn-outline-secondary", !back);
+    anBtn.classList.toggle("btn-primary", !back);
+    anBtn.classList.toggle("btn-outline-secondary", back);
+}
+
+
+export function renderStatsDays(dayFrom, dayTo) {
+    $("statsDayFrom").value = dayFrom || "";
+    $("statsDayTo").value = dayTo || "";
+    $("statsDayFromDisplay").textContent = formatStatsDayDisplay(dayFrom);
+    $("statsDayToDisplay").textContent = formatStatsDayDisplay(dayTo);
+}
+
+
+function formatStatsDayDisplay(iso) {
+    if (!iso) return "";
+    const [y, m, d] = iso.split("-");
+    return `${d}/${m}/${y}`;
+}
+
+
+function formatStatsExecDisplay(isoUtc) {
+    if (!isoUtc) return "";
+    return isoUtc.slice(0, 16).replace("T", " ");
+}
+
+
+export function renderStatsStrategySelect(strategies, selectedId, jobRunning) {
+    const sel = $("statsStrategySelect");
+    const list = strategies || [];
+    const opts = list.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("");
+    sel.innerHTML = `<option value="">Strategy</option>` + opts;
+    if (selectedId && list.some((s) => s.id === selectedId)) sel.value = selectedId;
+    else sel.value = "";
+    sel.classList.toggle("is-placeholder", !sel.value);
+    $("statsBacktestRunBtn").disabled = !!jobRunning || !sel.value;
+}
+
+
+export function renderStatsAnalyzeSelect(analyzes, selectedId) {
+    const sel = $("statsAnalyzeSelect");
+    const list = analyzes || [];
+    sel.innerHTML = list.length
+        ? list.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name || a.id)}</option>`).join("")
+        : `<option value="">— nessun modulo —</option>`;
+    if (selectedId && list.some((a) => a.id === selectedId)) sel.value = selectedId;
+    $("statsAnalyzeDeleteBtn").disabled = !sel.value;
+}
+
+
+export function renderStatsSimulationSelect(simulations, selectedId) {
+    const sel = $("statsSimulationSelect");
+    const list = simulations || [];
+    sel.innerHTML = list.length
+        ? `<option value="">— sessioni —</option>`
+            + list.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.label || s.id)}</option>`).join("")
+        : `<option value="">— nessuna sessione —</option>`;
+    if (selectedId && list.some((s) => s.id === selectedId)) sel.value = selectedId;
+    else sel.value = "";
+    const longest = list.reduce((n, s) => Math.max(n, (s.label || s.id || "").length), 12);
+    sel.style.width = `${Math.min(longest + 4, 64)}ch`;
+    $("statsSimulationDeleteBtn").disabled = !sel.value;
+}
+
+
+export function renderStatsJobUi(state) {
+    const running = !!state.statsJobRunning;
+    const prog = state.statsProgress;
+    const pct = prog && prog.total ? Math.min(100, Math.round(100 * prog.done / prog.total)) : 0;
+    const label = running
+        ? (prog ? `${prog.done}/${prog.total} · err ${prog.errors || 0}` : "Avvio…")
+        : "Pronto";
+    $("statsProgressBar").style.width = `${running ? pct : 0}%`;
+    $("statsAnalyzeProgressBar").style.width = `${running ? pct : 0}%`;
+    $("statsAnalyzeProgressLabel").textContent = label;
+    const hasStrategy = !!(state.statsStrategyId || $("statsStrategySelect").value);
+    $("statsBacktestRunBtn").disabled = running || !hasStrategy;
+    $("statsAnalyzeRunBtn").disabled = running || !$("statsAnalyzeSelect").value;
+    $("statsJobCancelBtn").disabled = !running;
+    $("statsAnalyzeCancelBtn").disabled = !running;
+}
+
+
+function pad2(n) {
+    return String(n).padStart(2, "0");
+}
+
+
+function emptyStatsAgg() {
+    return { rounds: 0, traded: 0, pos: 0, neg: 0, flat: 0, pnl_sum: 0.0, pnl_avg: 0.0 };
+}
+
+
+function accumulateStatsAgg(b, r) {
+    if (!r.ok) return;
+    b.rounds += 1;
+    if (r.traded) b.traded += 1;
+    const pnl = Number(r.pnl_usd);
+    b.pnl_sum += pnl;
+    if (pnl > 0) b.pos += 1;
+    else if (pnl < 0) b.neg += 1;
+    else b.flat += 1;
+}
+
+
+function finalizeStatsAgg(b) {
+    b.pnl_avg = b.rounds ? b.pnl_sum / b.rounds : 0;
+    return b;
+}
+
+
+function totalStatsAgg(rows) {
+    const t = emptyStatsAgg();
+    for (const r of rows) {
+        for (const k of ["rounds", "traded", "pos", "neg", "flat"]) t[k] += r[k];
+        t.pnl_sum += r.pnl_sum;
+    }
+    return finalizeStatsAgg(t);
+}
+
+
+function utcRoundParts(ts) {
+    const d = new Date(Number(ts) * 1000);
+    const hour = d.getUTCHours();
+    const minute = d.getUTCMinutes();
+    return {
+        hour, minute, slot: Math.floor(minute / 5),
+        day: `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`,
+    };
+}
+
+
+function slotRangeLabel(hour, slot) {
+    const m0 = slot * 5;
+    const endMinute = m0 + 5;
+    const endH = endMinute === 60 ? (hour + 1) % 24 : hour;
+    const endM = endMinute === 60 ? 0 : endMinute;
+    return `${pad2(hour)}:${pad2(m0)}–${pad2(endH)}:${pad2(endM)}`;
+}
+
+
+function aggStatsHours(rounds) {
+    const buckets = Array.from({ length: 24 }, (_, h) => ({
+        key: String(h), label: `${pad2(h)}:00`, market: UTC_HOUR_MARKETS[h], ...emptyStatsAgg(),
+    }));
+    for (const r of rounds) {
+        if (!r.ok) continue;
+        const h = r.hour_utc != null ? Number(r.hour_utc) : utcRoundParts(r.market_start_ts).hour;
+        accumulateStatsAgg(buckets[h], r);
+    }
+    const rows = buckets.map(finalizeStatsAgg);
+    return { rows, total: totalStatsAgg(rows) };
+}
+
+
+function aggStatsSlots(rounds, hour) {
+    const buckets = Array.from({ length: 12 }, (_, s) => ({
+        key: String(s), label: slotRangeLabel(hour, s), market: UTC_HOUR_MARKETS[hour], ...emptyStatsAgg(),
+    }));
+    for (const r of rounds) {
+        if (!r.ok) continue;
+        const p = utcRoundParts(r.market_start_ts);
+        if (p.hour !== hour) continue;
+        accumulateStatsAgg(buckets[p.slot], r);
+    }
+    const rows = buckets.map(finalizeStatsAgg);
+    return { rows, total: totalStatsAgg(rows) };
+}
+
+
+function aggStatsDays(rounds, hour, slot) {
+    const byDay = new Map();
+    const range = slotRangeLabel(hour, slot);
+    for (const r of rounds) {
+        if (!r.ok) continue;
+        const p = utcRoundParts(r.market_start_ts);
+        if (p.hour !== hour || p.slot !== slot) continue;
+        if (!byDay.has(p.day)) {
+            byDay.set(p.day, {
+                key: p.day, label: `${p.day} · ${range}`, market: UTC_HOUR_MARKETS[hour],
+                market_start_ts: r.market_start_ts, ...emptyStatsAgg(),
+            });
+        }
+        accumulateStatsAgg(byDay.get(p.day), r);
+    }
+    const rows = [...byDay.values()].sort((a, b) => a.key.localeCompare(b.key)).map(finalizeStatsAgg);
+    return { rows, total: totalStatsAgg(rows) };
+}
+
+
+function statsAggRowHtml(row, { drill = false, roundTs = null } = {}) {
+    const clickable = drill || roundTs != null;
+    const cls = clickable ? "stats-row-drill" : "";
+    let data = "";
+    if (roundTs != null) data = ` data-round-ts="${Number(roundTs)}"`;
+    else if (drill) data = ` data-drill-key="${escapeHtml(row.key)}"`;
+    return `<tr class="${cls}"${data}>
+        <td>${escapeHtml(row.label)}</td>
+        <td>${escapeHtml(row.market)}</td>
+        <td class="text-end">${row.rounds}</td>
+        <td class="text-end">${row.traded}</td>
+        <td class="text-end">${row.pos}</td>
+        <td class="text-end">${row.neg}</td>
+        <td class="text-end">${row.flat}</td>
+        <td class="text-end">${fmtPnl(row.pnl_sum)}</td>
+        <td class="text-end">${fmtPnl(row.pnl_avg)}</td>
+    </tr>`;
+}
+
+
+function statsTotalRowHtml(total) {
+    return `<tr class="stats-backtest-table-total">
+        <td colspan="2">TOTAL</td>
+        <td class="text-end">${total.rounds}</td>
+        <td class="text-end">${total.traded}</td>
+        <td class="text-end">${total.pos}</td>
+        <td class="text-end">${total.neg}</td>
+        <td class="text-end">${total.flat}</td>
+        <td class="text-end">${fmtPnl(total.pnl_sum)}</td>
+        <td class="text-end">${fmtPnl(total.pnl_avg)}</td>
+    </tr>`;
+}
+
+
+function renderStatsResultsBreadcrumb(drill) {
+    const el = $("statsResultsBreadcrumb");
+    if (!el) return;
+    const root = `<button type="button" data-crumb="hours">Risultati 24 ore UTC</button>`;
+    if (!drill || drill.level === "hours") {
+        el.innerHTML = `<span class="crumb-current">Risultati 24 ore UTC</span>`;
+        return;
+    }
+    const hourLab = `${pad2(drill.hour)}:00`;
+    if (drill.level === "slots") {
+        el.innerHTML = `${root}<span class="crumb-sep">›</span><span class="crumb-current">${hourLab}</span>`;
+        return;
+    }
+    const slotLab = slotRangeLabel(drill.hour, drill.slot);
+    el.innerHTML = `${root}<span class="crumb-sep">›</span>`
+        + `<button type="button" data-crumb="slots">${hourLab}</button>`
+        + `<span class="crumb-sep">›</span><span class="crumb-current">${slotLab}</span>`;
+}
+
+
+function statsPnlClass(n) {
+    const v = Number(n);
+    if (v > 0) return "stats-sum-pos";
+    if (v < 0) return "stats-sum-neg";
+    return "";
+}
+
+
+function computeStatsCumulative(rounds, table) {
+    if (rounds?.length) {
+        let n = 0;
+        let pnl = 0;
+        const days = new Set();
+        for (const r of rounds) {
+            if (!r.ok) continue;
+            n += 1;
+            pnl += Number(r.pnl_usd);
+            days.add(utcRoundParts(r.market_start_ts).day);
+        }
+        const nDays = days.size;
+        return { rounds: n, pnl_total: pnl, pnl_day: nDays ? pnl / nDays : 0 };
+    }
+    const t = table?.total;
+    if (!t) return null;
+    return { rounds: t.rounds, pnl_total: t.pnl_sum, pnl_day: t.pnl_avg };
+}
+
+
+export function renderStatsBacktest(state) {
+    const summary = state?.statsSummary ?? null;
+    const sumEl = $("statsSummaryLabel");
+    if (summary) {
+        const exec = formatStatsExecDisplay(summary.created_at_utc);
+        const head = exec ? `${escapeHtml(exec)} · ${escapeHtml(summary.name)}` : escapeHtml(summary.name);
+        const cum = computeStatsCumulative(state?.statsRounds, state?.statsTable);
+        let line3 = "";
+        if (cum) {
+            const pnlTot = `<span class="${statsPnlClass(cum.pnl_total)}">Total ${fmtPnlInt(cum.pnl_total)}</span>`;
+            const pnlDay = `<span class="${statsPnlClass(cum.pnl_day)}">Daily ${fmtPnlInt(cum.pnl_day)}</span>`;
+            line3 = `<span class="stats-sum-r">R</span> ${cum.rounds} · ${pnlTot} · ${pnlDay}`;
+        }
+        sumEl.innerHTML = `${head}<br>`
+            + `${escapeHtml(summary.day_from)}→${escapeHtml(summary.day_to)}<br>`
+            + line3;
+    } else {
+        sumEl.innerHTML = "";
+    }
+
+    const body = $("statsBacktestTableBody");
+    const rounds = state?.statsRounds;
+    const drill = state?.statsDrill || { level: "hours", hour: null, slot: null };
+    renderStatsResultsBreadcrumb(rounds ? drill : null);
+
+    if (!rounds?.length && !state?.statsTable?.hours) {
+        body.innerHTML = "";
+        $("statsColLabel").textContent = "Hour";
+        return;
+    }
+
+    let view;
+    let colLabel = "Hour";
+    let rowMode = "plain"; // plain | drill | round
+    if (rounds?.length) {
+        if (drill.level === "slots") {
+            view = aggStatsSlots(rounds, drill.hour);
+            colLabel = "Slot";
+            rowMode = "drill";
+        } else if (drill.level === "days") {
+            view = aggStatsDays(rounds, drill.hour, drill.slot);
+            colLabel = "Day";
+            rowMode = "round";
+        } else {
+            view = aggStatsHours(rounds);
+            colLabel = "Hour";
+            rowMode = "drill";
+        }
+    } else {
+        // Fallback sessione senza rounds in memoria: solo L1 da table precomputata.
+        view = {
+            rows: state.statsTable.hours.map((h, i) => ({
+                key: String(i), label: h.hour, market: h.market,
+                rounds: h.rounds, traded: h.traded, pos: h.pos, neg: h.neg, flat: h.flat,
+                pnl_sum: h.pnl_sum, pnl_avg: h.pnl_avg,
+            })),
+            total: state.statsTable.total,
+        };
+        rowMode = "plain";
+    }
+
+    $("statsColLabel").textContent = colLabel;
+    const rows = view.rows.map((r) => {
+        if (rowMode === "round") return statsAggRowHtml(r, { roundTs: r.market_start_ts });
+        if (rowMode === "drill") return statsAggRowHtml(r, { drill: true });
+        return statsAggRowHtml(r);
+    });
+    rows.push(statsTotalRowHtml(view.total));
+    body.innerHTML = rows.join("");
+}
+
+
+export function renderStatsAnalyze(state) {
+    const sumEl = $("statsAnalyzeSummaryLabel");
+    const summary = state.statsSummary;
+    if (summary && state.statsMode === "analyze") {
+        sumEl.textContent = `${summary.name} · ${summary.day_from}→${summary.day_to}`
+            + ` · workers ${summary.workers} · ${summary.elapsed_sec}s`
+            + ` · skipped ${summary.skipped} · errors ${summary.errors}`;
+    } else if (!state.statsJobRunning) {
+        sumEl.textContent = "";
+    }
+    $("statsMarkdown").textContent = state.statsMarkdown || "";
+    renderStatsChat(state.statsChatMessages, { thinking: state.statsChatBusy });
+    renderStatsProposed(state.statsProposed);
+}
+
+
+export function renderStatsChat(messages, { thinking = false } = {}) {
+    const log = $("statsChatLog");
+    const parts = (messages || []).map((m) => {
+        const role = m.role === "user" ? "user" : "assistant";
+        return `<div class="agent-msg ${role}"><div class="agent-msg-role">${role}</div>`
+            + `<div class="agent-msg-body">${renderAgentMarkdown(m.content || "")}</div></div>`;
+    });
+    if (thinking) {
+        parts.push(
+            `<div class="agent-msg assistant agent-thinking">`
+            + `<div class="agent-msg-role">assistant</div>Thinking…</div>`
+        );
+    }
+    log.innerHTML = parts.join("");
+    log.scrollTop = log.scrollHeight;
+}
+
+
+export function renderStatsProposed(proposed) {
+    const wrap = $("statsProposedWrap");
+    const btn = $("statsApplyRulesBtn");
+    if (!proposed?.rules) {
+        wrap.classList.add("d-none");
+        btn.disabled = true;
+        btn.dataset.rules = "";
+        return;
+    }
+    wrap.classList.remove("d-none");
+    $("statsProposedRules").textContent = proposed.rules;
+    btn.disabled = false;
+    btn.dataset.rules = proposed.rules;
+}
+
+
 function renderAgentMarkdown(text) {
     // marked è globale (vendor); breaks=true → newline → <br>
     return marked.parse(String(text), { breaks: true, async: false });

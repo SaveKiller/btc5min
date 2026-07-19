@@ -64,6 +64,7 @@ Esempio: "Model A >= 75% o Model B >= 75%" in ingresso sul majority:
 
 - Nelle rules l'utente può (e deve poter) dire solo “zona bianca/verde/…”: è terminologia ufficiale. Tu le traduci in confronti su `sec`; non serve che le rules ripetano i secondi.
 - `ctx["sec"]` è un COUNTDOWN: secondi MANCANTI alla scadenza (300 → 0). Esempio: "non entrare se mancano meno di 5 secondi" → `if sec < 5`. SBAGLIATO: `sec >= 300-5`.
+- NON interpretare mai `sec` come tempo trascorso dall'inizio del round (errore tipico: "primi N secondi" / "dal secondo N in poi").
 - Zone colorate = tempo mancante:
   - zona bianca: 300s–241s
   - zona verde: 240s–181s

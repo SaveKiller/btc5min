@@ -3,7 +3,7 @@
 import unittest
 from pathlib import Path
 
-from dashv2.rounds import RoundRepository, sec_from_secs_to_expiry
+from dashv2.rounds import RoundRepository, load_bin, sec_from_secs_to_expiry
 
 
 class TestRounds(unittest.TestCase):
@@ -13,6 +13,7 @@ class TestRounds(unittest.TestCase):
         if not data_dir.is_dir():
             raise unittest.SkipTest("data/ not available")
         cls.repo = RoundRepository(data_dir, stall_reconnect_sec=15.0)
+        cls.data_dir = data_dir
 
     def test_list_days(self):
         days = self.repo.list_days()
@@ -66,3 +67,17 @@ class TestRounds(unittest.TestCase):
         loaded = self.repo.load(picker[0]["market_start_ts"])
         self.assertGreater(len(loaded.ticks_by_sec), 0)
         self.assertIn(loaded.outcome_name, ("Up", "Down", "unknown"))
+
+    def test_load_bin_by_path(self):
+        """load_bin carica un round senza costruire RoundRepository (niente _scan)."""
+        picker = [p for p in self.repo.list_picker() if p["valid"]]
+        if not picker:
+            self.skipTest("no valid rounds")
+        mts = picker[0]["market_start_ts"]
+        bin_path = self.repo.bin_path(mts)
+        via_path = load_bin(bin_path, 15.0)
+        via_repo = self.repo.load(mts)
+        self.assertEqual(via_path.market_start_ts, via_repo.market_start_ts)
+        self.assertEqual(via_path.outcome_code, via_repo.outcome_code)
+        self.assertEqual(len(via_path.ticks_by_sec), len(via_repo.ticks_by_sec))
+        self.assertEqual(via_path.fee_rate, via_repo.fee_rate)
