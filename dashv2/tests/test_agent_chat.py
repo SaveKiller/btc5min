@@ -25,6 +25,12 @@ class TestSessionsStore(unittest.TestCase):
             self.assertEqual(data["account_id"], "accA")
             listed = list_sessions_for_account(root, "accA")
             self.assertEqual([x["session_id"] for x in listed], ["s3", "s1"])
+            self.assertFalse(listed[0]["has_chat"])
+            append_message(root, "s1", "user", "ciao", account_id="accA")
+            listed2 = list_sessions_for_account(root, "accA")
+            by_id = {x["session_id"]: x for x in listed2}
+            self.assertTrue(by_id["s1"]["has_chat"])
+            self.assertFalse(by_id["s3"]["has_chat"])
             self.assertEqual(list_sessions_for_account(root, "accB")[0]["session_id"], "s2")
 
 

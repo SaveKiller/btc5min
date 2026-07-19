@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dashv2.agent_chat import thread_has_chat
 from dashv2.execution_log import execution_session_meta
 
 
@@ -92,6 +93,7 @@ def list_sessions_for_account(
             "n_events": meta.get("n_events") or 0,
             "updated_at_utc": meta.get("updated_at_utc") or data.get("started_at_utc"),
             "strategy_ids": meta.get("strategy_ids") or list(data.get("active_strategy_ids") or []),
+            "has_chat": thread_has_chat(history_dir, sid),
         })
     items.sort(key=lambda x: x.get("started_at_utc") or "", reverse=True)
     if live_session_id:

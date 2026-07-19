@@ -690,34 +690,162 @@ export function renderAgentContext(state) {
         return s ? s.name : id;
     }).join(", ") || "—";
     const roundVal = focus.market_start_ts != null ? String(focus.market_start_ts) : "—";
-    const secVal = isLive ? (focus.sec != null ? String(focus.sec) : "—") : "0";
-    const sessions = state.executionSessions || [];
-    const focusId = state.agentSessionId || "";
-    const canUnload = !!state.session?.loaded;
-    const unloadOpt = canUnload
-        ? `<option value="__unload__">Unload session</option>`
-        : `<option value="__unload__" disabled>Unload session</option>`;
-    const opts = unloadOpt + sessions.map((s) => {
-        const liveMark = s.session_id === state.session?.session_id ? " · live" : "";
-        const when = formatSessionClock(s.market_start_ts);
-        const label = `${s.session_id} · ${when} · ${s.n_events || 0} events${liveMark}`;
-        const selected = s.session_id === focusId ? " selected" : "";
-        return `<option value="${escapeHtml(s.session_id)}"${selected}>${escapeHtml(label)}</option>`;
-    }).join("");
-    const sessionControl =
-        `<select class="form-select form-select-sm agent-session-select" id="agentSessionSelect">${opts}</select>`;
     const statsLine = formatSessionFocusStats(state);
+    const body = $("agentContextBody");
+    const wasOpen = !!body.querySelector("#agentSessionMenu.show");
     const parts = [
         cell("Account", acc ? acc.name : "—"),
         cell("Round", roundVal),
-        cell("Sec", secVal),
-        `<span class="agent-ctx-item agent-ctx-session"><strong>Session</strong>${sessionControl}</span>`,
+        buildSessionPicker(state),
         cell("Bot", state.botActive ? "ACTIVE" : "PAUSED"),
         `<span class="agent-ctx-item agent-ctx-loaded"><strong>Loaded strategies</strong>`
             + `<span title="${escapeHtml(loadedLabel)}">${escapeHtml(loadedLabel)}</span></span>`,
         cell("Session result", statsLine),
     ];
-    $("agentContextBody").innerHTML = parts.join("");
+    body.innerHTML = parts.join("");
+    const btn = $("agentSessionSelectBtn");
+    if (btn) {
+        bootstrap.Dropdown.getOrCreateInstance(btn, {
+            autoClose: true,
+            popperConfig: { strategy: "fixed" },
+        });
+        if (wasOpen) bootstrap.Dropdown.getOrCreateInstance(btn).show();
+    }
+}
+
+
+function buildSessionPicker(state) {
+    const sessions = state.executionSessions || [];
+    const focusId = state.agentSessionId || "";
+    const canUnload = !!state.session?.loaded;
+    const betCounts = betCountBySession(state.historyRows || []);
+    const focused = sessions.find((s) => s.session_id === focusId);
+    const btnInner = focused
+        ? sessionRowInnerHtml(focused, state.session?.session_id, betCounts.get(focused.session_id) || 0)
+        : "—";
+    const btnChatCls = focused?.has_chat ? " session-has-chat" : "";
+    const day = state.sessionPickerDay;
+    const menuHtml = day
+        ? sessionPickerSessionsHtml(sessions, day, focusId, state.session?.session_id, canUnload, betCounts)
+        : sessionPickerDaysHtml(sessions, canUnload);
+    return `<span class="agent-ctx-item agent-ctx-session"><strong>Session</strong>`
+        + `<div class="dropdown agent-session-dropdown">`
+        + `<button class="btn btn-sm agent-session-btn dropdown-toggle${btnChatCls}" type="button" id="agentSessionSelectBtn"`
+        + ` data-bs-toggle="dropdown" aria-expanded="false">`
+        + `<span class="agent-session-btn-label">${btnInner}</span></button>`
+        + `<ul class="dropdown-menu session-picker-menu" id="agentSessionMenu">${menuHtml}</ul>`
+        + `</div></span>`;
+}
+
+
+function sessionPickerUnloadLi(canUnload) {
+    const cls = canUnload ? "" : " disabled";
+    const dis = canUnload ? "" : " disabled";
+    return `<li><button class="dropdown-item${cls}" type="button" data-session-unload="1"${dis}>Unload session</button></li>`;
+}
+
+
+function sessionPickerDaysHtml(sessions, canUnload) {
+    const days = groupSessionsByCreatedDay(sessions);
+    const total = sessions.length;
+    const items = days.map((d) => (
+        `<li><button class="dropdown-item session-day-btn" type="button" data-session-day="${d.day}">`
+        + `${d.day}<span class="text-muted-app ms-1">(${d.count})</span>`
+        + `<i class="bi bi-chevron-right float-end opacity-50"></i></button></li>`
+    )).join("");
+    return sessionPickerUnloadLi(canUnload)
+        + `<li><hr class="dropdown-divider"></li>`
+        + `<li><h6 class="dropdown-header">Sessions: ${total}</h6></li>`
+        + items;
+}
+
+
+function sessionPickerSessionsHtml(sessions, day, focusId, liveId, canUnload, betCounts) {
+    const list = sessions.filter((s) => sessionCreatedDayLocal(s.started_at_utc) === day);
+    const items = list.map((s) => {
+        const active = s.session_id === focusId ? " active" : "";
+        const chatCls = s.has_chat ? " session-has-chat" : "";
+        const nBets = betCounts.get(s.session_id) || 0;
+        return `<li><button class="dropdown-item session-row-item${active}${chatCls}" type="button" data-session-id="${escapeHtml(s.session_id)}">`
+            + sessionRowInnerHtml(s, liveId, nBets)
+            + `</button></li>`;
+    }).join("");
+    return sessionPickerUnloadLi(canUnload)
+        + `<li><button class="dropdown-item session-picker-back" type="button" data-session-back="1">`
+        + `<i class="bi bi-chevron-left me-1"></i>Giorni</button></li>`
+        + `<li><hr class="dropdown-divider"></li>`
+        + `<li><h6 class="dropdown-header">${escapeHtml(day)} locale</h6></li>`
+        + items;
+}
+
+
+/** Badge scommesse | id | HH:mm creazione locale | R DD-MM HH:mm replay UTC | live. */
+function sessionRowInnerHtml(s, liveId, nBets) {
+    const live = s.session_id === liveId ? "live" : "";
+    return `<span class="session-events-badge">${String(nBets).padStart(2, " ")}</span>`
+        + `<span class="session-row-sep">|</span>`
+        + `<span class="session-row-fields">`
+        + `<span class="session-row-id">${escapeHtml(s.session_id)}</span>`
+        + `<span class="session-row-sep">|</span>`
+        + `<span class="session-row-created">${escapeHtml(sessionCreatedHmLocal(s.started_at_utc))}</span>`
+        + `<span class="session-row-sep">|</span>`
+        + `<span class="session-row-replay">R ${escapeHtml(formatReplayClock(s.market_start_ts))}</span>`
+        + `<span class="session-row-sep">|</span>`
+        + `<span class="session-row-live">${live}</span>`
+        + `</span>`;
+}
+
+
+function betCountBySession(rows) {
+    const map = new Map();
+    for (const r of rows) {
+        const sid = r.session_id;
+        if (!sid) continue;
+        map.set(sid, (map.get(sid) || 0) + 1);
+    }
+    return map;
+}
+
+
+function groupSessionsByCreatedDay(sessions) {
+    const map = new Map();
+    for (const s of sessions) {
+        const day = sessionCreatedDayLocal(s.started_at_utc);
+        map.set(day, (map.get(day) || 0) + 1);
+    }
+    return [...map.entries()]
+        .map(([day, count]) => ({ day, count }))
+        .sort((a, b) => (a.day < b.day ? 1 : -1));
+}
+
+
+/** ISO started_at_utc → YYYY-MM-DD (orologio locale PC). Unica eccezione locale in UI. */
+function sessionCreatedDayLocal(iso) {
+    const d = new Date(iso);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
+
+
+/** ISO started_at_utc → HH:mm (orologio locale PC). */
+function sessionCreatedHmLocal(iso) {
+    const d = new Date(iso);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mi}`;
+}
+
+
+/** market_start_ts → DD-MM HH:mm (UTC). */
+function formatReplayClock(mts) {
+    const d = new Date(Number(mts) * 1000);
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const hh = String(d.getUTCHours()).padStart(2, "0");
+    const mi = String(d.getUTCMinutes()).padStart(2, "0");
+    return `${dd}-${mm} ${hh}:${mi}`;
 }
 
 function formatSessionFocusStats(state) {
@@ -739,17 +867,6 @@ function cell(label, value) {
         + `<span title="${escapeHtml(value)}">${escapeHtml(value)}</span></span>`;
 }
 
-
-/** market_start_ts → dd-MM HH:mm (UTC). */
-function formatSessionClock(mts) {
-    if (mts == null || mts === "") return "—";
-    const d = new Date(Number(mts) * 1000);
-    const dd = String(d.getUTCDate()).padStart(2, "0");
-    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-    const hh = String(d.getUTCHours()).padStart(2, "0");
-    const mi = String(d.getUTCMinutes()).padStart(2, "0");
-    return `${dd}-${mm} ${hh}:${mi}`;
-}
 
 export function renderAgentProposed(proposed, strategyId) {
     const wrap = $("agentProposedWrap");

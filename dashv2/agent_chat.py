@@ -32,6 +32,15 @@ def load_thread(history_dir: Path, session_id: str) -> list[dict]:
     return list(data["messages"])
 
 
+def thread_has_chat(history_dir: Path, session_id: str) -> bool:
+    """True se esiste un thread con almeno un messaggio (non crea cartelle)."""
+    path = history_dir / "agent" / f"session_{session_id}" / "thread.json"
+    if not path.is_file():
+        return False
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return bool(data["messages"])
+
+
 def save_thread(history_dir: Path, session_id: str, messages: list[dict], account_id: str | None = None) -> None:
     path = _thread_path(history_dir, session_id)
     payload = {

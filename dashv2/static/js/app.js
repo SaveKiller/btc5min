@@ -22,6 +22,7 @@ const state = {
     roundDays: [], roundNav: [], replaySpeed: loadStoredReplaySpeed(),
     agentMessages: [], agentBusy: false, agentProposed: null,
     agentSessionId: null, executionSessions: [], agentFocus: null,
+    sessionPickerDay: null,
 };
 
 const socket = io({ transports: ["websocket", "polling"] });
@@ -227,6 +228,7 @@ function applyAccountsPayload(payload) {
     renderAccounts(state);
     renderAgentContext(state);
     if (state.activeAccountId && state.activeAccountId !== prevId) {
+        state.sessionPickerDay = null;
         // Lista sessioni + chat aggiornate via agent.session dal server.
         loadAgentExecutions();
     }
@@ -816,14 +818,38 @@ document.getElementById("agentChatInput").addEventListener("keydown", (e) => {
         sendAgentMessage();
     }
 });
-document.getElementById("agentContextBody").addEventListener("change", (e) => {
-    if (e.target.id !== "agentSessionSelect") return;
-    const sid = e.target.value;
-    if (sid === "__unload__") {
+document.getElementById("agentContextBody").addEventListener("click", (e) => {
+    const unloadBtn = e.target.closest("[data-session-unload]");
+    if (unloadBtn) {
+        if (unloadBtn.disabled || unloadBtn.classList.contains("disabled")) return;
         emitAck("round.unload", {}).catch(alert);
         return;
     }
-    emitAck("agent.session.select", { session_id: sid }).then(applyAgentFocus).catch(alert);
+    const dayBtn = e.target.closest("[data-session-day]");
+    if (dayBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        state.sessionPickerDay = dayBtn.dataset.sessionDay;
+        renderAgentContext(state);
+        const btn = document.getElementById("agentSessionSelectBtn");
+        if (btn) bootstrap.Dropdown.getOrCreateInstance(btn).show();
+        return;
+    }
+    const backBtn = e.target.closest("[data-session-back]");
+    if (backBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        state.sessionPickerDay = null;
+        renderAgentContext(state);
+        const btn = document.getElementById("agentSessionSelectBtn");
+        if (btn) bootstrap.Dropdown.getOrCreateInstance(btn).show();
+        return;
+    }
+    const sidBtn = e.target.closest("[data-session-id]");
+    if (sidBtn) {
+        emitAck("agent.session.select", { session_id: sidBtn.dataset.sessionId })
+            .then(applyAgentFocus).catch(alert);
+    }
 });
 document.getElementById("agentDeleteSessionBtn").addEventListener("click", () => {
     if (!state.agentSessionId) return alert("Seleziona una sessione");
