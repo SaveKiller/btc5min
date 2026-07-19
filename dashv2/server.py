@@ -14,12 +14,21 @@ from dashv2 import ipc
 from dashv2.agent_chat import load_thread
 from dashv2.agent_round_tools import AgentRoundTools
 from dashv2.agent_service import AgentService
+from dashv2.batch.analyze_job import load_reduce_results
+from dashv2.batch.listing import list_batch_rounds
+from dashv2.batch.reduce import reduce_analyze_fallback, reduce_strategy_rows
+from dashv2.batch.runner import BatchCancelled, RoundBatchRunner
 from dashv2.config import reload_strategy_codegen_system_prompt
 from dashv2.execution_log import execution_session_meta
 from dashv2.rounds import RoundRepository
 from dashv2.sessions import delete_session, list_sessions_for_account
-from dashv2.strategies import load_strategy, strategies_dir, write_module
-from dashv2.strategy_codegen import generate_strategy_module
+from dashv2.simulations import (
+    create_simulation, delete_simulation, list_simulations, load_simulation,
+)
+from dashv2.stats_modules import delete_analyze, list_analyzes, module_path as analyze_module_path
+from dashv2.stats_service import StatsService, load_stats_thread
+from dashv2.strategies import load_strategy, module_path as strategy_module_path, strategies_dir, write_module
+from dashv2.strategy_codegen import generate_coded_rules, generate_strategy_module
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _ACK_TIMEOUT_SEC = 30.0
@@ -41,11 +50,21 @@ _HUMAN_CMDS = frozenset({
     "strategy.load", "strategy.unload", "session.sync", "consult.send",
     "agent.chat.send", "agent.chat.history", "agent.rules.apply",
     "agent.executions.list", "agent.session.select", "agent.session.delete",
+    "stats.backtest.start", "stats.analyze.start", "stats.job.cancel",
+    "stats.chat.send", "stats.chat.history", "stats.rules.apply",
+    "stats.analyze.list", "stats.analyze.delete",
+    "stats.simulation.list", "stats.simulation.load", "stats.simulation.delete",
 })
 _STRATEGY_GEN_CMDS = frozenset({"strategy.create", "strategy.update"})
 _AGENT_CMDS = frozenset({
     "agent.chat.send", "agent.chat.history", "agent.rules.apply",
     "agent.executions.list", "agent.session.select", "agent.session.delete",
+})
+_STATS_CMDS = frozenset({
+    "stats.backtest.start", "stats.analyze.start", "stats.job.cancel",
+    "stats.chat.send", "stats.chat.history", "stats.rules.apply",
+    "stats.analyze.list", "stats.analyze.delete",
+    "stats.simulation.list", "stats.simulation.load", "stats.simulation.delete",
 })
 
 
@@ -78,6 +97,13 @@ class ServerBridge:
         self.agent_service = AgentService(cfg, self._agent_tool_ctx)
         self.agent_service.set_apply_rules_fn(self._agent_apply_rules)
         self._agent_busy = False
+        self.stats_service = StatsService(cfg)
+        self._stats_busy = False
+        self._stats_chat_busy = False
+        self._stats_cancel_requested = False
+        self._stats_runner: RoundBatchRunner | None = None
+        self._stats_day_from: str | None = None
+        self._stats_day_to: str | None = None
         self._register_routes()
         self._register_socketio()
         threading.Thread(target=self._evt_reader_loop, daemon=True).start()
@@ -177,11 +203,12 @@ class ServerBridge:
             self.socketio.emit("consult.message", msg, to=request.sid)
             return {"ok": True}
 
-        for evt in sorted(_HUMAN_CMDS - {"consult.send"} - _STRATEGY_GEN_CMDS - _AGENT_CMDS):
+        for evt in sorted(_HUMAN_CMDS - {"consult.send"} - _STRATEGY_GEN_CMDS - _AGENT_CMDS - _STATS_CMDS):
             self._bind_command(evt)
         self._bind_strategy_create()
         self._bind_strategy_update()
         self._bind_agent_chat()
+        self._bind_stats()
 
     def _bind_command(self, cmd: str) -> None:
         @self.socketio.on(cmd)
@@ -446,6 +473,296 @@ class ServerBridge:
             threading.Thread(target=_run_agent_turn, daemon=True, name="agent-turn").start()
             return {"ok": True, "accepted": True}
 
+    def _emit_stats(self, name: str, payload: dict) -> None:
+        if self._human_sid:
+            self.socketio.emit(name, payload, to=self._human_sid)
+
+    def _emit_analyzes(self) -> None:
+        self._emit_stats("stats.analyzes", {
+            "analyzes": list_analyzes(Path(self.cfg["history_dir"])),
+        })
+
+    def _emit_simulations(self, selected_id: str | None = None) -> None:
+        payload = {"simulations": list_simulations(Path(self.cfg["history_dir"]))}
+        if selected_id is not None:
+            payload["selected_id"] = selected_id
+        self._emit_stats("stats.simulations", payload)
+
+    def _bind_stats(self) -> None:
+        @self.socketio.on("stats.analyze.list")
+        def on_list(_payload=None):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            items = list_analyzes(Path(self.cfg["history_dir"]))
+            return {"ok": True, "analyzes": items}
+
+        @self.socketio.on("stats.analyze.delete")
+        def on_delete(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            try:
+                delete_analyze(Path(self.cfg["history_dir"]), payload["analyze_id"])
+            except Exception as e:
+                return {"error": str(e)}
+            self._emit_analyzes()
+            return {"ok": True}
+
+        @self.socketio.on("stats.simulation.list")
+        def on_sim_list(_payload=None):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            return {"ok": True, "simulations": list_simulations(Path(self.cfg["history_dir"]))}
+
+        @self.socketio.on("stats.simulation.load")
+        def on_sim_load(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            try:
+                data = load_simulation(Path(self.cfg["history_dir"]), payload["simulation_id"])
+            except Exception as e:
+                return {"error": str(e)}
+            return {"ok": True, "simulation": data}
+
+        @self.socketio.on("stats.simulation.delete")
+        def on_sim_delete(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            try:
+                delete_simulation(Path(self.cfg["history_dir"]), payload["simulation_id"])
+            except Exception as e:
+                return {"error": str(e)}
+            self._emit_simulations()
+            return {"ok": True}
+
+        @self.socketio.on("stats.job.cancel")
+        def on_cancel(_payload=None):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            return self._stats_request_cancel()
+
+        @self.socketio.on("stats.chat.history")
+        def on_history(_payload=None):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            return {
+                "ok": True,
+                "messages": load_stats_thread(Path(self.cfg["history_dir"])),
+                "busy": bool(self._stats_chat_busy),
+            }
+
+        @self.socketio.on("stats.chat.send")
+        def on_chat_send(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            text = (payload or {}).get("text") or ""
+            text = text.strip()
+            if not text:
+                return {"error": "empty message"}
+            if self._stats_chat_busy:
+                return {"error": "stats chat busy"}
+            self._stats_chat_busy = True
+            self._emit_stats("stats.chat.status", {"phase": "thinking"})
+
+            def _run():
+                try:
+                    result = self.stats_service.run_turn(text)
+                    self._emit_stats("stats.chat.message", {
+                        "message": result["message"],
+                        "proposed_rules": result.get("proposed_rules"),
+                    })
+                except Exception as e:
+                    print(f"stats chat error: {e}", flush=True)
+                    self._emit_stats("stats.job.error", {"message": str(e), "kind": "chat"})
+                finally:
+                    self._stats_chat_busy = False
+                    self._emit_stats("stats.chat.status", {"phase": "idle"})
+
+            threading.Thread(target=_run, daemon=True, name="stats-chat").start()
+            return {"ok": True, "accepted": True}
+
+        @self.socketio.on("stats.rules.apply")
+        def on_rules_apply(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            if self._stats_chat_busy:
+                return {"error": "stats chat busy"}
+            body = payload or {}
+            day_from = body["day_from"]
+            day_to = body["day_to"]
+            rules = body["rules"]
+            analyze_id = body.get("analyze_id")
+            name = body.get("name")
+            self._stats_chat_busy = True
+            self._emit_stats("stats.chat.status", {"phase": "thinking"})
+
+            def _run():
+                try:
+                    result = self.stats_service.apply_rules(rules, analyze_id, name)
+                    aid = result["analyze"]["id"]
+                    self._emit_stats("stats.analyzes", {
+                        "analyzes": list_analyzes(Path(self.cfg["history_dir"])),
+                        "applied_id": aid,
+                    })
+                    # Auto-run analyze sul range del payload.
+                    started = self._stats_start_job("analyze", {
+                        "analyze_id": aid, "day_from": day_from, "day_to": day_to,
+                    })
+                    if "error" in started:
+                        self._emit_stats("stats.job.error", {
+                            "message": started["error"], "kind": "apply",
+                        })
+                except Exception as e:
+                    print(f"stats rules.apply error: {e}", flush=True)
+                    self._emit_stats("stats.job.error", {"message": str(e), "kind": "apply"})
+                finally:
+                    self._stats_chat_busy = False
+                    self._emit_stats("stats.chat.status", {"phase": "idle"})
+
+            threading.Thread(target=_run, daemon=True, name="stats-apply").start()
+            return {"ok": True, "accepted": True}
+
+        @self.socketio.on("stats.backtest.start")
+        def on_backtest(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            return self._stats_start_job("backtest", payload or {})
+
+        @self.socketio.on("stats.analyze.start")
+        def on_analyze(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            return self._stats_start_job("analyze", payload or {})
+
+    def _stats_request_cancel(self) -> dict:
+        """Cancel se job busy (anche prima che _stats_runner sia assegnato)."""
+        if not self._stats_busy:
+            return {"error": "no job running"}
+        self._stats_cancel_requested = True
+        runner = self._stats_runner
+        if runner is not None:
+            runner.cancel()
+        return {"ok": True}
+
+    def _stats_start_job(self, kind: str, body: dict) -> dict:
+        """Avvia backtest|analyze in thread OS; un solo job alla volta."""
+        if self._stats_busy:
+            self._emit_stats("stats.job.error", {"message": "job already running", "kind": kind})
+            return {"error": "job already running"}
+        day_from = body["day_from"]
+        day_to = body["day_to"]
+        self._stats_day_from = day_from
+        self._stats_day_to = day_to
+        # Ordine: clear cancel prima di busy, così cancel post-busy non viene perso.
+        self._stats_cancel_requested = False
+        self._stats_busy = True
+
+        def _run():
+            import time
+            t0 = time.monotonic()
+            runner = RoundBatchRunner(int(self.cfg["stats_workers"]))
+            self._stats_runner = runner
+            if self._stats_cancel_requested:
+                runner.cancel()
+            try:
+                repo = RoundRepository(
+                    Path(self.cfg["data_dir"]), float(self.cfg["stall_reconnect_sec"]))
+                rounds, skipped = list_batch_rounds(repo, day_from, day_to)
+                size = float(self.cfg["default_order_size_usd"])
+                hist = Path(self.cfg["history_dir"])
+                if kind == "backtest":
+                    sid = body["strategy_id"]
+                    st = load_strategy(strategies_dir(hist), sid)
+                    mp = strategy_module_path(strategies_dir(hist), sid)
+                    label = st["name"]
+                    tasks = [{
+                        "job": "strategy",
+                        "data_dir": str(self.cfg["data_dir"]),
+                        "stall_reconnect_sec": float(self.cfg["stall_reconnect_sec"]),
+                        "bin_path": r["bin_path"],
+                        "market_start_ts": r["market_start_ts"],
+                        "hour_utc": r["hour_utc"],
+                        "module_path": str(mp),
+                        "strategy_id": sid,
+                        "size_up": size,
+                        "size_down": size,
+                    } for r in rounds]
+                else:
+                    aid = body["analyze_id"]
+                    mp = analyze_module_path(hist, aid)
+                    label = aid
+                    tasks = [{
+                        "job": "analyze",
+                        "data_dir": str(self.cfg["data_dir"]),
+                        "stall_reconnect_sec": float(self.cfg["stall_reconnect_sec"]),
+                        "bin_path": r["bin_path"],
+                        "market_start_ts": r["market_start_ts"],
+                        "hour_utc": r["hour_utc"],
+                        "module_path": str(mp),
+                    } for r in rounds]
+
+                # Cancel durante listing/prep: niente pool, niente reduce/done.
+                if self._stats_cancel_requested:
+                    runner.cancel()
+                if runner._cancel:
+                    raise BatchCancelled()
+
+                def on_progress(done, total, errors):
+                    self._emit_stats("stats.job.progress", {
+                        "kind": kind, "done": done, "total": total, "errors": errors,
+                    })
+
+                results = runner.run(tasks, on_progress)
+                elapsed = time.monotonic() - t0
+                n_err = sum(1 for r in results if not r["ok"])
+                summary = {
+                    "name": label, "day_from": day_from, "day_to": day_to,
+                    "workers": int(self.cfg["stats_workers"]),
+                    "elapsed_sec": round(elapsed, 2),
+                    "skipped": skipped, "errors": n_err, "rounds": len(results),
+                }
+                if kind == "backtest":
+                    table = reduce_strategy_rows(results)
+                    sim = create_simulation(
+                        hist, strategy_id=sid, strategy_name=label,
+                        day_from=day_from, day_to=day_to,
+                        summary=summary, table=table, rounds=results,
+                    )
+                    self._emit_stats("stats.job.done", {
+                        "kind": "backtest", "table": table, "summary": sim["summary"],
+                        "simulation_id": sim["id"], "rounds": results,
+                    })
+                    self._emit_simulations(sim["id"])
+                else:
+                    reduce_fn = load_reduce_results(mp)
+                    md = reduce_fn(results) if reduce_fn else reduce_analyze_fallback(results)
+                    self._emit_stats("stats.job.done", {
+                        "kind": "analyze", "markdown": md, "summary": summary,
+                    })
+            except BatchCancelled:
+                print("stats job cancelled", flush=True)
+                self._emit_stats("stats.job.cancelled", {"kind": kind})
+            except Exception as e:
+                print(f"stats job error: {e}", flush=True)
+                self._emit_stats("stats.job.error", {"message": str(e), "kind": kind})
+            finally:
+                self._stats_runner = None
+                self._stats_busy = False
+                self._stats_cancel_requested = False
+
+        threading.Thread(target=_run, daemon=True, name=f"stats-{kind}").start()
+        return {"ok": True, "accepted": True}
+
     def _codegen_source(self, rules: str) -> str:
         model = self.cfg["cursor_model"]
         system_prompt = reload_strategy_codegen_system_prompt()
@@ -458,19 +775,34 @@ class ServerBridge:
         self._emit_generate("validating", "Validating generated module…")
         return source
 
+    def _codegen_coded_rules(self, source: str) -> str:
+        model = self.cfg["cursor_model"]
+        self._emit_generate("coded_rules", "Writing coded rules…")
+        try:
+            return generate_coded_rules(
+                source, model_id=model["id"], params=model["params"], max_attempts=2,
+            )
+        except Exception as e:
+            print(f"coded_rules generation failed: {e}", flush=True)
+            self._emit_generate("coded_rules_warn", f"Coded rules skipped: {e}")
+            return ""
+
     def _strategy_create_with_codegen(self, body: dict) -> dict:
         stype = body["type"]
         rules = body.get("rules") or ""
         module_file = None
         strategy_id = None
+        coded_rules = ""
         if stype == "deterministic":
             source = self._codegen_source(rules)
+            coded_rules = self._codegen_coded_rules(source)
             strategy_id = uuid.uuid4().hex[:12]
             self._emit_generate("saving", "Saving strategy…", strategy_id)
             module_file = write_module(self.strategies_root, strategy_id, source)
         ipc_payload = {
             "name": body["name"], "type": stype, "description": body.get("description") or "",
-            "rules": rules, "module_file": module_file, "strategy_id": strategy_id,
+            "rules": rules, "coded_rules": coded_rules, "module_file": module_file,
+            "strategy_id": strategy_id,
         }
         try:
             result = self._request_to_data("strategy.create", ipc_payload, actor="user")
@@ -487,14 +819,16 @@ class ServerBridge:
         sid = body["strategy_id"]
         rules = body.get("rules")
         module_file = None
+        coded_rules = None
         if body.get("rules_changed") and rules is not None:
             source = self._codegen_source(rules)
+            coded_rules = self._codegen_coded_rules(source)
             self._emit_generate("saving", "Saving strategy…", sid)
             module_file = write_module(self.strategies_root, sid, source)
         ipc_payload = {
             "strategy_id": sid, "name": body["name"],
             "description": body.get("description") or "",
-            "rules": rules, "module_file": module_file,
+            "rules": rules, "module_file": module_file, "coded_rules": coded_rules,
         }
         result = self._request_to_data("strategy.update", ipc_payload, actor="user")
         self._emit_generate("done", "Strategy updated", sid)

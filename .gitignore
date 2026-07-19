@@ -227,3 +227,6 @@ dash/dist/
 # Dashboard V2 history runs (local replay JSON)
 dashv2/history/
 
+# Brainstorm visual companion sessions
+.superpowers/
+

@@ -597,6 +597,7 @@ class ReplayEngine:
         data = create_strategy(
             self.strategies_root, payload["name"], payload["type"], payload["description"],
             rules=payload.get("rules") or "",
+            coded_rules=payload.get("coded_rules") or "",
             module_file=payload.get("module_file"),
             strategy_id=payload.get("strategy_id"),
         )
@@ -608,6 +609,7 @@ class ReplayEngine:
             self.strategies_root, payload["strategy_id"], payload["name"], payload["description"],
             rules=payload.get("rules"),
             module_file=payload.get("module_file"),
+            coded_rules=payload.get("coded_rules"),
         )
         self._emit_strategies()
         self._emit_bot_status()

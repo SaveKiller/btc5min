@@ -44,6 +44,7 @@ La V2 nasce da un disegno esplicito (vedi `docs/dash-prompt-v2.md`):
 | Strategy load (shim) | `bot.select` → stato engine + forward `strategy.load` → plugin `*_bot.py` | Implementato (es. `random`) |
 | Strategy types | DETERMINISTICA / INFERENZIALE / AGENTICA | Solo documentale (piano separato) |
 | Consulto peer | `consult.send` / `consult.message` sul bridge | Predisposto (relay + hook plugin; UI chat da fare) |
+| Tab STATS + RoundBatch | Job backtest/analyze sul **server** (`stats.*`, pool) | Implementato |
 
 ---
 
@@ -54,7 +55,7 @@ Questi vincoli **non** vanno indeboliti senza aggiornare esplicitamente questo d
 | # | Principio | Implicazione pratica |
 |---|-----------|----------------------|
 | P1 | **Fail-fast server+engine** | Se server o Engine muore, l’altro viene terminato (`__main__.py`). Il bot **non** è nel fail-fast: crash → log + respawn soft. |
-| P2 | **Server = bridge** | `server.py` non simula ordini né clock; routing ruoli, ACL, consult relay, forward `strategy.load` al bot. |
+| P2 | **Server = bridge** | `server.py` non simula clock replay né settlement UI; routing ruoli, ACL, consult relay, forward `strategy.load`, orchestrazione **Stats/agent** locali (no pipe). |
 | P3 | **Engine = shell; plugin = dominio** | Il processo Engine parla via pipe col server. Round, clock, ordini, settlement, **account/history** vivono nella **plugin** attiva (`replay` / `live`). Una sola plugin per processo. |
 | P4 | **Pipe unidirezionali** | Cmd solo server→Engine; evt (response + event) solo Engine→server. Il bot **non** usa le pipe: parla solo Socket.IO col server. |
 | P5 | **Due co-controller Socket.IO** | `human_sid` + `bot_sid`; stessa priorità/latenza; ACL per ruolo (bot: solo order.* + sync + consult). |
@@ -81,14 +82,17 @@ Questi vincoli **non** vanno indeboliti senza aggiornare esplicitamente questo d
                                            │
                                            strategy.load = forward server→bot (no pipe)
                                            consult.* = peer relay (no pipe data)
+                                           stats.* = batch locale sul server (no pipe)
+                                             └─ ProcessPool → strategy/analyze workers
 ```
 
 - Fail-fast: `dashv2-server` + `dashv2-engine`.
 - Bot (`dashv2-bot`): processo strutturale; crash → soft (log + respawn); senza strategy connesso ma inerte.
 - Engine (`dashv2-engine`): shell + **una** plugin da `engine_plugin` in `setup.json` (oggi tipicamente `"replay"`). Nessun hot-swap: cambio plugin ⇒ restart.
 - Shell Engine senza plugin (`engine_plugin: null`): pipe viva, nessun dominio — utile come capacità; in pratica setup punta a `replay` o `live`.
+- **Stats / RoundBatch:** i job vivono **solo nel processo server** (`RoundBatchRunner` + `ProcessPoolExecutor`). Engine e bot **non** partecipano; replay UI può restare attivo durante un batch.
 
-**Nota lessicale — “Engine”:** processo OS stabile (`dashv2/engine/process.py`). Non confondere con la **plugin** (`replay` / `live`) né col server (solo bridge).
+**Nota lessicale — “Engine”:** processo OS stabile (`dashv2/engine/process.py`). Non confondere con la **plugin** (`replay` / `live`) né col server (solo bridge). Non confondere con `OrderEngine` in `orders.py` riusato headless nei worker batch.
 
 Avvio: `dashv2.bat` oppure `python -m dashv2` dalla root repo → URL da `setup.json` (default `http://127.0.0.1:8780/`).
 
@@ -174,17 +178,20 @@ Entry: `run_server_process(cfg, cmd_conn, evt_conn)`.
 
 | Fa | Non fa |
 |----|--------|
-| Serve `static/` (route `/` → `index.html`) | Caricare / parsare round |
+| Serve `static/` (route `/` → `index.html`) | Caricare / parsare round **per replay** (lo fa la plugin Engine) |
 | Socket.IO verso il browser | Avanzare il clock replay |
-| Tradurre emit client → `ipc.make_request` sulla pipe CMD | Simulare ordini / fee |
+| Tradurre emit client → `ipc.make_request` sulla pipe CMD | Simulare ordini / fee **nel replay live** |
 | Tradurre response/event dalla pipe EVT → ack / emit | Anti-spoiler business |
-| Enforce un solo controller | Persistenza history |
+| Enforce un solo controller | Persistenza history account (plugin replay) |
+| Comandi `stats.*` / `agent.*` locali (no pipe) | Forward batch all’Engine |
+| Orchestrazione RoundBatch (`ProcessPoolExecutor`) | Scrivere ledger account dai job Stats |
 
 ### Stack
 
 - Flask con `static_folder=dashv2/static`, `static_url_path=""`.
 - `SocketIO(..., cors_allowed_origins=[], async_mode="threading")`.
 - Thread daemon `_evt_reader_loop` che fa `evt_conn.poll(0.1)` in loop.
+- Job Stats: thread OS + `RoundBatchRunner` (pool da `stats_workers`); eventi `stats.job.*` emessi dal bridge.
 
 ### Controller session
 
@@ -216,18 +223,23 @@ round.load, round.unload, rounds.list,
 replay.play, replay.pause, replay.speed, replay.seek, replay.preview,
 order.size, order.preview, order.place, order.close, order.cancel,
 account.list, account.select, account.create, account.rename, account.update,
-bot.list, bot.select, bot.set_active, session.sync
+bot.list, bot.select, bot.set_active, session.sync,
+stats.backtest.start, stats.analyze.start, stats.job.cancel,
+stats.chat.send, stats.chat.history, stats.rules.apply,
+stats.analyze.list, stats.analyze.delete,
+stats.simulation.list, stats.simulation.load, stats.simulation.delete
 ```
 
-Più peer relay (non IPC): `consult.send` → evento `consult.message`.
+Più peer relay (non IPC): `consult.send` → evento `consult.message`.  
+Più locali (non IPC): `agent.*`, `stats.*` — gestiti nel bridge, **non** forward alla pipe Engine.
 
 Stub engine `controller.claim` / `controller.release` esistono ma **non** sono esposti dal server.
 
 ### Linee guida per estendere il server
 
-- Nuovo comando UI → ACL (`_HUMAN_CMDS` / `_BOT_CMDS`) **e** handler in engine (se tocca stato round).
-- Bridge: routing, timeout, ruoli, consult relay, forward strategy — non logica di settlement/clock e **non** spawn del processo bot.
-- Nuovi eventi push: `make_event` dall’engine; broadcast automatico a human+bot.
+- Nuovo comando UI → ACL (`_HUMAN_CMDS` / `_BOT_CMDS`) **e** handler in engine (se tocca stato round). Eccezione: `stats.*` / `agent.*` restano **solo sul server**.
+- Bridge: routing, timeout, ruoli, consult relay, forward strategy, orchestrazione Stats — non logica di settlement/clock replay e **non** spawn del processo bot.
+- Nuovi eventi push di dominio replay: `make_event` dall’engine; broadcast automatico a human+bot. Eventi Stats: emit diretto dal bridge (`stats.job.*`, `stats.chat.*`, …).
 
 ---
 
@@ -589,10 +601,23 @@ Ack sincrono tranne `round.load` (ack immediato `{ok:true}`, errori via evento `
 | `bot.set_active` | `{active: bool}` | `{ok, bot_active}` (master switch globale) |
 | `session.sync` | `{}` | `{ok}` + re-push eventi |
 | `consult.send` | `{text, ...}` | relay peer (no pipe data) |
+| `stats.backtest.start` | `{strategy_id, day_from, day_to}` | `{ok, accepted}` — job su server (no pipe) |
+| `stats.analyze.start` | `{analyze_id, day_from, day_to}` | `{ok, accepted}` |
+| `stats.job.cancel` | `{}` | `{ok}` → evento `stats.job.cancelled` |
+| `stats.chat.send` | `{text}` | `{ok, accepted}` — thread Stats |
+| `stats.chat.history` | `{}` | `{ok, messages, busy}` |
+| `stats.rules.apply` | `{rules, day_from, day_to, analyze_id?, name?}` | `{ok, accepted}` — codegen in thread OS; poi `stats.analyzes` + auto-run |
+| `stats.analyze.list` | `{}` | `{ok, analyzes}` |
+| `stats.analyze.delete` | `{analyze_id}` | `{ok}` + evento `stats.analyzes` |
+| `stats.simulation.list` | `{}` | `{ok, simulations}` |
+| `stats.simulation.load` | `{simulation_id}` | `{ok, simulation}` — full JSON (table + rounds) |
+| `stats.simulation.delete` | `{simulation_id}` | `{ok}` + evento `stats.simulations` |
+
+I comandi `stats.*` e `agent.*` sono gestiti **localmente dal bridge** (non forward IPC all’Engine).
 
 *Target (non ancora esposti come comandi human dedicati): `strategy.list` / `strategy.load` / `strategy.unload` / `strategy.set_active` — oggi il load passa da `bot.select` come shim.*
 
-ACL: human → tutti i comandi sopra; bot → solo `order.*` trade/size/preview + `session.sync` + `consult.send`. Trade bot rifiutati se `bot_active=False`.
+ACL: human → tutti i comandi sopra; bot → solo `order.*` trade/size/preview + `session.sync` + `consult.send`. Trade bot rifiutati se `bot_active=False`. Stats/agent: **human-only**.
 
 Errori: `{error: string}` in ack, oppure evento `error` per load fallito.
 
@@ -612,6 +637,14 @@ Errori: `{error: string}` in ack, oppure evento `error` per load fallito.
 | `consult.message` | relay `consult.send` | messaggio peer human↔bot |
 | `round_end` | sec 0 | `outcome`, `final_chainlink`, `settled_orders` |
 | `error` | load fallito (async) | `{message}` |
+| `stats.job.progress` | durante batch | `{kind, done, total, errors}` |
+| `stats.job.done` | fine batch ok | backtest: `{kind, table, summary, simulation_id}`; analyze: `{kind, markdown, summary}` |
+| `stats.job.error` | job fallito / secondo start | `{message, kind}` |
+| `stats.job.cancelled` | dopo cancel | `{kind}` |
+| `stats.chat.message` | risposta chat Stats | `{message, proposed_rules?}` |
+| `stats.chat.status` | thinking/idle | `{phase}` |
+| `stats.analyzes` | lista moduli dopo apply/delete | `{analyzes}` |
+| `stats.simulations` | lista sessioni dopo run/delete | `{simulations, selected_id?}` |
 
 ### Asse temporale UI
 
@@ -712,6 +745,115 @@ Chat human-only con **Grok 4.5 High** (`agent_cursor_label` in setup), Cursor SD
 
 Rules-first: proposte in chat (fence `rules`); apply solo con conferma UI o tool `strategy.apply_rules` + `confirm:true` → codegen update. Vietato write diretto del `.py`.
 
+### Stats (tab STATS) — batch sul server
+
+Design / piano: [`docs/superpowers/specs/2026-07-19-stats-tab-batch-design.md`](superpowers/specs/2026-07-19-stats-tab-batch-design.md), [`docs/superpowers/plans/2026-07-19-stats-tab-batch.md`](superpowers/plans/2026-07-19-stats-tab-batch.md).
+
+#### Dove vivono i job
+
+I job backtest/analyze sono orchestrati **solo dal processo server** (come `agent.*`):
+
+- **non** passano dalla pipe IPC verso l’Engine;
+- **non** coinvolgono il processo bot;
+- usano `ProcessPoolExecutor` con `stats_workers` da `setup.json` (tipicamente 10);
+- ogni worker carica un round da disco e esegue headless (stesso `OrderEngine` / fee / settlement del replay, senza Socket.IO).
+
+Replay UI (Engine) può restare attivo durante un batch; I/O disco condiviso accettabile in v1.
+
+#### Regole job
+
+| Regola | Comportamento |
+|--------|----------------|
+| Un solo job alla volta | Secondo `*.start` mentre gira → `stats.job.error` |
+| Cancel | `stats.job.cancel` → soft-cancel v1: pending futures cancellati; worker in-flight sul round corrente possono ancora finire. Poi `stats.job.cancelled` (**niente** `done` con tabella/Markdown parziali). Hard-kill dei processi worker: non in v1. |
+| Size backtest | `default_order_size_usd` per Up e Down (non le size della sessione UI) |
+| Ledger | I job **non** scrivono `history/accounts/` |
+| After apply | `stats.rules.apply` → ack `{ok, accepted}`; codegen su thread OS; emit `stats.analyzes` (`applied_id`) + auto-run analyze su `day_from`/`day_to` |
+
+#### Comandi e eventi `stats.*` (human-only)
+
+Vedi tabelle §12. Riepilogo:
+
+| Comando | Ruolo |
+|---------|--------|
+| `stats.backtest.start` | Range giorni + `strategy_id` → pool strategy |
+| `stats.analyze.start` | Range + `analyze_id` → pool analyze |
+| `stats.job.cancel` | Annulla job corrente |
+| `stats.chat.send` / `history` | Thread chat Analyze (non legato a `session_id` replay) |
+| `stats.rules.apply` | Rules → ack accepted; codegen thread + auto-run |
+| `stats.analyze.list` / `delete` | CRUD moduli analyze |
+| `stats.simulation.list` / `load` / `delete` | Sessioni backtest persistite |
+
+| Evento | Payload tipico |
+|--------|----------------|
+| `stats.job.progress` | `{kind, done, total, errors}` |
+| `stats.job.done` | backtest: `{kind, table, summary, simulation_id}`; analyze: `{kind, markdown, summary}` |
+| `stats.job.error` | `{message, kind}` (anche secondo start) |
+| `stats.job.cancelled` | `{kind}` |
+| `stats.chat.message` / `status` | risposta chat / thinking |
+| `stats.analyzes` | lista moduli dopo apply/delete |
+| `stats.simulations` | lista sessioni dopo run/delete (`selected_id` opzionale) |
+
+#### Flusso backtest
+
+1. UI: tab STATS → Backtest; range `day_from`/`day_to`; select strategy; Run.
+2. Server: `list_batch_rounds` → tasks `{market_start_ts, bin_path, hour_utc, …}`.
+3. `RoundBatchRunner` → worker `process_task` → `run_strategy_round` (hook strategy + `OrderEngine`).
+4. `reduce_strategy_rows` → 24 righe ore UTC (`UTC_HOUR_MARKETS`) + totale.
+5. Persist `history/simulations/simulation_{id}.json` (table + rounds raw) → emit `stats.job.done` + `stats.simulations`.
+
+#### Flusso analyze
+
+1. Chat Stats → Applica rules → `stats_codegen` scrive `analyze_{id}.json` + `.py`.
+2. Auto-run (o Run manuale) → worker chiama `analyze_round`; reduce via `reduce_results` del modulo o fallback Markdown server-side.
+3. Emit `stats.job.done` → UI `<pre class="stats-md">`.
+
+#### Mappa file Stats / batch
+
+| Pezzo | Path |
+|-------|------|
+| Package batch | `dashv2/batch/` |
+| Listing range | `batch/listing.py` — `list_batch_rounds` |
+| Runner + cancel | `batch/runner.py` — `RoundBatchRunner` |
+| Worker pickleable | `batch/worker.py` — `process_task` |
+| Strategy headless | `batch/strategy_job.py` + `batch/ctx.py` |
+| Analyze per-round | `batch/analyze_job.py` |
+| Reduce 24h / MD | `batch/reduce.py` + `batch/markets.py` (`UTC_HOUR_MARKETS`) |
+| Chat + apply | `stats_service.py`; thread `history/stats/thread.json` |
+| CRUD moduli | `stats_modules.py` — `history/stats/analyze_{id}.json` + `.py` |
+| Sessioni backtest | `simulations.py` — `history/simulations/simulation_{id}.json` (table + rounds raw) |
+| Codegen | `stats_codegen.py` + `stats_system_prompt.md` |
+| Socket handlers | `server.py` — `_STATS_CMDS`, orchestrazione job |
+| UI | `static/index.html` (`#stats-tab`), `app.js`, `render.js`, `dashboard.css` |
+
+#### UI (segmented Backtest \| Analyze)
+
+- Tab `#stats-tab` / `#statsPane` dopo BOT; in `LEFT_TAB_IDS` + localStorage.
+- Header condiviso: range giorni (default min/max da `round_days`).
+- Backtest: date range + strategy/Run/Cancel nel header; Session (+ Delete), progress, tabella 24h + TOTAL + summary.
+- Analyze: chat, Applica rules, select/delete moduli, Markdown grezzo (niente vendor MD).
+
+Ogni Run backtest crea `history/simulations/simulation_{id}.json` (summary + table + rounds raw). Selezionare una sessione ripristina strategy, range giorni e risultati.
+
+Drill tabella risultati (solo backtest, da `rounds` in memoria client):
+
+1. **Ore** — 24 righe UTC + TOTAL; hover/click → livello slot
+2. **Slot 5m** — sempre 12 righe (`HH:00–HH:05` …); hover/click → giorni
+3. **Giorni** — una riga per giorno del slot (`YYYY-MM-DD · HH:MM–HH:MM`); click → `round.load` + tab Candles (play come load normale)
+
+Navigazione indietro: breadcrumb nel titolo pannello. Riga TOTAL non cliccabile.
+
+#### Smoke checklist (manuale)
+
+```
+1. Avvia dashv2, apri STATS → Backtest
+2. Range 1 giorno con round, seleziona strategy, Run
+3. Progress avanza; tabella 24h popolata; totale coerente
+4. Analyze: chiedi "conteggio inversioni majority_side ultimo minuto"; Applica; Markdown appare
+5. Secondo Run mentre gira → errore
+6. Cancel durante run → cancelled, no tabella parziale
+```
+
 ### Stato client (`app.js`)
 
 Campi tipici: `session`, `tick`, `orders`, `historyRows`, `accounts` / `activeAccount*`, `chartPrevious` / `chartCurrent`, `scrubbing`, `replaySpeed`, `roundDays` / `roundNav`, ecc.
@@ -734,6 +876,7 @@ Slider: `pointerdown` → pause; `input` → `replay.preview`; `pointerup` → `
 | History / CSV / session groups | `render.js` (`renderHistory`) + `app.js` |
 | Accounts | `render.js` + comandi `account.*` |
 | Bot / Strategy | tab BOT + `renderBotSelect` + comandi `bot.*` |
+| Stats (batch) | tab STATS + `renderStats*` + comandi `stats.*` (server-only) |
 | Stile | `dashboard.css` |
 
 ---
@@ -750,7 +893,8 @@ Chiavi obbligatorie (`_REQUIRED`):
 | `history_dir` | Path relativo ledger (es. `history`) |
 | `host` / `port` | Bind HTTP |
 | `chart_previous_candles` | Quante candele 5m precedenti caricare |
-| `default_order_size_usd` | Size iniziale Up/Down |
+| `default_order_size_usd` | Size iniziale Up/Down (anche size fissa dei job backtest Stats) |
+| `stats_workers` | Worker `ProcessPoolExecutor` per RoundBatch sul server |
 | `stall_reconnect_sec` | Soglia stale Chainlink (allineata al collector) |
 | `engine_plugin` | `"replay"` \| `"live"` \| `null` — plugin caricata **solo a startup** (null = shell vuota) |
 | `cursor_label` / `cursor_models` | Modello codegen strategie |
@@ -782,7 +926,7 @@ Env vars previsti per live reale (non letti dallo stub): `POLY_API_KEY`, `POLY_A
 | Percorso | Ruolo |
 |----------|--------|
 | `dashv2/__main__.py` | Launcher spawn + watchdog fail-fast (server/engine) + soft-respawn bot + restart sentinella |
-| `dashv2/server.py` | Bridge Flask-SocketIO (human + bot, consult relay, forward strategy.load) |
+| `dashv2/server.py` | Bridge Flask-SocketIO (human + bot, consult relay, forward strategy.load, stats.* locali) |
 | `dashv2/engine/process.py` | Shell processo Engine (pipe, load plugin) |
 | `dashv2/engine/protocol.py` | Contratto `EnginePlugin` (trading + account + settlement + history) |
 | `dashv2/engine/plugins/replay.py` | Plugin replay (`ReplayEngine`) |
@@ -795,13 +939,25 @@ Env vars previsti per live reale (non letti dallo stub): `POLY_API_KEY`, `POLY_A
 | `dashv2/sessions.py` | Registro sessioni (ownership account) |
 | `dashv2/agent_chat.py` / `agent_service.py` / `agent_round_tools.py` | Chat AI Agent + tool |
 | `dashv2/agent_system_prompt.md` | System prompt agent (IT, domain, rules-first) |
+| `dashv2/stats_service.py` / `stats_modules.py` / `stats_codegen.py` | Chat Stats + CRUD analyze + codegen |
+| `dashv2/simulations.py` | Persistenza sessioni backtest (`history/simulations/`) |
+| `dashv2/stats_system_prompt.md` | System prompt codegen analyze |
+| `dashv2/batch/__init__.py` | Package RoundBatch |
+| `dashv2/batch/markets.py` | `UTC_HOUR_MARKETS` (24 etichette, allineate al picker JS) |
+| `dashv2/batch/listing.py` | `list_batch_rounds(repo, day_from, day_to)` |
+| `dashv2/batch/runner.py` | `RoundBatchRunner` — pool, progress, cancel |
+| `dashv2/batch/worker.py` | `process_task` (entry pickleable; `load_bin` per task, no full scan) |
+| `dashv2/batch/ctx.py` | `build_strategy_ctx` (mirror bot) |
+| `dashv2/batch/strategy_job.py` | Backtest headless per round (`OrderEngine`) |
+| `dashv2/batch/analyze_job.py` | Analyze per round + load `reduce_results` |
+| `dashv2/batch/reduce.py` | Tabella 24h + Markdown fallback |
 | `dashv2/txt_rows.py` | Parse indicatori dal `.txt` |
 | `dashv2/config.py` + `setup.json` | Config fail-hard (`engine_plugin`, `agent_cursor_label`) |
 | `dashv2/bots/` | Processo bot + plugin strategy shim (`bot_process.py`, `*_bot.py`) |
-| `dashv2/static/index.html` | DOM (header replay, tabs CANDLES/ACCOUNTS/BOT/AI AGENT, ordini) |
+| `dashv2/static/index.html` | DOM (header replay, tabs CANDLES/ACCOUNTS/BOT/STATS/AI AGENT, ordini) |
 | `dashv2/static/css/dashboard.css` | Stile (token/misure mockup v38) |
-| `dashv2/static/js/app.js` | Stato client, Socket.IO, binding, CSV |
-| `dashv2/static/js/render.js` | DOM tick/ladder/ordini/picker/history/accounts |
+| `dashv2/static/js/app.js` | Stato client, Socket.IO, binding, CSV, wire `stats.*` |
+| `dashv2/static/js/render.js` | DOM tick/ladder/ordini/picker/history/accounts/Stats |
 | `dashv2/static/js/chart.js` | Lightweight Charts v5 — candele 5m |
 | `dashv2/static/vendor/` | Bootstrap, Icons, Socket.IO, Lightweight Charts (offline) |
 | `dashv2/tests/**` | Unit test |
@@ -827,11 +983,30 @@ python -m unittest discover -s dashv2/tests
 | `test_seek_history.py` | prune_seek, cancel, account CRUD, payout/outcome rows, visible_orders |
 | `test_dwin_public.py` | Proiezione DWin nel tick pubblico |
 | `test_side_risk.py` | Risk per lato in tick |
-| `test_bot_live.py` | Bot list/select/active + live stub + ACL agent |
+| `test_bot_live.py` | Bot list/select/active + live stub + ACL agent/stats |
 | `test_agent_chat.py` | Thread chat per session, registro sessions, exec log, tool parse, turn mock |
 | `test_strategy_codegen.py` | Codegen parse/validate + clone |
+| `test_batch_reduce.py` | Aggregazione 24h + `UTC_HOUR_MARKETS` |
+| `test_batch_listing.py` | Filtro giorni `list_batch_rounds` |
+| `test_batch_runner.py` | Pool / cancel `RoundBatchRunner` |
+| `test_strategy_job.py` | Backtest headless un round |
+| `test_analyze_job.py` | Analyze stub → markdown |
+| `test_stats_acl.py` | `_STATS_CMDS` human-only |
+| `test_stats_service.py` | Chat Stats + apply rules |
+| `test_stats_codegen.py` | Codegen moduli analyze |
 
-Smoke manuale: `dashv2.bat` → load → play → seek → BUY → close/cancel o settlement → history/CSV; tab AI AGENT con account attivo.
+Smoke manuale replay: `dashv2.bat` → load → play → seek → BUY → close/cancel o settlement → history/CSV; tab AI AGENT con account attivo.
+
+Smoke manuale **STATS** (vedi anche §13 Stats):
+
+```
+1. Avvia dashv2, apri STATS → Backtest
+2. Range 1 giorno con round, seleziona strategy, Run
+3. Progress avanza; tabella 24h popolata; totale coerente
+4. Analyze: chiedi "conteggio inversioni majority_side ultimo minuto"; Applica; Markdown appare
+5. Secondo Run mentre gira → errore
+6. Cancel durante run → cancelled, no tabella parziale
+```
 
 Non esiste oggi un test e2e Socket.IO/browser.
 
@@ -841,10 +1016,10 @@ Non esiste oggi un test e2e Socket.IO/browser.
 
 ### Aggiungere un comando
 
-1. Handler in `ReplayEngine._handle_cmd` (+ metodo `_cmd_*`).
-2. Nome nella lista `_register_socketio` in `server.py`.
+1. Se tocca round/clock/ordini/account: handler nella plugin Engine + nome in ACL bridge.
+2. Se è `stats.*` / `agent.*`: handler **solo** in `server.py` (niente pipe).
 3. Binding in `app.js` (`emitAck` o fire-and-forget).
-4. Test unitario sul motore se la logica è non banale.
+4. Test unitario sul dominio toccato.
 5. Aggiornare la tabella protocollo in questo documento.
 
 ### Aggiungere un evento push
@@ -879,9 +1054,10 @@ Qualsiasi UI che espone liste di round, history, nomi file, tooltip, chart “fu
 
 ### Cose da non fare
 
-- Mettere clock/settlement/fee/account nel bridge (ok: ACL, consult relay, forward strategy).
+- Mettere clock/settlement/fee/account nel bridge (ok: ACL, consult relay, forward strategy, **orchestrazione Stats/agent**).
 - Far parlare il browser con l’Engine senza passare dal bridge.
-- Far parlare una Strategy direttamente col server (passa sempre dal processo bot).
+- Far parlare una Strategy direttamente col server (passa sempre dal processo bot) — eccezione: i worker batch importano la strategy **headless** senza Socket.IO.
+- Orchestrare RoundBatch nell’Engine o nel bot (i job `stats.*` restano sul server).
 - Mettere regole account replay nel plugin live (o viceversa): ogni plugin possiede il proprio backend.
 - Hot-swap della plugin Engine a runtime (solo startup + restart).
 - Usare `majority_gain` / `gain%` del txt come PnL ordini.
@@ -890,6 +1066,7 @@ Qualsiasi UI che espone liste di round, history, nomi file, tooltip, chart “fu
 - Mettere il bot nel fail-fast server+Engine o nell’Engine (rompe consulto peer e crash soft).
 - Far controllare replay (load/seek/play) al bot.
 - Spawn lazy del bot dal server (il bot è spawnato solo dal launcher).
+- Emittere `stats.job.done` con risultati parziali dopo cancel.
 
 ---
 
@@ -915,9 +1092,11 @@ Il server scambia comandi/eventi di trading **solo** col bot. La strategy non è
 
 ### Deterministic: rules → Python
 
-1. UI modal: name, description, **rules** (testo).
+1. UI modal: name, description, **rules** (testo) + **coded_rules** (readonly, post-codegen).
 2. Server (`strategy.create` / `update` se rules cambiano): Cursor SDK (`cursor_label` + `cursor_models` in `setup.json`) genera il modulo; progress via evento `strategy.generate`.
-3. Persistenza: `history/strategies/strategy_{id}.json` (`rules`, `module_file`) + `strategy_{id}.py`.
+3. Seconda pass Cursor: dal `.py` → testo colloquiale `coded_rules` (sezioni `Apertura` / `Chiusura` / `Vincoli`, termini dashboard, senza variabili codice); fallimento → `coded_rules` vuoto, Python comunque salvato.
+4. Persistenza: `history/strategies/strategy_{id}.json` (`rules`, `coded_rules`, `module_file`) + `strategy_{id}.py`.
+5. UI modal: tab **Rules** | **Coded rules**; dopo codegen la modale resta aperta e passa a Coded rules.
 4. Human `strategy.load` → engine aggiorna `active_strategy_ids` → server emit `strategy.sync` `{strategy_ids}` al bot.
 5. Bot: `importlib` del `.py`, fan-out `on_tick` / `on_round_start` / `on_round_end`; crash per-strategy → skip tick (log).
 
@@ -998,18 +1177,19 @@ Browser          ServerBridge              Engine (plugin replay)
 
 ## 20. Checklist rapida per review di una PR dashv2
 
-- [ ] Business logic round/ordini/account solo nella **plugin** Engine (non nello shell, non nel bridge)?
-- [ ] Nuovi comandi in ACL bridge + handler nella plugin?
-- [ ] Eventi broadcast ok per human e bot?
+- [ ] Business logic round/ordini/account solo nella **plugin** Engine (non nello shell)? Eccezione documentata: batch Stats headless sul **server**.
+- [ ] Nuovi comandi in ACL bridge + handler nella plugin **oppure** solo bridge se `stats.*`/`agent.*`?
+- [ ] Eventi broadcast ok per human e bot (replay)? Eventi Stats emessi dal bridge?
 - [ ] Anti-spoiler rispettato (picker, history, chart)?
 - [ ] Ordini usano walk CLOB + `fee_rate`, con `source`/`actor`?
 - [ ] Bot non controlla replay; attach strategy solo in pausa (non durante play)?
-- [ ] Bot spawnato dal launcher (non lazy dal server)? Strategy solo dentro il bot?
+- [ ] Bot spawnato dal launcher (non lazy dal server)? Strategy solo dentro il bot (live)?
 - [ ] Plugin Engine scelta solo a startup (niente hot-swap)?
+- [ ] RoundBatch **non** nell’Engine; un job alla volta; cancel senza `done` parziale?
 - [ ] Config: nessuna chiave nuova senza aggiornare `_REQUIRED` e `setup.json`?
 - [ ] Test unitari per la parte di dominio toccata?
 - [ ] Questo documento aggiornato solo dopo che il codice funziona?
 
 ---
 
-*Ultimo allineamento al codice: Engine shell + plugin replay/live, `engine_plugin`, bot processo fisso + strategy.load, soft-respawn, consult relay, actor/source.*
+*Ultimo allineamento al codice: Engine shell + plugin replay/live, `engine_plugin`, bot processo fisso + strategy.load, soft-respawn, consult relay, actor/source, tab STATS + RoundBatch (`stats.*` sul server).*
