@@ -612,12 +612,12 @@ Struttura minima suggerita:
 ```text
 altro-progetto/
 ├── .env                 # CURSOR_API_KEY=...
-├── cursor_client.py     # patch Windows + call_model() + validate
+├── agents/cursor_client.py     # patch Windows + call_model() + validate
 ├── requirements.txt     # cursor-sdk, python-dotenv
 └── ...
 ```
 
-`cursor_client.py` dovrebbe esportare qualcosa come:
+`agents/cursor_client.py` dovrebbe esportare qualcosa come:
 
 ```python
 def call_model(prompt: str, *, model_id: str, params: list[tuple[str, str]], cwd: str) -> str:

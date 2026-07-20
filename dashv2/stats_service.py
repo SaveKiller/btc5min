@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dashv2.config import reload_stats_codegen_system_prompt
-from dashv2.cursor_client import call_model
-from dashv2.stats_codegen import generate_analyze_module
+from dashv2.agents.cursor_client import call_model
+from dashv2.agents.stats_codegen import generate_analyze_module
 from dashv2.stats_modules import (
     create_analyze,
     list_analyzes,
@@ -24,15 +24,17 @@ _THREAD_TAIL = 30
 _RULES_FENCE_RE = re.compile(r"```rules\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
 _CHAT_SYSTEM = """Sei l'assistente Stats della dashboard BTC Up/Down 5m.
-Aiuti a scrivere regole di analisi (rules) su round già chiusi.
-Quando proponi rules da applicare, mettile in un blocco:
+LINGUA: rispondi SEMPRE in italiano (anche se l'utente scrive in inglese).
+L'utente chiede statistica/analisi sui round (o su una simulation backtest con orders).
+Il server applicherà automaticamente le rules (codegen + batch): NON dire di premere Applica,
+NON spiegare il flusso interno. Rispondi in 1-2 frasi brevi in italiano, poi metti le rules in:
 
 ```rules
-...testo rules...
+...testo rules concise in italiano...
 ```
 
-Le rules descrivono una statistica/pattern; il server le trasforma in un modulo Python analyze_round.
-Rispondi in italiano, in modo conciso.
+Se c'è simulation, le rules possono usare round_view['orders'] e round_view['strategy'].
+Il report Markdown arriverà dopo come messaggio successivo nel thread (anche quello in italiano).
 """
 
 
@@ -60,6 +62,11 @@ def save_stats_thread(history_dir: Path, messages: list[dict]) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, path)
+
+
+def clear_stats_thread(history_dir: Path) -> None:
+    """Svuota la chat Analyze."""
+    save_stats_thread(history_dir, [])
 
 
 def append_stats_message(history_dir: Path, role: str, content: str) -> dict:
@@ -102,8 +109,12 @@ class StatsService:
                 reject_meta=False,
             )
         reply = raw.strip()
-        msg = append_stats_message(self.history_dir, "assistant", reply)
-        return {"message": msg, "proposed_rules": extract_proposed_rules(reply)}
+        proposed = extract_proposed_rules(reply)
+        display = _RULES_FENCE_RE.sub("", reply).strip()
+        if not display:
+            display = "Ok, lancio l'analisi…"
+        msg = append_stats_message(self.history_dir, "assistant", display)
+        return {"message": msg, "proposed_rules": proposed}
 
     def apply_rules(self, rules: str, analyze_id: str | None, name: str | None) -> dict:
         """Codegen + salva modulo; crea analyze se analyze_id assente."""

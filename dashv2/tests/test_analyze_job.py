@@ -88,6 +88,49 @@ class TestAnalyzeJob(unittest.TestCase):
         self.assertEqual(view["fee_rate"], 0.02)
         self.assertEqual(view["secs"], [100, 200])
         self.assertEqual([t["sec"] for t in view["ticks"]], [100, 200])
+        self.assertNotIn("orders", view)
+
+    def test_build_round_view_with_orders(self):
+        loaded = _synthetic_round()
+        orders = [{"id": "o1", "side": "Up", "entry_sec": 200, "pnl_usd": 1.5, "result": "won"}]
+        strategy = {"id": "s1", "name": "test", "version": 2}
+        view = build_round_view(loaded, orders=orders, strategy=strategy)
+        self.assertEqual(view["orders"], orders)
+        self.assertEqual(view["strategy"]["version"], 2)
+
+    def test_analyze_second_order_stats(self):
+        loaded = _synthetic_round()
+        mod_src = '''
+def analyze_round(round_view):
+    orders = round_view.get("orders") or []
+    if len(orders) < 2:
+        return {"use": False, "second_pnl": 0.0}
+    return {"use": True, "second_pnl": float(orders[1]["pnl_usd"])}
+
+def reduce_results(per_round):
+    rows = [r for r in per_round if r.get("ok") and r.get("use")]
+    n = len(rows)
+    s = sum(r["second_pnl"] for r in rows)
+    return f"# Second order\\n\\nn={n} sum={s}\\n"
+'''
+        orders = [
+            {"id": "a", "side": "Up", "entry_sec": 250, "pnl_usd": 1.0, "result": "won"},
+            {"id": "b", "side": "Down", "entry_sec": 100, "pnl_usd": -2.0, "result": "lost"},
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "analyze_second.py"
+            path.write_text(mod_src, encoding="utf-8")
+            out = run_analyze_round(
+                loaded, path, orders=orders,
+                strategy={"id": "x", "name": "n", "version": 1},
+            )
+            reduce_fn = load_reduce_results(path)
+        self.assertTrue(out["ok"], out.get("error"))
+        self.assertTrue(out["use"])
+        self.assertEqual(out["second_pnl"], -2.0)
+        md = reduce_fn([out])
+        self.assertIn("n=1", md)
+        self.assertIn("sum=-2.0", md)
 
     def test_run_analyze_and_reduce_results(self):
         loaded = _synthetic_round()

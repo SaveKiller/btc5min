@@ -97,6 +97,11 @@ class TestStrategyJob(unittest.TestCase):
         self.assertEqual(out["n_wins"], 1)
         self.assertEqual(out["n_losses"], 0)
         self.assertGreater(out["pnl_usd"], 0.0)
+        self.assertEqual(len(out["orders"]), 1)
+        self.assertEqual(out["orders"][0]["side"], "Up")
+        self.assertEqual(out["orders"][0]["entry_sec"], 200)
+        self.assertEqual(out["orders"][0]["result"], "won")
+        self.assertEqual(out["action_errors"], [])
 
 
 if __name__ == "__main__":

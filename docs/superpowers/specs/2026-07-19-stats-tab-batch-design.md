@@ -97,7 +97,20 @@ def analyze_round(round_view: dict) -> dict: ...
 def reduce_results(per_round: list[dict]) -> str: ...  # opzionale
 ```
 
-`round_view` read-only (header, ticks, books opzionali, vol/risk/dwin). Niente ordini.
+`round_view` read-only (header, ticks, vol/risk/dwin).  
+Senza simulation: niente ordini.  
+Con `simulation_id` (backtest SQLite v2): include `orders` (closed) + `strategy` `{id,name,version}`.
+
+### Persistenza backtest
+
+Ogni Run backtest crea `history/simulations/simulation_{id}.sqlite` (schema v2):
+
+- `meta` — summary + table JSON
+- `rounds` — aggregati per round
+- `orders` — dettaglio ordini chiusi
+
+Socket `stats.job.done` / load UI: solo aggregati (niente `orders` in RAM browser).  
+JSON v1 legacy: list/load tabella ok; `has_orders=false`; non usabile da Analyze strategy-aware.
 
 ### Reduce backtest → tabella
 
@@ -129,11 +142,11 @@ Se il modulo espone `reduce_results`, usarla; altrimenti Markdown minimale serve
 
 **Backtest:** select strategia, Run/Cancel, progress, tabella 24h + summary (nome, range, workers, elapsed, skipped/errors).
 
-**Analyze:** chat dedicata (thread non legato a `session_id` replay), Applica rules, box Markdown, lista/select/delete moduli.
+**Analyze:** chat dedicata (thread non legato a `session_id` replay), Applica rules, box Markdown, lista/select/delete moduli, dropdown **Simulation** opzionale (solo sqlite con orders; day range disabilitato se selezionata).
 
 ### Socket.IO (human-only)
 
-Comandi: `stats.backtest.start`, `stats.analyze.start`, `stats.job.cancel`, `stats.chat.send`, `stats.rules.apply`.
+Comandi: `stats.backtest.start`, `stats.analyze.start` (`simulation_id?`), `stats.job.cancel`, `stats.chat.send`, `stats.rules.apply` (`simulation_id?`).
 
 Eventi: `stats.job.progress`, `stats.job.done`, `stats.job.error`, `stats.chat.message` / `status`.
 
@@ -145,7 +158,7 @@ Eventi: `stats.job.progress`, `stats.job.done`, `stats.job.error`, `stats.chat.m
 - `analyze_{id}.py` — modulo
 - `_state.json` — ultimo `active_analyze_id` (opzionale)
 
-Dopo `stats.rules.apply` ok → **auto-run** batch sul range corrente (Cancel consentito).
+Dopo `stats.rules.apply` ok → **auto-run** batch sul range corrente oppure sulla `simulation_id` del payload (Cancel consentito).
 
 Codegen: vietati rete, scrittura disco, import arbitrari; solo stdlib (+ numpy se già in env).
 

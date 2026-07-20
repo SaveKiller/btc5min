@@ -77,10 +77,12 @@ class RoundRepository:
         self.stall_reconnect_sec = stall_reconnect_sec
         self._bins: dict[int, Path] = {}
         self._index: list[RoundIndexEntry] = []
+        self._ohlc_cache: dict[int, dict | None] = {}
         self._scan()
 
     def _scan(self) -> None:
         self._bins.clear()
+        self._ohlc_cache.clear()
         entries: list[RoundIndexEntry] = []
         for bin_path in sorted(self.data_dir.glob("**/bin/btc5m_*.bin"), key=lambda p: p.stat().st_mtime, reverse=True):
             parts = bin_path.stem.split("_")
@@ -146,23 +148,25 @@ class RoundRepository:
         if not entry.valid: raise Exception(f"round invalid: {entry.reason}")
         return load_bin(self._bins[market_start_ts], self.stall_reconnect_sec)
 
-    def previous_candles(self, market_start_ts: int, count: int) -> list[dict]:
-        """Candele 5m precedenti più vicine; buchi temporali restano buchi (nessun fill)."""
-        slots = [market_start_ts - 300 * (i + 1) for i in range(count)]
-        candles: list[dict] = []
-        for start_ts in sorted(slots):
-            if start_ts not in self._bins: continue
-            try:
-                header, ticks, _ = read_round(str(self._bins[start_ts]))
-                prices = [float(row[6]) for row in ticks if not _is_nan(float(row[6]))]
-                if not prices: continue
-                candles.append({
-                    "time": int(header["market_start_ts"]), "open": prices[0],
-                    "high": max(prices), "low": min(prices), "close": prices[-1],
-                })
-            except Exception:
-                continue
-        return candles
+    def _candle_ohlc(self, start_ts: int) -> dict | None:
+        if start_ts in self._ohlc_cache:
+            return self._ohlc_cache[start_ts]
+        try:
+            header, ticks, _ = read_round(str(self._bins[start_ts]))
+            prices = [float(row[6]) for row in ticks if not _is_nan(float(row[6]))]
+            candle = None if not prices else {
+                "time": int(header["market_start_ts"]), "open": prices[0],
+                "high": max(prices), "low": min(prices), "close": prices[-1],
+            }
+        except Exception:
+            candle = None
+        self._ohlc_cache[start_ts] = candle
+        return candle
+
+    def candles(self, before_ts: int | None) -> list[dict]:
+        """Tutte le candele disponibili (cache OHLC); se before_ts, solo time < before_ts."""
+        times = sorted(ts for ts in self._bins if before_ts is None or ts < before_ts)
+        return [c for ts in times if (c := self._candle_ohlc(ts))]
 
     def current_candle(self, loaded: LoadedRound, sec: int) -> dict:
         """Candela del round corrente solo con tick già raggiunti (sec >= replay sec)."""

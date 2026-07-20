@@ -594,8 +594,8 @@ export function renderBotPanel(state) {
     sw.checked = !!state.botActive;
     $("botStatusLabel").textContent = state.botActive ? "READY" : "PAUSED";
     $("botTabIcon").className = state.botActive
-        ? "bi bi-triangle tab-icon bot-tab-icon is-active"
-        : "bi bi-square tab-icon bot-tab-icon is-paused";
+        ? "bi bi-cpu tab-icon bot-tab-icon is-active"
+        : "bi bi-cpu tab-icon bot-tab-icon is-paused";
 
 
     const activeIds = state.activeStrategyIds || [];
@@ -664,7 +664,7 @@ export function markStrategySelected(state, strategyId) {
 }
 
 
-export function renderAgentChat(messages, { thinking = false } = {}) {
+export function renderAgentChat(messages, { thinking = false, thinkingText = "Thinking…" } = {}) {
     const log = $("agentChatLog");
     const parts = (messages || []).map((m) => {
         const role = m.role === "user" ? "user" : "assistant";
@@ -674,7 +674,8 @@ export function renderAgentChat(messages, { thinking = false } = {}) {
     if (thinking) {
         parts.push(
             `<div class="agent-msg assistant agent-thinking" id="agentThinkingBubble">`
-            + `<div class="agent-msg-role">assistant</div>Thinking…</div>`
+            + `<div class="agent-msg-role">assistant</div>`
+            + `<div class="agent-thinking-text">${thinkingText || "Thinking…"}</div></div>`
         );
     }
     log.innerHTML = parts.join("");
@@ -694,7 +695,6 @@ export function renderAgentContext(state) {
         return s ? s.name : id;
     }).join(", ") || "—";
     const roundVal = focus.market_start_ts != null ? String(focus.market_start_ts) : "—";
-    const statsLine = formatSessionFocusStats(state);
     const body = $("agentContextBody");
     const wasOpen = !!body.querySelector("#agentSessionMenu.show");
     const parts = [
@@ -704,7 +704,8 @@ export function renderAgentContext(state) {
         cell("Bot", state.botActive ? "ACTIVE" : "PAUSED"),
         `<span class="agent-ctx-item agent-ctx-loaded"><strong>Loaded strategies</strong>`
             + `<span title="${escapeHtml(loadedLabel)}">${escapeHtml(loadedLabel)}</span></span>`,
-        cell("Session result", statsLine),
+        cell("Session result", formatSessionFocusStats(state)),
+        buildSessionTrashCell(state),
     ];
     body.innerHTML = parts.join("");
     const btn = $("agentSessionSelectBtn");
@@ -866,6 +867,16 @@ function formatSessionFocusStats(state) {
     return `${bets.length} · PnL ${pnlStr} · Size $${size.toFixed(2)}`;
 }
 
+
+function buildSessionTrashCell(state) {
+    const dis = state.agentSessionId ? "" : " disabled";
+    return `<span class="agent-ctx-item agent-ctx-trash">`
+        + `<button class="btn btn-sm btn-link stats-session-trash flex-shrink-0 p-0" id="agentDeleteSessionBtn" type="button"${dis} aria-label="Delete session">`
+        + `<i class="bi bi-trash" aria-hidden="true"></i></button>`
+        + `</span>`;
+}
+
+
 function cell(label, value) {
     return `<span class="agent-ctx-item"><strong>${escapeHtml(label)}</strong>`
         + `<span title="${escapeHtml(value)}">${escapeHtml(value)}</span></span>`;
@@ -904,17 +915,8 @@ function fmtPnlInt(n) {
 }
 
 
-export function renderStatsMode(mode) {
-    const back = mode === "backtest";
-    $("statsBacktestPanel").classList.toggle("d-none", !back);
-    $("statsAnalyzePanel").classList.toggle("d-none", back);
-    $("statsBacktestHeaderControls").classList.toggle("d-none", !back);
-    const btBtn = $("statsModeBacktestBtn");
-    const anBtn = $("statsModeAnalyzeBtn");
-    btBtn.classList.toggle("btn-primary", back);
-    btBtn.classList.toggle("btn-outline-secondary", !back);
-    anBtn.classList.toggle("btn-primary", !back);
-    anBtn.classList.toggle("btn-outline-secondary", back);
+export function renderStatsMode(_mode) {
+    // Visibilità Backtest/Analyze gestita dalle sotto-tab Bootstrap in AGENT.
 }
 
 
@@ -939,7 +941,7 @@ function formatStatsExecDisplay(isoUtc) {
 }
 
 
-export function renderStatsStrategySelect(strategies, selectedId, jobRunning) {
+export function renderStatsStrategySelect(strategies, selectedId, selectedVersion, jobRunning) {
     const sel = $("statsStrategySelect");
     const list = strategies || [];
     const opts = list.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("");
@@ -947,18 +949,28 @@ export function renderStatsStrategySelect(strategies, selectedId, jobRunning) {
     if (selectedId && list.some((s) => s.id === selectedId)) sel.value = selectedId;
     else sel.value = "";
     sel.classList.toggle("is-placeholder", !sel.value);
+    sel.disabled = !!jobRunning;
+    renderStatsStrategyVersionSelect(list, sel.value || null, selectedVersion, jobRunning);
     $("statsBacktestRunBtn").disabled = !!jobRunning || !sel.value;
 }
 
 
-export function renderStatsAnalyzeSelect(analyzes, selectedId) {
-    const sel = $("statsAnalyzeSelect");
-    const list = analyzes || [];
-    sel.innerHTML = list.length
-        ? list.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name || a.id)}</option>`).join("")
-        : `<option value="">— nessun modulo —</option>`;
-    if (selectedId && list.some((a) => a.id === selectedId)) sel.value = selectedId;
-    $("statsAnalyzeDeleteBtn").disabled = !sel.value;
+export function renderStatsStrategyVersionSelect(strategies, selectedId, selectedVersion, jobRunning) {
+    const sel = $("statsStrategyVersionSelect");
+    const s = (strategies || []).find((x) => x.id === selectedId);
+    if (!s) {
+        sel.innerHTML = "";
+        sel.disabled = true;
+        return;
+    }
+    const versions = s.versions || [{ version: s.version || 1 }];
+    sel.innerHTML = versions.map((v) =>
+        `<option value="${v.version}">v${v.version}</option>`).join("");
+    const tip = s.version || 1;
+    const pick = selectedVersion != null && versions.some((v) => v.version === selectedVersion)
+        ? selectedVersion : tip;
+    sel.value = String(pick);
+    sel.disabled = !!jobRunning;
 }
 
 
@@ -977,21 +989,35 @@ export function renderStatsSimulationSelect(simulations, selectedId) {
 }
 
 
+export function renderStatsAnalyzeSimSelect(simulations, selectedId) {
+    const sel = $("statsAnalyzeSimSelect");
+    const placeholder = "— seleziona simulation —";
+    const list = (simulations || []).filter((s) => s.has_orders);
+    sel.innerHTML = `<option value="">${placeholder}</option>`
+        + list.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.label || s.id)}</option>`).join("");
+    if (selectedId && list.some((s) => s.id === selectedId)) sel.value = selectedId;
+    else sel.value = "";
+    const longest = list.reduce((n, s) => Math.max(n, (s.label || s.id || "").length), placeholder.length);
+    sel.style.width = `${Math.min(longest + 4, 64)}ch`;
+}
+
+
 export function renderStatsJobUi(state) {
     const running = !!state.statsJobRunning;
     const prog = state.statsProgress;
-    const pct = prog && prog.total ? Math.min(100, Math.round(100 * prog.done / prog.total)) : 0;
-    const label = running
-        ? (prog ? `${prog.done}/${prog.total} · err ${prog.errors || 0}` : "Avvio…")
-        : "Pronto";
+    const done = prog ? Number(prog.done) || 0 : 0;
+    const total = prog ? Number(prog.total) || 0 : 0;
+    const pct = total ? Math.min(100, Math.round(100 * done / total)) : 0;
+    const label = prog ? `${done} / ${total}` : "—";
     $("statsProgressBar").style.width = `${running ? pct : 0}%`;
     $("statsAnalyzeProgressBar").style.width = `${running ? pct : 0}%`;
+    $("statsProgressLabel").textContent = label;
     $("statsAnalyzeProgressLabel").textContent = label;
     const hasStrategy = !!(state.statsStrategyId || $("statsStrategySelect").value);
     $("statsBacktestRunBtn").disabled = running || !hasStrategy;
-    $("statsAnalyzeRunBtn").disabled = running || !$("statsAnalyzeSelect").value;
+    $("statsStrategySelect").disabled = running;
+    $("statsStrategyVersionSelect").disabled = running || !$("statsStrategySelect").value;
     $("statsJobCancelBtn").disabled = !running;
-    $("statsAnalyzeCancelBtn").disabled = !running;
 }
 
 
@@ -1257,18 +1283,7 @@ export function renderStatsBacktest(state) {
 
 
 export function renderStatsAnalyze(state) {
-    const sumEl = $("statsAnalyzeSummaryLabel");
-    const summary = state.statsSummary;
-    if (summary && state.statsMode === "analyze") {
-        sumEl.textContent = `${summary.name} · ${summary.day_from}→${summary.day_to}`
-            + ` · workers ${summary.workers} · ${summary.elapsed_sec}s`
-            + ` · skipped ${summary.skipped} · errors ${summary.errors}`;
-    } else if (!state.statsJobRunning) {
-        sumEl.textContent = "";
-    }
-    $("statsMarkdown").textContent = state.statsMarkdown || "";
     renderStatsChat(state.statsChatMessages, { thinking: state.statsChatBusy });
-    renderStatsProposed(state.statsProposed);
 }
 
 
@@ -1287,22 +1302,6 @@ export function renderStatsChat(messages, { thinking = false } = {}) {
     }
     log.innerHTML = parts.join("");
     log.scrollTop = log.scrollHeight;
-}
-
-
-export function renderStatsProposed(proposed) {
-    const wrap = $("statsProposedWrap");
-    const btn = $("statsApplyRulesBtn");
-    if (!proposed?.rules) {
-        wrap.classList.add("d-none");
-        btn.disabled = true;
-        btn.dataset.rules = "";
-        return;
-    }
-    wrap.classList.remove("d-none");
-    $("statsProposedRules").textContent = proposed.rules;
-    btn.disabled = false;
-    btn.dataset.rules = proposed.rules;
 }
 
 

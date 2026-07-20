@@ -19,8 +19,9 @@ from dashv2.sessions import create_session
 from dashv2.orders import OrderEngine
 from dashv2.rounds import LoadedRound, RoundRepository
 from dashv2.strategies import (
-    clone_strategy, create_strategy, delete_strategy, list_strategies, load_active_ids,
-    load_strategy, save_active_ids, strategies_dir, strategy_summary, update_strategy,
+    clone_strategy, create_strategy, delete_strategy, list_strategies,
+    load_active_ids, load_strategy, save_active_ids, strategies_dir, strategy_summary,
+    update_strategy,
 )
 
 
@@ -125,6 +126,7 @@ class ReplayEngine:
     def run(self) -> None:
         self._emit_event("bootstrap", self._bootstrap_payload())
         self._emit_accounts()
+        self._emit_idle_chart()
         next_tick_at = 0.0
         while True:
             while self.cmd_conn.poll(0):
@@ -206,7 +208,7 @@ class ReplayEngine:
         self.session_started_at_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.seq = 0
         self.orders.reset(self.cfg["default_order_size_usd"], self.cfg["default_order_size_usd"])
-        self._prev_candles = self.repo.previous_candles(mts, self.cfg["chart_previous_candles"])
+        self._prev_candles = self.repo.candles(before_ts=mts)
         self._round_advanced = False
         result = {"ok": True, "market_start_ts": mts}
         def after():
@@ -233,11 +235,10 @@ class ReplayEngine:
         self.sec = 300
         self.seq = 0
         self._last_tick = None
-        self._prev_candles = []
         self._round_advanced = False
         self.orders.reset(self.cfg["default_order_size_usd"], self.cfg["default_order_size_usd"])
         self._emit_session()
-        self._emit_event("chart", {"previous": [], "current": None, "full_reset": True})
+        self._emit_idle_chart()
         self._emit_event("tick", _public_tick(None, self.sec, self.seq, True))
         self._emit_orders()
         self._emit_history()
@@ -607,6 +608,7 @@ class ReplayEngine:
     def _cmd_strategy_update(self, payload: dict) -> dict:
         data = update_strategy(
             self.strategies_root, payload["strategy_id"], payload["name"], payload["description"],
+            module_rebuilt=bool(payload.get("module_rebuilt")),
             rules=payload.get("rules"),
             module_file=payload.get("module_file"),
             coded_rules=payload.get("coded_rules"),
@@ -664,6 +666,8 @@ class ReplayEngine:
             self._emit_chart_full()
             self._emit_tick_at(self.sec)
             self._emit_orders()
+        else:
+            self._emit_idle_chart()
         self._emit_history()
         self._emit_accounts()
         self._emit_strategies()
@@ -778,6 +782,11 @@ class ReplayEngine:
             "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
             "active_strategy_ids": list(self.active_strategy_ids),
         })
+
+    def _emit_idle_chart(self) -> None:
+        """Chart senza round caricato: tutte le candele disponibili da data_dir."""
+        self._prev_candles = self.repo.candles(before_ts=None)
+        self._emit_event("chart", {"previous": self._prev_candles, "current": None, "full_reset": True})
 
     def _emit_chart_full(self) -> None:
         if not self.loaded: return

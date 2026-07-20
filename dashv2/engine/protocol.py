@@ -59,5 +59,6 @@ class EnginePlugin(Protocol):
 #
 # Bot / strategy (stato di selezione nel plugin attivo)
 #   - bot.list / bot.set_active — stato active strategies + master switch
-#   - strategy.list / create / rename / delete / load / unload — catalogo JSON + active set
+#   - strategy.list / create / update / clone / delete / load / unload — catalogo JSON + active set
+#     (update: name in-place su tutto l'id; clone: nuova strategy v1)
 #   - Emit: bot.status (lo shell non gestisce strategy; solo il bot process)

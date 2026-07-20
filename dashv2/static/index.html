@@ -69,13 +69,10 @@
           <button class="nav-link active" id="accounts-tab" data-bs-toggle="tab" data-bs-target="#accountsPane" type="button" role="tab" aria-controls="accountsPane" aria-selected="true"><i class="bi bi-person tab-icon accounts-tab-icon" aria-hidden="true"></i><span>ACCOUNTS</span></button>
         </li>
         <li class="nav-item" role="presentation">
-          <button class="nav-link" id="bot-tab" data-bs-toggle="tab" data-bs-target="#botPane" type="button" role="tab" aria-controls="botPane" aria-selected="false"><i class="bi bi-square tab-icon bot-tab-icon is-paused" id="botTabIcon" aria-hidden="true"></i><span>BOT</span></button>
-        </li>
-        <li class="nav-item" role="presentation">
-          <button class="nav-link" id="stats-tab" data-bs-toggle="tab" data-bs-target="#statsPane" type="button" role="tab" aria-controls="statsPane" aria-selected="false"><i class="bi bi-bar-chart tab-icon" aria-hidden="true"></i><span>STATS</span></button>
+          <button class="nav-link" id="bot-tab" data-bs-toggle="tab" data-bs-target="#botPane" type="button" role="tab" aria-controls="botPane" aria-selected="false"><i class="bi bi-cpu tab-icon bot-tab-icon is-paused" id="botTabIcon" aria-hidden="true"></i><span>STRATEGY</span></button>
         </li>
         <li class="nav-item ms-auto" role="presentation">
-          <button class="nav-link" id="agent-tab" data-bs-toggle="tab" data-bs-target="#agentPane" type="button" role="tab" aria-controls="agentPane" aria-selected="false"><i class="bi bi-chat-square-text tab-icon agent-tab-icon" aria-hidden="true"></i><span>AGENT SESSION</span></button>
+          <button class="nav-link" id="agent-tab" data-bs-toggle="tab" data-bs-target="#agentPane" type="button" role="tab" aria-controls="agentPane" aria-selected="false"><i class="bi bi-chat-square-text tab-icon agent-tab-icon" aria-hidden="true"></i><span>AGENT</span></button>
         </li>
       </ul>
       <div class="tab-content workspace-tab-content flex-grow-1 min-h-0">
@@ -175,143 +172,146 @@
             </article>
           </div>
         </div>
-        <div class="tab-pane fade h-100" id="statsPane" role="tabpanel" aria-labelledby="stats-tab" tabindex="0">
-          <div class="stats-stack">
-            <article class="app-panel stats-header-panel">
-              <div class="panel-head d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <span class="panel-title">STATS</span>
-                <div class="btn-group btn-group-sm" role="group" aria-label="Stats mode">
-                  <button class="btn btn-primary" type="button" id="statsModeBacktestBtn" data-stats-mode="backtest">Backtest</button>
-                  <button class="btn btn-outline-secondary" type="button" id="statsModeAnalyzeBtn" data-stats-mode="analyze">Analyze</button>
-                </div>
-              </div>
-              <div class="p-3 d-flex flex-nowrap align-items-center gap-2 stats-header-toolbar">
-                <label class="tiny text-muted-app mb-0" for="statsDayFrom">START</label>
-                <div class="stats-day-wrap">
-                  <span class="stats-day-display" id="statsDayFromDisplay"></span>
-                  <input class="form-control form-control-sm stats-day-input" type="date" id="statsDayFrom" aria-label="Day from">
-                </div>
-                <label class="tiny text-muted-app mb-0" for="statsDayTo">END</label>
-                <div class="stats-day-wrap">
-                  <span class="stats-day-display" id="statsDayToDisplay"></span>
-                  <input class="form-control form-control-sm stats-day-input" type="date" id="statsDayTo" aria-label="Day to">
-                </div>
-                <div class="d-flex flex-nowrap align-items-center gap-2 flex-grow-1 min-w-0" id="statsBacktestHeaderControls">
-                  <select class="form-select form-select-sm stats-strategy-select" id="statsStrategySelect" aria-label="Strategy"></select>
-                  <button class="btn btn-sm btn-primary flex-shrink-0" id="statsBacktestRunBtn" type="button">Run</button>
-                  <button class="btn btn-sm btn-outline-secondary flex-shrink-0" id="statsJobCancelBtn" type="button" disabled>Cancel</button>
-                </div>
-              </div>
-            </article>
-
-            <div class="stats-backtest-panel" id="statsBacktestPanel">
-              <article class="app-panel flex-shrink-0">
-                <div class="p-3 d-flex flex-nowrap align-items-center gap-3 stats-session-row">
-                  <div class="d-flex flex-column gap-1 flex-shrink-0 min-w-0">
-                    <label class="tiny text-muted-app mb-0" for="statsSimulationSelect">Session</label>
-                    <select class="form-select form-select-sm stats-session-select" id="statsSimulationSelect" aria-label="Simulation session"></select>
-                  </div>
-                  <div class="stats-session-divider flex-shrink-0" aria-hidden="true"></div>
-                  <div class="d-flex flex-nowrap align-items-center gap-2 flex-grow-1 min-w-0">
-                    <div class="stats-session-summary tiny text-muted-app flex-grow-1 min-w-0" id="statsSummaryLabel"></div>
-                    <button class="btn btn-sm btn-link stats-session-trash flex-shrink-0 p-0" id="statsSimulationDeleteBtn" type="button" disabled aria-label="Delete session">
-                      <i class="bi bi-trash" aria-hidden="true"></i>
-                    </button>
-                  </div>
-                </div>
-                <div class="px-3 pb-3">
-                  <div class="progress stats-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
-                    <div class="progress-bar" id="statsProgressBar" style="width:0%"></div>
-                  </div>
-                </div>
-              </article>
-              <article class="app-panel stats-table-panel">
-                <div class="panel-head flex-shrink-0 d-flex align-items-center flex-wrap gap-2">
-                  <nav class="stats-results-crumb panel-title mb-0" id="statsResultsBreadcrumb" aria-label="Drill risultati"></nav>
-                </div>
-                <div class="stats-table-scroll px-3 pb-2">
-                  <table class="table table-sm mb-0 align-middle" id="statsBacktestTable">
-                    <thead class="stats-backtest-thead">
-                      <tr>
-                        <th id="statsColLabel">Hour</th><th id="statsColMarket">Market</th>
-                        <th class="text-end">Rounds</th><th class="text-end">Traded</th>
-                        <th class="text-end">Pos</th><th class="text-end">Neg</th><th class="text-end">Flat</th>
-                        <th class="text-end">PnL sum</th><th class="text-end">PnL avg</th>
-                      </tr>
-                    </thead>
-                    <tbody id="statsBacktestTableBody"></tbody>
-                  </table>
-                </div>
-              </article>
-            </div>
-
-            <div class="stats-analyze-panel d-none" id="statsAnalyzePanel">
-              <article class="app-panel flex-shrink-0">
-                <div class="p-3 d-flex flex-wrap align-items-center gap-2">
-                  <label class="tiny text-muted-app mb-0" for="statsAnalyzeSelect">Modulo</label>
-                  <select class="form-select form-select-sm" id="statsAnalyzeSelect" style="max-width:16rem" aria-label="Analyze module"></select>
-                  <button class="btn btn-sm btn-primary" id="statsAnalyzeRunBtn" type="button">Run</button>
-                  <button class="btn btn-sm btn-outline-secondary" id="statsAnalyzeCancelBtn" type="button" disabled>Cancel</button>
-                  <button class="btn btn-sm btn-outline-danger ms-auto" id="statsAnalyzeDeleteBtn" type="button" disabled>Delete</button>
-                </div>
-                <div class="px-3 pb-2">
-                  <div class="progress stats-progress mb-2" role="progressbar">
-                    <div class="progress-bar" id="statsAnalyzeProgressBar" style="width:0%"></div>
-                  </div>
-                  <div class="tiny text-muted-app" id="statsAnalyzeProgressLabel">Pronto</div>
-                  <div class="tiny text-muted-app mt-1" id="statsAnalyzeSummaryLabel"></div>
-                </div>
-              </article>
-              <div class="stats-analyze-body d-flex flex-column gap-2">
-                <article class="app-panel stats-chat-panel flex-grow-1 min-h-0 d-flex flex-column">
-                  <div class="panel-head"><span class="panel-title">Analyze chat</span></div>
-                  <div class="agent-chat-log flex-grow-1 min-h-0 px-3 py-2" id="statsChatLog"></div>
-                  <div class="agent-proposed d-none px-3 pb-2" id="statsProposedWrap">
-                    <div class="tiny text-muted-app mb-1">Proposed rules</div>
-                    <pre class="agent-proposed-pre mb-2" id="statsProposedRules"></pre>
-                    <div class="d-flex flex-wrap align-items-center gap-2">
-                      <input class="form-control form-control-sm" id="statsAnalyzeName" style="max-width:12rem" placeholder="Nome modulo (nuovo)" aria-label="Analyze name">
-                      <button class="btn btn-sm btn-primary" id="statsApplyRulesBtn" type="button" disabled>Applica rules</button>
-                    </div>
-                  </div>
-                  <div class="agent-compose px-3 pb-3 pt-2 d-flex gap-2 align-items-end">
-                    <textarea class="form-control agent-input" id="statsChatInput" rows="2" placeholder="Descrivi la statistica da calcolare…"></textarea>
-                    <button class="btn btn-primary" id="statsSendBtn" type="button">Send</button>
-                  </div>
-                  <div class="tiny text-muted-app px-3 pb-2 d-none" id="statsChatStatusLabel"></div>
-                </article>
-                <article class="app-panel stats-md-panel flex-grow-1 min-h-0 d-flex flex-column">
-                  <div class="panel-head"><span class="panel-title">Markdown</span></div>
-                  <pre class="stats-md flex-grow-1 min-h-0 mx-3 mb-3" id="statsMarkdown"></pre>
-                </article>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <div class="tab-pane fade h-100" id="agentPane" role="tabpanel" aria-labelledby="agent-tab" tabindex="0">
-          <div class="agent-stack h-100 d-flex flex-column min-h-0 gap-2">
-            <aside class="app-panel agent-context-panel d-flex flex-column">
-              <div class="panel-head"><span class="panel-title">Agent Session</span></div>
-              <div class="px-2 py-1 tiny agent-context-body" id="agentContextBody"></div>
-            </aside>
-            <article class="app-panel agent-chat-panel flex-grow-1 min-h-0 d-flex flex-column">
-              <div class="panel-head d-flex justify-content-between align-items-center">
-                <span class="panel-title">Agent Session · Grok 4.5 High</span>
-                <button class="btn btn-sm btn-outline-danger" id="agentDeleteSessionBtn" type="button">Delete session</button>
+          <div class="agent-outer h-100 d-flex flex-column min-h-0">
+            <ul class="nav nav-tabs workspace-tabs agent-inner-tabs" id="agentInnerTabs" role="tablist">
+              <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="agent-session-chat-tab" data-bs-toggle="tab" data-bs-target="#agentSessionChatPane" type="button" role="tab" aria-controls="agentSessionChatPane" aria-selected="true"><i class="bi bi-chat-square-text tab-icon" aria-hidden="true"></i><span>SESSION CHAT</span></button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link" id="agent-backtest-tab" data-bs-toggle="tab" data-bs-target="#agentBacktestPane" type="button" role="tab" aria-controls="agentBacktestPane" aria-selected="false"><i class="bi bi-clock-history tab-icon" aria-hidden="true"></i><span>BACKTEST</span></button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link" id="agent-analyze-tab" data-bs-toggle="tab" data-bs-target="#agentAnalyzePane" type="button" role="tab" aria-controls="agentAnalyzePane" aria-selected="false"><i class="bi bi-search tab-icon" aria-hidden="true"></i><span>ANALYZE</span></button>
+              </li>
+            </ul>
+            <div class="tab-content agent-inner-tab-content flex-grow-1 min-h-0">
+              <div class="tab-pane fade show active h-100" id="agentSessionChatPane" role="tabpanel" aria-labelledby="agent-session-chat-tab" tabindex="0">
+                <div class="agent-stack h-100 d-flex flex-column min-h-0 gap-2">
+                  <aside class="app-panel agent-context-panel d-flex flex-column">
+                    <div class="panel-head"><span class="panel-title">Agent Session</span></div>
+                    <div class="px-2 py-1 tiny agent-context-body" id="agentContextBody"></div>
+                  </aside>
+                  <article class="app-panel agent-chat-panel flex-grow-1 min-h-0 d-flex flex-column">
+                    <div class="panel-head">
+                      <span class="panel-title">Agent Session · Grok 4.5 High</span>
+                    </div>
+                    <div class="agent-chat-log flex-grow-1 min-h-0 px-3 py-2" id="agentChatLog"></div>
+                    <div class="agent-proposed d-none px-3 pb-2" id="agentProposedWrap">
+                      <div class="tiny text-muted-app mb-1">Proposed rules</div>
+                      <pre class="agent-proposed-pre mb-2" id="agentProposedRules"></pre>
+                      <button class="btn btn-sm btn-primary" id="agentApplyRulesBtn" type="button" disabled>Applica rules</button>
+                    </div>
+                    <div class="agent-compose px-3 pb-3 pt-2 d-flex gap-2 align-items-end">
+                      <textarea class="form-control agent-input" id="agentChatInput" rows="2" placeholder="Chiedi di strategie, account, bot, round…"></textarea>
+                      <button class="btn btn-primary" id="agentSendBtn" type="button">Send</button>
+                    </div>
+                    <div class="tiny text-muted-app px-3 pb-2 d-none" id="agentStatusLabel"></div>
+                  </article>
+                </div>
               </div>
-              <div class="agent-chat-log flex-grow-1 min-h-0 px-3 py-2" id="agentChatLog"></div>
-              <div class="agent-proposed d-none px-3 pb-2" id="agentProposedWrap">
-                <div class="tiny text-muted-app mb-1">Proposed rules</div>
-                <pre class="agent-proposed-pre mb-2" id="agentProposedRules"></pre>
-                <button class="btn btn-sm btn-primary" id="agentApplyRulesBtn" type="button" disabled>Applica rules</button>
+
+              <div class="tab-pane fade h-100" id="agentBacktestPane" role="tabpanel" aria-labelledby="agent-backtest-tab" tabindex="0">
+                <div class="stats-stack h-100">
+                  <article class="app-panel stats-header-panel">
+                    <div class="panel-head"><span class="panel-title">BACKTEST</span></div>
+                    <div class="p-3 d-flex flex-nowrap align-items-center gap-2 stats-header-toolbar" id="statsBacktestHeaderControls">
+                      <label class="tiny text-muted-app mb-0" for="statsDayFrom">START</label>
+                      <div class="stats-day-wrap">
+                        <span class="stats-day-display" id="statsDayFromDisplay"></span>
+                        <input class="form-control form-control-sm stats-day-input" type="date" id="statsDayFrom" aria-label="Day from">
+                      </div>
+                      <label class="tiny text-muted-app mb-0" for="statsDayTo">END</label>
+                      <div class="stats-day-wrap">
+                        <span class="stats-day-display" id="statsDayToDisplay"></span>
+                        <input class="form-control form-control-sm stats-day-input" type="date" id="statsDayTo" aria-label="Day to">
+                      </div>
+                      <select class="form-select form-select-sm stats-strategy-select" id="statsStrategySelect" aria-label="Strategy"></select>
+                      <select class="form-select form-select-sm stats-strategy-version-select flex-shrink-0" id="statsStrategyVersionSelect" aria-label="Strategy version" style="max-width:5.5rem"></select>
+                      <button class="btn btn-sm btn-primary flex-shrink-0" id="statsBacktestRunBtn" type="button">Run</button>
+                      <button class="btn btn-sm btn-outline-secondary flex-shrink-0" id="statsJobCancelBtn" type="button" disabled>Cancel</button>
+                    </div>
+                  </article>
+                  <div class="stats-backtest-panel" id="statsBacktestPanel">
+                    <article class="app-panel flex-shrink-0">
+                      <div class="p-3 d-flex flex-nowrap align-items-center gap-3 stats-session-row">
+                        <div class="d-flex flex-column gap-1 flex-shrink-0 min-w-0">
+                          <label class="tiny text-muted-app mb-0" for="statsSimulationSelect">Session</label>
+                          <select class="form-select form-select-sm stats-session-select" id="statsSimulationSelect" aria-label="Simulation session"></select>
+                        </div>
+                        <div class="stats-session-divider flex-shrink-0" aria-hidden="true"></div>
+                        <div class="d-flex flex-nowrap align-items-center gap-2 flex-grow-1 min-w-0">
+                          <div class="stats-session-summary tiny text-muted-app flex-grow-1 min-w-0" id="statsSummaryLabel"></div>
+                          <button class="btn btn-sm btn-link stats-session-trash flex-shrink-0 p-0" id="statsSimulationDeleteBtn" type="button" disabled aria-label="Delete session">
+                            <i class="bi bi-trash" aria-hidden="true"></i>
+                          </button>
+                        </div>
+                      </div>
+                      <div class="px-3 pb-3">
+                        <div class="d-flex align-items-center gap-2 stats-progress-row">
+                          <div class="progress stats-progress flex-grow-1 mb-0" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+                            <div class="progress-bar" id="statsProgressBar" style="width:0%"></div>
+                          </div>
+                          <span class="tiny text-muted-app stats-progress-label" id="statsProgressLabel">—</span>
+                        </div>
+                      </div>
+                    </article>
+                    <article class="app-panel stats-table-panel">
+                      <div class="panel-head flex-shrink-0 d-flex align-items-center flex-wrap gap-2">
+                        <nav class="stats-results-crumb panel-title mb-0" id="statsResultsBreadcrumb" aria-label="Drill risultati"></nav>
+                      </div>
+                      <div class="stats-table-scroll px-3 pb-2">
+                        <table class="table table-sm mb-0 align-middle" id="statsBacktestTable">
+                          <thead class="stats-backtest-thead">
+                            <tr>
+                              <th id="statsColLabel">Hour</th><th id="statsColMarket">Market</th>
+                              <th class="text-end">Rounds</th><th class="text-end">Traded</th>
+                              <th class="text-end">Pos</th><th class="text-end">Neg</th><th class="text-end">Flat</th>
+                              <th class="text-end">PnL sum</th><th class="text-end">PnL avg</th>
+                            </tr>
+                          </thead>
+                          <tbody id="statsBacktestTableBody"></tbody>
+                        </table>
+                      </div>
+                    </article>
+                  </div>
+                </div>
               </div>
-              <div class="agent-compose px-3 pb-3 pt-2 d-flex gap-2 align-items-end">
-                <textarea class="form-control agent-input" id="agentChatInput" rows="2" placeholder="Chiedi di strategie, account, bot, round…"></textarea>
-                <button class="btn btn-primary" id="agentSendBtn" type="button">Send</button>
+
+              <div class="tab-pane fade h-100" id="agentAnalyzePane" role="tabpanel" aria-labelledby="agent-analyze-tab" tabindex="0">
+                <div class="stats-stack h-100">
+                  <article class="app-panel flex-shrink-0">
+                    <div class="panel-head"><span class="panel-title">ANALYZE</span></div>
+                    <div class="p-3 d-flex flex-column gap-1">
+                      <label class="tiny text-muted-app mb-0" for="statsAnalyzeSimSelect">Simulation</label>
+                      <div class="stats-analyze-sim-row">
+                        <select class="form-select form-select-sm stats-analyze-sim-select" id="statsAnalyzeSimSelect" aria-label="Analyze simulation">
+                          <option value="">— seleziona simulation —</option>
+                        </select>
+                        <div class="d-flex align-items-center gap-2 stats-progress-row stats-analyze-progress-wrap min-w-0 flex-grow-1">
+                          <div class="progress stats-progress stats-analyze-progress flex-grow-1 mb-0" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+                            <div class="progress-bar" id="statsAnalyzeProgressBar" style="width:0%"></div>
+                          </div>
+                          <span class="tiny text-muted-app stats-progress-label" id="statsAnalyzeProgressLabel">—</span>
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                  <article class="app-panel stats-chat-panel flex-grow-1 min-h-0 d-flex flex-column">
+                    <div class="panel-head d-flex justify-content-between align-items-center">
+                      <span class="panel-title">Analyze chat</span>
+                      <button class="btn btn-sm btn-outline-secondary" id="statsChatClearBtn" type="button">Clear</button>
+                    </div>
+                    <div class="agent-chat-log flex-grow-1 min-h-0 px-3 py-2" id="statsChatLog"></div>
+                    <div class="agent-compose px-3 pb-3 pt-2 d-flex gap-2 align-items-end">
+                      <textarea class="form-control agent-input" id="statsChatInput" rows="2" placeholder="Descrivi la statistica da calcolare…"></textarea>
+                      <button class="btn btn-primary" id="statsSendBtn" type="button">Send</button>
+                    </div>
+                    <div class="tiny text-muted-app px-3 pb-2 d-none" id="statsChatStatusLabel"></div>
+                  </article>
+                </div>
               </div>
-              <div class="tiny text-muted-app px-3 pb-2 d-none" id="agentStatusLabel"></div>
-            </article>
+            </div>
           </div>
         </div>
       </div>
@@ -468,14 +468,18 @@
       <div class="modal-body">
         <input type="hidden" id="strategyModalMode" value="create">
         <input type="hidden" id="strategyModalId" value="">
-        <div class="row g-3 mb-3 strategy-modal-meta">
+        <div class="row g-3 mb-3 strategy-modal-meta align-items-end">
           <div class="col-md-4">
             <label class="form-label" for="strategyModalName">Name</label>
             <input class="form-control" id="strategyModalName" placeholder="Name of strategy" type="text">
           </div>
-          <div class="col-md-8">
+          <div class="col-md-2">
+            <label class="form-label" for="strategyModalVersion">Version</label>
+            <select class="form-select" id="strategyModalVersion" aria-label="Strategy version"></select>
+          </div>
+          <div class="col-md-6">
             <label class="form-label" for="strategyModalDescription">Description</label>
-            <textarea class="form-control strategy-desc-input" id="strategyModalDescription" rows="2" placeholder="Description of strategy"></textarea>
+            <input class="form-control" id="strategyModalDescription" placeholder="Description of strategy" type="text">
           </div>
         </div>
         <div class="mb-0" id="strategyModalRulesWrap">
@@ -492,7 +496,7 @@
               <textarea class="form-control strategy-rules-input" id="strategyModalRules" rows="14" placeholder="Describe the trading rules in plain language; the model will generate the Python module"></textarea>
             </div>
             <div class="tab-pane fade" id="strategyCodedRulesPane" role="tabpanel" aria-labelledby="strategyCodedRulesTab" tabindex="0">
-              <textarea class="form-control strategy-coded-rules-input" id="strategyModalCodedRules" rows="14" readonly placeholder="Dopo il salvataggio: descrizione colloquiale di Apertura / Chiusura / Vincoli come risultano dal codice"></textarea>
+              <textarea class="form-control strategy-coded-rules-input" id="strategyModalCodedRules" rows="14" readonly placeholder="Dopo il salvataggio: ciò che il codice fa davvero (Apertura / Chiusura / Vincoli). Puoi discuterle in chat AI: spiegazioni, dubbi, e se qualcosa è sbagliato l’agente indica come riscrivere le rules."></textarea>
             </div>
           </div>
         </div>

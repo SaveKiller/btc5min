@@ -81,3 +81,21 @@ class TestRounds(unittest.TestCase):
         self.assertEqual(via_path.outcome_code, via_repo.outcome_code)
         self.assertEqual(len(via_path.ticks_by_sec), len(via_repo.ticks_by_sec))
         self.assertEqual(via_path.fee_rate, via_repo.fee_rate)
+
+    def test_candles_all_and_before(self):
+        if not self.repo._bins:
+            self.skipTest("no rounds in data/")
+        all_c = self.repo.candles(before_ts=None)
+        self.assertGreater(len(all_c), 0)
+        times = [c["time"] for c in all_c]
+        self.assertEqual(times, sorted(times))
+        self.assertEqual(len(times), len(set(times)))
+        mid = times[len(times) // 2]
+        before = self.repo.candles(before_ts=mid)
+        self.assertTrue(all(c["time"] < mid for c in before))
+        self.assertEqual(before, [c for c in all_c if c["time"] < mid])
+        # seconda chiamata usa cache OHLC
+        self.assertEqual(self.repo.candles(before_ts=None), all_c)
+        for c in all_c:
+            self.assertLessEqual(c["low"], min(c["open"], c["close"]))
+            self.assertGreaterEqual(c["high"], max(c["open"], c["close"]))

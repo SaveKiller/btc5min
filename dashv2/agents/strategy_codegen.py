@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 import tempfile
 
-from dashv2.cursor_client import call_model
+from dashv2.agents.cursor_client import call_model
+from dashv2.config import reload_coded_rules_prompt
 
 _FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
@@ -123,53 +124,10 @@ _CODED_SECTIONS = ("Apertura:", "Chiusura:", "Vincoli:")
 
 
 def build_coded_rules_prompt(source: str) -> str:
-    return f"""Leggi SOLO il modulo Python qui sotto (strategia Polymarket BTC Up/Down 5m).
-Riscrivi ciò che il codice FA davvero, per un utente della dashboard che NON programma.
-
-CRITICO SULL'OUTPUT:
-- Rispondi SOLO con testo nelle tre sezioni obbligatorie sotto
-- Niente markdown fences, niente codice, niente introduzioni
-- Linguaggio COLLOQUIALE e naturale (italiano), come spiegheresti le regole a voce
-- Usa termini della dashboard: quota Up/Down, lato maggioritario, Model A / Model B, PnL, size, zone colorate (bianca/verde/…), secondi mancanti, centesimi, percentuali
-- VIETATO citare variabili/identificatori del codice o del contesto (es. ctx, mtm_usd, size_usd, majority_side, dwin_a, open_orders, sec, tradable, order.place, …)
-- I numeri (soglie, secondi, percentuali, size in $) devono restare espliciti e non ambigui
-- Non inventare regole assenti dal codice; non copiare docstring/commenti se contraddicono il flusso
-- Non usare un template fisso di trading: elenca solo ciò che il codice implementa
-- SOLO logica SPECIFICA di questa strategia. NON includere controlli generici di infrastruttura che valgono sempre e non distinguono la strategia, ad esempio:
-  - "mercato operabile" / tradable
-  - bot attivo / bot_active
-  - close_enabled / mtm_available / "MTM disponibile"
-  - presenza di campi None / "se i dati ci sono"
-  Questi non sono regole di trading: se il mercato non è operabile la strategia non può fare nulla comunque.
-
-TEMPO / COUNTDOWN (obbligatorio, errore frequente):
-- Nel codice il campo secondi è un COUNTDOWN: secondi MANCANTI alla scadenza (tipicamente 300 → 0), NON il tempo trascorso dall'inizio round
-- Zone colorate (terminologia UI): bianca 300–241, verde 240–181, blu 180–121, gialla/arancio 120–61, rossa 60–0 (valori = secondi mancanti)
-- Confronti tipo ">= 241" / "< 61" vanno descritti come countdown o zona, MAI come "primi N secondi del round" / "dal secondo N in poi"
-- Esempio CORRETTO: "non apre in zona bianca (quando mancano ancora almeno 241 secondi)"
-- Esempio SBAGLIATO: "entro i primi 240 secondi" / "dal secondo 241 in poi non apre più"
-
-Schema obbligatorio (heading esatti):
-
-Apertura:
-- ...
-
-Chiusura:
-- ...
-
-Vincoli:
-- ...
-
-Se una sezione non ha condizioni rilevanti nel codice, metti un solo bullet "- (nessuna)".
-
-Esempio di tono (NON copiare i contenuti, solo lo stile):
-- Apri con size 100$ quando la quota maggioritaria resta tra 80c e 94c per almeno 2 secondi e Model A o Model B è almeno al 78%.
-
-Modulo Python:
----
-{source.strip()}
----
-"""
+    template = reload_coded_rules_prompt()
+    if "{{SOURCE}}" not in template:
+        raise RuntimeError("coded_rules_prompt.md missing {{SOURCE}} placeholder")
+    return template.replace("{{SOURCE}}", source.strip())
 
 
 def extract_coded_rules(text: str) -> str:

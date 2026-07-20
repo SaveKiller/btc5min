@@ -11,6 +11,7 @@ from dashv2.stats_modules import create_analyze, list_analyzes, load_analyze, se
 from dashv2.stats_service import (
     StatsService,
     append_stats_message,
+    clear_stats_thread,
     extract_proposed_rules,
     load_stats_thread,
 )
@@ -26,6 +27,13 @@ class TestStatsThread(unittest.TestCase):
             self.assertEqual(len(msgs), 2)
             self.assertEqual(msgs[0]["role"], "user")
             self.assertEqual(msgs[1]["content"], "risposta")
+
+    def test_clear_thread(self):
+        with tempfile.TemporaryDirectory() as td:
+            hist = Path(td)
+            append_stats_message(hist, "user", "ciao")
+            clear_stats_thread(hist)
+            self.assertEqual(load_stats_thread(hist), [])
 
     def test_extract_rules_fence(self):
         reply = "Proposta:\n```rules\nconta flip majority\n```\nfine"

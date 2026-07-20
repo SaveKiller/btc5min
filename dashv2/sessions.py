@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from dashv2.agent_chat import thread_has_chat
+from dashv2.agents.agent_chat import thread_has_chat
 from dashv2.execution_log import execution_session_meta
 
 
@@ -56,7 +56,7 @@ def load_session(history_dir: Path, session_id: str) -> dict:
 
 def delete_session(history_dir: Path, session_id: str) -> dict:
     """Cancella registro, exec log, chat e ordini ledger della sessione."""
-    from dashv2.agent_chat import delete_thread
+    from dashv2.agents.agent_chat import delete_thread
     from dashv2.execution_log import delete_execution_session
     from dashv2.history import accounts_dir, remove_session_orders
 

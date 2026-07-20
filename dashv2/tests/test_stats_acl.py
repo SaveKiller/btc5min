@@ -14,6 +14,7 @@ class TestStatsAcl(unittest.TestCase):
         self.assertIn("stats.job.cancel", _HUMAN_CMDS)
         self.assertIn("stats.chat.send", _HUMAN_CMDS)
         self.assertIn("stats.chat.history", _HUMAN_CMDS)
+        self.assertIn("stats.chat.clear", _HUMAN_CMDS)
         self.assertIn("stats.rules.apply", _HUMAN_CMDS)
         self.assertIn("stats.analyze.list", _HUMAN_CMDS)
         self.assertIn("stats.analyze.delete", _HUMAN_CMDS)
@@ -27,7 +28,7 @@ class TestStatsAcl(unittest.TestCase):
     def test_stats_set_matches_expected(self):
         self.assertEqual(_STATS_CMDS, frozenset({
             "stats.backtest.start", "stats.analyze.start", "stats.job.cancel",
-            "stats.chat.send", "stats.chat.history", "stats.rules.apply",
+            "stats.chat.send", "stats.chat.history", "stats.chat.clear", "stats.rules.apply",
             "stats.analyze.list", "stats.analyze.delete",
             "stats.simulation.list", "stats.simulation.load", "stats.simulation.delete",
         }))

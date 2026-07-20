@@ -14,7 +14,7 @@ from dashv2.engine.plugins.live import LiveEngine
 from dashv2.history import append_settled_orders, create_account, order_rows_from_ledger
 from dashv2.orders import OrderEngine
 from dashv2.server import _BOT_CMDS, _HUMAN_CMDS
-from dashv2.strategies import create_strategy, list_strategies, load_active_ids, strategies_dir
+from dashv2.strategies import create_strategy, list_strategies, load_active_ids, strategies_dir, write_module
 from src.book import BookSnapshot
 
 
@@ -69,7 +69,7 @@ class TestBotAttach(unittest.TestCase):
         cfg = {
             "data_dir": Path("."), "history_dir": Path(tempfile.mkdtemp()),
             "default_order_size_usd": 100, "stall_reconnect_sec": 15,
-            "chart_previous_candles": 1, "host": "127.0.0.1", "port": 8780,
+            "host": "127.0.0.1", "port": 8780,
             "engine_plugin": "replay",
         }
         cfg["history_dir"].mkdir(parents=True, exist_ok=True)
@@ -132,7 +132,7 @@ class TestBotAttach(unittest.TestCase):
         eng.round_ended = True
         eng.repo = MagicMock()
         eng.repo.current_candle = MagicMock(return_value=None)
-        eng.repo.previous_candles = MagicMock(return_value=[])
+        eng.repo.candles = MagicMock(return_value=[])
         res = eng._restart_round(playing=False, sec=300)
         self.assertTrue(res["restarted"])
         self.assertFalse(eng.round_ended)
@@ -165,17 +165,20 @@ class TestStrategiesRepo(unittest.TestCase):
     def test_create_list_update_by_type(self):
         with tempfile.TemporaryDirectory() as td:
             root = strategies_dir(Path(td))
+            mf = write_module(root, "abc123abc123", "def on_tick(ctx):\n    return []\n", 1)
             a = create_strategy(
                 root, "A", "deterministic", "alpha desc",
-                rules="r", module_file="strategy_a.py", strategy_id="abc123abc123")
-            create_strategy(root, "B", "inferential", "")
+                rules="r", coded_rules="", module_file=mf, strategy_id="abc123abc123")
+            create_strategy(
+                root, "B", "inferential", "", rules="", coded_rules="", module_file=None)
             self.assertEqual(len(list_strategies(root)), 2)
             self.assertEqual(len(list_strategies(root, "deterministic")), 1)
             from dashv2.strategies import update_strategy
-            updated = update_strategy(root, a["id"], "A2", "new desc", rules="r2")
-            self.assertEqual(updated["name"], "A2")
+            updated = update_strategy(
+                root, a["id"], "A", "new desc", module_rebuilt=False)
+            self.assertEqual(updated["name"], "A")
             self.assertEqual(updated["description"], "new desc")
-            self.assertEqual(updated["rules"], "r2")
+            self.assertEqual(updated["version"], 1)
 
 
 class TestServerAcl(unittest.TestCase):
@@ -196,6 +199,7 @@ class TestServerAcl(unittest.TestCase):
         self.assertIn("stats.backtest.start", _HUMAN_CMDS)
         self.assertNotIn("stats.backtest.start", _BOT_CMDS)
         self.assertNotIn("bot.select", _HUMAN_CMDS)
+        self.assertNotIn("strategy.fork", _HUMAN_CMDS)
         self.assertNotIn("strategy.rename", _HUMAN_CMDS)
 
 

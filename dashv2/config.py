@@ -2,11 +2,14 @@ import json
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent
-_STRATEGY_SYSTEM_PROMPT_PATH = _ROOT / "strategy_system_prompt.md"
-_STATS_SYSTEM_PROMPT_PATH = _ROOT / "stats_system_prompt.md"
-_AGENT_SYSTEM_PROMPT_PATH = _ROOT / "agent_system_prompt.md"
+_AGENTS = _ROOT / "agents"
+_COMMON_PROMPT_PATH = _AGENTS / "common_prompt.md"
+_STRATEGY_SYSTEM_PROMPT_PATH = _AGENTS / "strategy_system_prompt.md"
+_STATS_SYSTEM_PROMPT_PATH = _AGENTS / "stats_system_prompt.md"
+_AGENT_SYSTEM_PROMPT_PATH = _AGENTS / "agent_system_prompt.md"
+_CODED_RULES_PROMPT_PATH = _AGENTS / "coded_rules_prompt.md"
 _REQUIRED = (
-    "data_dir", "history_dir", "host", "port", "chart_previous_candles",
+    "data_dir", "history_dir", "host", "port",
     "default_order_size_usd", "stats_workers", "stall_reconnect_sec", "engine_plugin",
     "cursor_label", "cursor_models", "agent_cursor_label",
 )
@@ -20,25 +23,39 @@ def resolve_cursor_model(cursor_label: str, cursor_models: list[dict]) -> dict:
     raise Exception(f"cursor_label not found in cursor_models: {cursor_label!r}")
 
 
+def _read_prompt(path: Path, label: str) -> str:
+    if not path.is_file():
+        raise Exception(f"{label} not found: {path}")
+    return path.read_text(encoding="utf-8").strip()
+
+
+def reload_common_prompt() -> str:
+    """Rilegge dashv2/agents/common_prompt.md (dominio condiviso)."""
+    return _read_prompt(_COMMON_PROMPT_PATH, "common prompt")
+
+
+def _with_common(specific: str) -> str:
+    return f"{reload_common_prompt()}\n\n{specific.strip()}"
+
+
 def reload_strategy_codegen_system_prompt() -> str:
-    """Rilegge dashv2/strategy_system_prompt.md (hot-reload pre-codegen)."""
-    if not _STRATEGY_SYSTEM_PROMPT_PATH.is_file():
-        raise Exception(f"strategy system prompt not found: {_STRATEGY_SYSTEM_PROMPT_PATH}")
-    return _STRATEGY_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    """COMMON + dashv2/agents/strategy_system_prompt.md (hot-reload pre-codegen)."""
+    return _with_common(_read_prompt(_STRATEGY_SYSTEM_PROMPT_PATH, "strategy system prompt"))
 
 
 def reload_stats_codegen_system_prompt() -> str:
-    """Rilegge dashv2/stats_system_prompt.md (hot-reload pre-codegen analyze)."""
-    if not _STATS_SYSTEM_PROMPT_PATH.is_file():
-        raise Exception(f"stats system prompt not found: {_STATS_SYSTEM_PROMPT_PATH}")
-    return _STATS_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    """COMMON + dashv2/agents/stats_system_prompt.md (hot-reload pre-codegen analyze)."""
+    return _with_common(_read_prompt(_STATS_SYSTEM_PROMPT_PATH, "stats system prompt"))
 
 
 def reload_agent_system_prompt() -> str:
-    """Rilegge dashv2/agent_system_prompt.md."""
-    if not _AGENT_SYSTEM_PROMPT_PATH.is_file():
-        raise Exception(f"agent system prompt not found: {_AGENT_SYSTEM_PROMPT_PATH}")
-    return _AGENT_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    """COMMON + dashv2/agents/agent_system_prompt.md."""
+    return _with_common(_read_prompt(_AGENT_SYSTEM_PROMPT_PATH, "agent system prompt"))
+
+
+def reload_coded_rules_prompt() -> str:
+    """COMMON + dashv2/agents/coded_rules_prompt.md (placeholder {{SOURCE}} ancora da sostituire)."""
+    return _with_common(_read_prompt(_CODED_RULES_PROMPT_PATH, "coded rules prompt"))
 
 
 def load_config() -> dict:
@@ -72,7 +89,6 @@ def load_config() -> dict:
     return {
         "root": _ROOT, "data_dir": data_dir, "history_dir": history_dir,
         "host": str(raw["host"]), "port": int(raw["port"]),
-        "chart_previous_candles": int(raw["chart_previous_candles"]),
         "default_order_size_usd": float(raw["default_order_size_usd"]),
         "stats_workers": int(raw["stats_workers"]),
         "stall_reconnect_sec": float(raw["stall_reconnect_sec"]),

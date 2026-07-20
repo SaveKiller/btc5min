@@ -101,13 +101,13 @@ Se il task richiede comandi/eventi Socket.IO, ACL human/bot, payload o asse temp
 ### Layout UI (dove modificare cosa)
 
 - **Header** (timestamp, picker round, play/pause/speed, timeline, prezzo BTC): `index.html` + `render.js` (`renderTick`, picker) + `app.js` (slider seek/preview)
-- **Chart candele**: `chart.js` + eventi `chart` in `engine.py` (`RoundRepository.previous_candles`, `current_candle`)
+- **Chart candele**: `chart.js` + eventi `chart` in engine (`RoundRepository.candles`, `current_candle`); tutte le candele disponibili (≤ round corrente in replay)
 - **Ladder delta / countdown / PTB**: `render.js` (`renderTick`)
 - **Pulsanti BUY Up/Down, size, signal card** (vol, Rq, Rs, DWin): `index.html` + `render.js` (`applyButtonPreviews`, signal) + `orders.py` / `engine.py` (`_public_tick`, `_orient_dwin`)
 - **Open orders + Close / Cancel**: `render.js` (`renderOrders`) + `orders.py`
 - **Accounts**: `render.js` + comandi `account.*`
-- **Bot / Strategy**: tab BOT — `render.js` (`renderBotSelect`) + comandi `bot.*`
-- **AI Agent**: tab AI AGENT — chat Grok keyed su `session_id`; dropdown Session (incl. Unload session); `agent.chat.*` / `agent.rules.apply` in `app.js` + `agent_service.py`
+- **Bot / Strategy**: tab STRATEGY — `render.js` (`renderBotPanel`) + comandi `bot.*`; icona `bi-cpu` verde/rosso con lo switch
+- **Agent**: tab AGENT — sotto-tab SESSION CHAT (chat Grok keyed su `session_id`), Backtest e Analyze (ex STATS); `agent.chat.*` / `agent.rules.apply` / `stats.*` in `app.js` + `dashv2/agents/` / `stats_service.py`
 - **Closed order history + Export CSV**: `render.js` (`renderHistory`) + `history.py`; CSV generato lato client in `app.js`
 - **Stile / responsive**: `dashboard.css`
 

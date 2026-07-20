@@ -10,10 +10,14 @@ from pathlib import Path
 from dashv2.rounds import LoadedRound
 
 
-def build_round_view(loaded: LoadedRound) -> dict:
-    """Vista read-only del round per moduli analyze (niente ordini)."""
+def build_round_view(
+    loaded: LoadedRound,
+    orders: list[dict] | None = None,
+    strategy: dict | None = None,
+) -> dict:
+    """Vista read-only del round; orders/strategy se analyze su simulation."""
     secs = sorted(loaded.ticks_by_sec)
-    return {
+    view = {
         "market_start_ts": loaded.market_start_ts,
         "hour_utc": datetime.fromtimestamp(loaded.market_start_ts, timezone.utc).hour,
         "outcome": loaded.outcome_name,
@@ -23,6 +27,11 @@ def build_round_view(loaded: LoadedRound) -> dict:
         "secs": secs,
         "ticks": [loaded.ticks_by_sec[s] for s in secs],
     }
+    if orders is not None:
+        view["orders"] = orders
+    if strategy is not None:
+        view["strategy"] = strategy
+    return view
 
 
 def _load_module(module_path: Path):
@@ -41,7 +50,12 @@ def load_reduce_results(module_path: Path):
     return getattr(mod, "reduce_results", None)
 
 
-def run_analyze_round(loaded: LoadedRound, module_path: Path) -> dict:
+def run_analyze_round(
+    loaded: LoadedRound,
+    module_path: Path,
+    orders: list[dict] | None = None,
+    strategy: dict | None = None,
+) -> dict:
     """Esegue analyze_round sul round; merge metriche + ok/error."""
     hour_utc = datetime.fromtimestamp(loaded.market_start_ts, timezone.utc).hour
     base = {
@@ -52,7 +66,7 @@ def run_analyze_round(loaded: LoadedRound, module_path: Path) -> dict:
     }
     try:
         mod = _load_module(module_path)
-        metrics = mod.analyze_round(build_round_view(loaded))
+        metrics = mod.analyze_round(build_round_view(loaded, orders=orders, strategy=strategy))
         return {**base, **metrics, "ok": True, "error": None}
     except Exception as e:
         print(f"batch analyze round error: {e}", flush=True)

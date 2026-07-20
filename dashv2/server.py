@@ -11,9 +11,9 @@ from flask import Flask, send_from_directory
 from flask_socketio import SocketIO
 
 from dashv2 import ipc
-from dashv2.agent_chat import load_thread
-from dashv2.agent_round_tools import AgentRoundTools
-from dashv2.agent_service import AgentService
+from dashv2.agents.agent_chat import load_thread
+from dashv2.agents.agent_round_tools import AgentRoundTools
+from dashv2.agents.agent_service import AgentService
 from dashv2.batch.analyze_job import load_reduce_results
 from dashv2.batch.listing import list_batch_rounds
 from dashv2.batch.reduce import reduce_analyze_fallback, reduce_strategy_rows
@@ -24,11 +24,14 @@ from dashv2.rounds import RoundRepository
 from dashv2.sessions import delete_session, list_sessions_for_account
 from dashv2.simulations import (
     create_simulation, delete_simulation, list_simulations, load_simulation,
+    load_round_orders, simulation_has_orders,
 )
 from dashv2.stats_modules import delete_analyze, list_analyzes, module_path as analyze_module_path
-from dashv2.stats_service import StatsService, load_stats_thread
-from dashv2.strategies import load_strategy, module_path as strategy_module_path, strategies_dir, write_module
-from dashv2.strategy_codegen import generate_coded_rules, generate_strategy_module
+from dashv2.stats_service import StatsService, append_stats_message, clear_stats_thread, load_stats_thread
+from dashv2.strategies import (
+    load_strategy, module_path as strategy_module_path, strategies_dir, write_module,
+)
+from dashv2.agents.strategy_codegen import generate_coded_rules, generate_strategy_module
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _ACK_TIMEOUT_SEC = 30.0
@@ -51,7 +54,7 @@ _HUMAN_CMDS = frozenset({
     "agent.chat.send", "agent.chat.history", "agent.rules.apply",
     "agent.executions.list", "agent.session.select", "agent.session.delete",
     "stats.backtest.start", "stats.analyze.start", "stats.job.cancel",
-    "stats.chat.send", "stats.chat.history", "stats.rules.apply",
+    "stats.chat.send", "stats.chat.history", "stats.chat.clear", "stats.rules.apply",
     "stats.analyze.list", "stats.analyze.delete",
     "stats.simulation.list", "stats.simulation.load", "stats.simulation.delete",
 })
@@ -62,7 +65,7 @@ _AGENT_CMDS = frozenset({
 })
 _STATS_CMDS = frozenset({
     "stats.backtest.start", "stats.analyze.start", "stats.job.cancel",
-    "stats.chat.send", "stats.chat.history", "stats.rules.apply",
+    "stats.chat.send", "stats.chat.history", "stats.chat.clear", "stats.rules.apply",
     "stats.analyze.list", "stats.analyze.delete",
     "stats.simulation.list", "stats.simulation.load", "stats.simulation.delete",
 })
@@ -446,12 +449,27 @@ class ServerBridge:
             self._live_ctx["agent_session_id"] = session_id
             self._agent_busy = True
             if self._human_sid:
-                self.socketio.emit("agent.chat.status", {"phase": "thinking"}, to=self._human_sid)
+                self.socketio.emit(
+                    "agent.chat.status",
+                    {"phase": "thinking", "detail": "Preparazione…"},
+                    to=self._human_sid,
+                )
+
+            def _emit_progress(detail: str) -> None:
+                sid = self._human_sid
+                if sid:
+                    self.socketio.emit(
+                        "agent.chat.status",
+                        {"phase": "thinking", "detail": detail},
+                        to=sid,
+                    )
 
             def _run_agent_turn():
                 # Thread OS: call_model non deve bloccare l'hub eventlet (ping/reconnect).
                 try:
-                    result = self.agent_service.run_turn(session_id, account_id, text)
+                    result = self.agent_service.run_turn(
+                        session_id, account_id, text, on_progress=_emit_progress,
+                    )
                     sid = self._human_sid
                     if sid:
                         self.socketio.emit("agent.chat.message", {
@@ -557,6 +575,16 @@ class ServerBridge:
                 "busy": bool(self._stats_chat_busy),
             }
 
+        @self.socketio.on("stats.chat.clear")
+        def on_chat_clear(_payload=None):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            if self._stats_chat_busy:
+                return {"error": "stats chat busy"}
+            clear_stats_thread(Path(self.cfg["history_dir"]))
+            return {"ok": True, "messages": []}
+
         @self.socketio.on("stats.chat.send")
         def on_chat_send(payload):
             from flask import request
@@ -596,8 +624,7 @@ class ServerBridge:
             if self._stats_chat_busy:
                 return {"error": "stats chat busy"}
             body = payload or {}
-            day_from = body["day_from"]
-            day_to = body["day_to"]
+            simulation_id = body["simulation_id"]
             rules = body["rules"]
             analyze_id = body.get("analyze_id")
             name = body.get("name")
@@ -612,9 +639,8 @@ class ServerBridge:
                         "analyzes": list_analyzes(Path(self.cfg["history_dir"])),
                         "applied_id": aid,
                     })
-                    # Auto-run analyze sul range del payload.
                     started = self._stats_start_job("analyze", {
-                        "analyze_id": aid, "day_from": day_from, "day_to": day_to,
+                        "analyze_id": aid, "simulation_id": simulation_id,
                     })
                     if "error" in started:
                         self._emit_stats("stats.job.error", {
@@ -659,8 +685,14 @@ class ServerBridge:
         if self._stats_busy:
             self._emit_stats("stats.job.error", {"message": "job already running", "kind": kind})
             return {"error": "job already running"}
-        day_from = body["day_from"]
-        day_to = body["day_to"]
+        simulation_id = body.get("simulation_id")
+        if kind == "analyze":
+            simulation_id = body["simulation_id"]
+            day_from = ""
+            day_to = ""
+        else:
+            day_from = body["day_from"]
+            day_to = body["day_to"]
         self._stats_day_from = day_from
         self._stats_day_to = day_to
         # Ordine: clear cancel prima di busy, così cancel post-busy non viene perso.
@@ -677,13 +709,16 @@ class ServerBridge:
             try:
                 repo = RoundRepository(
                     Path(self.cfg["data_dir"]), float(self.cfg["stall_reconnect_sec"]))
-                rounds, skipped = list_batch_rounds(repo, day_from, day_to)
                 size = float(self.cfg["default_order_size_usd"])
                 hist = Path(self.cfg["history_dir"])
+                job_day_from = day_from
+                job_day_to = day_to
                 if kind == "backtest":
+                    rounds, skipped = list_batch_rounds(repo, job_day_from, job_day_to)
                     sid = body["strategy_id"]
                     st = load_strategy(strategies_dir(hist), sid)
-                    mp = strategy_module_path(strategies_dir(hist), sid)
+                    ver = int(body["strategy_version"]) if body.get("strategy_version") is not None else st["version"]
+                    mp = strategy_module_path(strategies_dir(hist), sid, ver)
                     label = st["name"]
                     tasks = [{
                         "job": "strategy",
@@ -701,15 +736,38 @@ class ServerBridge:
                     aid = body["analyze_id"]
                     mp = analyze_module_path(hist, aid)
                     label = aid
-                    tasks = [{
-                        "job": "analyze",
-                        "data_dir": str(self.cfg["data_dir"]),
-                        "stall_reconnect_sec": float(self.cfg["stall_reconnect_sec"]),
-                        "bin_path": r["bin_path"],
-                        "market_start_ts": r["market_start_ts"],
-                        "hour_utc": r["hour_utc"],
-                        "module_path": str(mp),
-                    } for r in rounds]
+                    if not simulation_has_orders(hist, simulation_id):
+                        raise Exception(
+                            f"simulation has no orders (JSON v1 or missing sqlite): {simulation_id}"
+                        )
+                    sim = load_simulation(hist, simulation_id)
+                    job_day_from = sim["day_from"]
+                    job_day_to = sim["day_to"]
+                    self._stats_day_from = job_day_from
+                    self._stats_day_to = job_day_to
+                    strategy = {
+                        "id": sim["strategy_id"],
+                        "name": sim["strategy_name"],
+                        "version": sim["strategy_version"],
+                    }
+                    skipped = 0
+                    tasks = []
+                    for r in sim["rounds"]:
+                        if not r["ok"]:
+                            skipped += 1
+                            continue
+                        mts = int(r["market_start_ts"])
+                        tasks.append({
+                            "job": "analyze",
+                            "data_dir": str(self.cfg["data_dir"]),
+                            "stall_reconnect_sec": float(self.cfg["stall_reconnect_sec"]),
+                            "bin_path": str(repo.bin_path(mts)),
+                            "market_start_ts": mts,
+                            "hour_utc": int(r["hour_utc"]),
+                            "module_path": str(mp),
+                            "orders": load_round_orders(hist, simulation_id, mts),
+                            "strategy": strategy,
+                        })
 
                 # Cancel durante listing/prep: niente pool, niente reduce/done.
                 if self._stats_cancel_requested:
@@ -726,7 +784,7 @@ class ServerBridge:
                 elapsed = time.monotonic() - t0
                 n_err = sum(1 for r in results if not r["ok"])
                 summary = {
-                    "name": label, "day_from": day_from, "day_to": day_to,
+                    "name": label, "day_from": job_day_from, "day_to": job_day_to,
                     "workers": int(self.cfg["stats_workers"]),
                     "elapsed_sec": round(elapsed, 2),
                     "skipped": skipped, "errors": n_err, "rounds": len(results),
@@ -734,21 +792,24 @@ class ServerBridge:
                 if kind == "backtest":
                     table = reduce_strategy_rows(results)
                     sim = create_simulation(
-                        hist, strategy_id=sid, strategy_name=label,
-                        day_from=day_from, day_to=day_to,
+                        hist, strategy_id=sid, strategy_name=label, strategy_version=ver,
+                        day_from=job_day_from, day_to=job_day_to,
                         summary=summary, table=table, rounds=results,
                     )
                     self._emit_stats("stats.job.done", {
                         "kind": "backtest", "table": table, "summary": sim["summary"],
-                        "simulation_id": sim["id"], "rounds": results,
+                        "simulation_id": sim["id"], "rounds": sim["rounds"],
                     })
                     self._emit_simulations(sim["id"])
                 else:
+                    summary["simulation_id"] = simulation_id
                     reduce_fn = load_reduce_results(mp)
                     md = reduce_fn(results) if reduce_fn else reduce_analyze_fallback(results)
+                    result_msg = append_stats_message(hist, "assistant", md)
                     self._emit_stats("stats.job.done", {
                         "kind": "analyze", "markdown": md, "summary": summary,
                     })
+                    self._emit_stats("stats.chat.message", {"message": result_msg})
             except BatchCancelled:
                 print("stats job cancelled", flush=True)
                 self._emit_stats("stats.job.cancelled", {"kind": kind})
@@ -798,7 +859,7 @@ class ServerBridge:
             coded_rules = self._codegen_coded_rules(source)
             strategy_id = uuid.uuid4().hex[:12]
             self._emit_generate("saving", "Saving strategy…", strategy_id)
-            module_file = write_module(self.strategies_root, strategy_id, source)
+            module_file = write_module(self.strategies_root, strategy_id, source, 1)
         ipc_payload = {
             "name": body["name"], "type": stype, "description": body.get("description") or "",
             "rules": rules, "coded_rules": coded_rules, "module_file": module_file,
@@ -808,7 +869,7 @@ class ServerBridge:
             result = self._request_to_data("strategy.create", ipc_payload, actor="user")
         except Exception:
             if strategy_id is not None:
-                py = self.strategies_root / f"strategy_{strategy_id}.py"
+                py = strategy_module_path(self.strategies_root, strategy_id, 1)
                 if py.is_file():
                     py.unlink()
             raise
@@ -817,18 +878,26 @@ class ServerBridge:
 
     def _strategy_update_with_codegen(self, body: dict) -> dict:
         sid = body["strategy_id"]
+        data = load_strategy(self.strategies_root, sid)
+        name = body["name"].strip()
+        description = body.get("description") or ""
         rules = body.get("rules")
+        rules_changed = bool(body.get("rules_changed") and rules is not None)
         module_file = None
         coded_rules = None
-        if body.get("rules_changed") and rules is not None:
+        module_rebuilt = False
+        if rules_changed and data["type"] == "deterministic":
             source = self._codegen_source(rules)
             coded_rules = self._codegen_coded_rules(source)
+            new_ver = data["version"] + 1
             self._emit_generate("saving", "Saving strategy…", sid)
-            module_file = write_module(self.strategies_root, sid, source)
+            module_file = write_module(self.strategies_root, sid, source, new_ver)
+            module_rebuilt = True
         ipc_payload = {
-            "strategy_id": sid, "name": body["name"],
-            "description": body.get("description") or "",
-            "rules": rules, "module_file": module_file, "coded_rules": coded_rules,
+            "strategy_id": sid, "name": name, "description": description,
+            "module_rebuilt": module_rebuilt,
+            "rules": rules if module_rebuilt or data["type"] != "deterministic" else None,
+            "module_file": module_file, "coded_rules": coded_rules,
         }
         result = self._request_to_data("strategy.update", ipc_payload, actor="user")
         self._emit_generate("done", "Strategy updated", sid)

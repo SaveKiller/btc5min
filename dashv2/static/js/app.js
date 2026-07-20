@@ -4,15 +4,15 @@ import {
     renderAgentContext, renderAgentProposed, renderBotPanel, renderEnginePlugin, renderHistory,
     renderOrders, renderOutcome, renderRoundPickerDays, renderRoundPickerHours, renderRoundPickerRounds,
     renderSessionHistory, renderStakeButtons, renderTick, setDisconnectBanner, toggleHistorySession,
-    renderStatsMode, renderStatsDays, renderStatsStrategySelect, renderStatsAnalyzeSelect,
-    renderStatsSimulationSelect, renderStatsJobUi, renderStatsBacktest, renderStatsAnalyze,
-    renderStatsChat, renderStatsProposed,
+    renderStatsMode, renderStatsDays, renderStatsStrategySelect,
+    renderStatsSimulationSelect, renderStatsAnalyzeSimSelect, renderStatsJobUi, renderStatsBacktest, renderStatsAnalyze,
+    renderStatsChat,
 } from "./render.js";
 
 const REPLAY_SPEED_KEY = "dashv2_replay_speed";
 const REPLAY_SPEEDS = [1, 2, 5];
 const LEFT_TAB_KEY = "dashv2_left_tab";
-const LEFT_TAB_IDS = ["candles-tab", "accounts-tab", "bot-tab", "stats-tab", "agent-tab"];
+const LEFT_TAB_IDS = ["candles-tab", "accounts-tab", "bot-tab", "agent-tab"];
 const DEFAULT_LEFT_TAB = "accounts-tab";
 const AGENT_HISTORY_POLL_MS = 5000;
 
@@ -21,22 +21,22 @@ const state = {
     accounts: [], activeAccountId: null, activeAccount: null,
     strategies: [], activeStrategyIds: [], selectedStrategyId: null,
     strategyType: "deterministic", botAttachAllowed: true, botActive: false,
-    chartPrevious: [], chartCurrent: null, chartFreeView: false, scrubbing: false, wasPlaying: false,
+    chartPrevious: [], chartCurrent: null, scrubbing: false, wasPlaying: false,
     activeRoundTs: null, syncSizesOnNextOrders: false, loadedRoundDays: {},
     roundDays: [], roundNav: [], replaySpeed: loadStoredReplaySpeed(),
-    agentMessages: [], agentBusy: false, agentProposed: null,
+    agentMessages: [], agentBusy: false, agentThinkingDetail: "", agentProposed: null,
     agentSessionId: null, executionSessions: [], agentFocus: null,
     sessionPickerDay: null,
     statsMode: "backtest",
     statsDayFrom: "", statsDayTo: "",
-    statsStrategyId: null, statsAnalyzeId: null,
+    statsStrategyId: null, statsStrategyVersion: null, statsAnalyzeId: null,
     statsAnalyzes: [],
     statsSimulations: [], statsSimulationId: null,
+    statsAnalyzeSimulationId: null,
     statsJobRunning: false, statsProgress: null,
     statsTable: null, statsSummary: null, statsRounds: null,
     statsDrill: { level: "hours", hour: null, slot: null },
-    statsMarkdown: "",
-    statsChatMessages: [], statsChatBusy: false, statsProposed: null,
+    statsChatMessages: [], statsChatBusy: false,
 };
 
 const socket = io({ transports: ["websocket", "polling"] });
@@ -64,6 +64,7 @@ function loadStoredReplaySpeed() {
 
 function loadStoredLeftTab() {
     const tabId = localStorage.getItem(LEFT_TAB_KEY);
+    if (tabId === "stats-tab") return "agent-tab";
     return LEFT_TAB_IDS.includes(tabId) ? tabId : DEFAULT_LEFT_TAB;
 }
 
@@ -284,6 +285,7 @@ function loadAgentExecutions() {
 function finishAgentTurn() {
     stopAgentHistoryPoll();
     state.agentBusy = false;
+    state.agentThinkingDetail = "";
     document.getElementById("agentSendBtn").disabled = false;
     setAgentStatus("");
     renderAgentChat(state.agentMessages);
@@ -306,13 +308,36 @@ function stopAgentHistoryPoll() {
     agentHistoryPollTimer = null;
 }
 
-function setAgentBusyUi(busy) {
+function setAgentBusyUi(busy, detail) {
     state.agentBusy = busy;
+    if (busy) {
+        state.agentThinkingDetail = detail || state.agentThinkingDetail || "Thinking…";
+    } else {
+        state.agentThinkingDetail = "";
+    }
     document.getElementById("agentSendBtn").disabled = busy;
-    setAgentStatus(busy ? "Thinking…" : "");
-    renderAgentChat(state.agentMessages, { thinking: busy });
+    setAgentStatus(busy ? state.agentThinkingDetail : "");
+    renderAgentChat(state.agentMessages, {
+        thinking: busy,
+        thinkingText: state.agentThinkingDetail,
+    });
     if (busy) startAgentHistoryPoll();
     else stopAgentHistoryPoll();
+}
+
+function setAgentThinkingDetail(detail) {
+    if (!state.agentBusy) return;
+    state.agentThinkingDetail = detail || "Thinking…";
+    setAgentStatus(state.agentThinkingDetail);
+    const body = document.querySelector("#agentThinkingBubble .agent-thinking-text");
+    if (body) {
+        body.textContent = state.agentThinkingDetail;
+        return;
+    }
+    renderAgentChat(state.agentMessages, {
+        thinking: true,
+        thinkingText: state.agentThinkingDetail,
+    });
 }
 
 function loadAgentHistory() {
@@ -324,7 +349,7 @@ function loadAgentHistory() {
     return emitAck("agent.chat.history", { session_id: state.agentSessionId }).then((res) => {
         state.agentMessages = res.messages || [];
         if (res.busy) {
-            setAgentBusyUi(true);
+            setAgentBusyUi(true, state.agentThinkingDetail || "Thinking…");
         } else if (state.agentBusy) {
             finishAgentTurn();
         } else {
@@ -409,9 +434,9 @@ function setStatsBacktestResults({ table = null, summary = null, rounds = null }
 function refreshStatsPanels() {
     renderStatsMode(state.statsMode);
     renderStatsDays(state.statsDayFrom, state.statsDayTo);
-    renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsJobRunning);
-    renderStatsAnalyzeSelect(state.statsAnalyzes, state.statsAnalyzeId);
+    renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsStrategyVersion, state.statsJobRunning);
     renderStatsSimulationSelect(state.statsSimulations, state.statsSimulationId);
+    renderStatsAnalyzeSimSelect(state.statsSimulations, state.statsAnalyzeSimulationId);
     renderStatsJobUi(state);
     renderStatsBacktest(state);
     renderStatsAnalyze(state);
@@ -424,8 +449,6 @@ function loadStatsAnalyzes() {
         if (!state.statsAnalyzeId && state.statsAnalyzes.length) {
             state.statsAnalyzeId = state.statsAnalyzes[0].id;
         }
-        renderStatsAnalyzeSelect(state.statsAnalyzes, state.statsAnalyzeId);
-        renderStatsJobUi(state);
     }).catch(() => {});
 }
 
@@ -437,6 +460,12 @@ function loadStatsSimulations() {
             state.statsSimulationId = null;
         }
         renderStatsSimulationSelect(state.statsSimulations, state.statsSimulationId);
+        renderStatsAnalyzeSimSelect(state.statsSimulations, state.statsAnalyzeSimulationId);
+        if (state.statsAnalyzeSimulationId
+            && !state.statsSimulations.some((s) => s.id === state.statsAnalyzeSimulationId && s.has_orders)) {
+            state.statsAnalyzeSimulationId = null;
+            renderStatsAnalyzeSimSelect(state.statsSimulations, null);
+        }
     }).catch(() => {});
 }
 
@@ -444,6 +473,7 @@ function loadStatsSimulations() {
 function applyLoadedSimulation(sim) {
     state.statsSimulationId = sim.id;
     state.statsStrategyId = sim.strategy_id;
+    state.statsStrategyVersion = sim.strategy_version;
     state.statsDayFrom = sim.day_from;
     state.statsDayTo = sim.day_to;
     state.statsTable = sim.table || null;
@@ -454,7 +484,7 @@ function applyLoadedSimulation(sim) {
     state.statsRounds = sim.rounds || null;
     resetStatsDrill();
     renderStatsDays(state.statsDayFrom, state.statsDayTo);
-    renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsJobRunning);
+    renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsStrategyVersion, state.statsJobRunning);
     renderStatsSimulationSelect(state.statsSimulations, state.statsSimulationId);
     renderStatsBacktest(state);
     renderStatsJobUi(state);
@@ -491,6 +521,10 @@ function setStatsChatBusy(busy) {
 
 function sendStatsMessage() {
     if (state.statsChatBusy) return;
+    const simulation_id = state.statsAnalyzeSimulationId
+        || document.getElementById("statsAnalyzeSimSelect").value;
+    if (!simulation_id) return alert("Seleziona una Simulation");
+    state.statsAnalyzeSimulationId = simulation_id;
     const input = document.getElementById("statsChatInput");
     const text = input.value.trim();
     if (!text) return;
@@ -504,37 +538,29 @@ function sendStatsMessage() {
 }
 
 
+function clearStatsChat() {
+    if (state.statsChatBusy) return alert("Chat busy");
+    emitAck("stats.chat.clear").then(() => {
+        state.statsChatMessages = [];
+        renderStatsChat([], { thinking: false });
+    }).catch(alert);
+}
+
+
 function startStatsBacktest() {
     const { day_from, day_to } = readStatsDays();
     const strategy_id = document.getElementById("statsStrategySelect").value;
+    const strategy_version = Number(document.getElementById("statsStrategyVersionSelect").value);
     if (!strategy_id) return alert("Seleziona una strategy");
+    if (!strategy_version) return alert("Seleziona una versione");
     if (!day_from || !day_to) return alert("Imposta il range giorni");
     state.statsStrategyId = strategy_id;
+    state.statsStrategyVersion = strategy_version;
     state.statsJobRunning = true;
     state.statsProgress = null;
     setStatsBacktestResults({});
     renderStatsJobUi(state);
-    emitAck("stats.backtest.start", { strategy_id, day_from, day_to }).catch((err) => {
-        state.statsJobRunning = false;
-        renderStatsJobUi(state);
-        alert(err);
-    });
-}
-
-
-function startStatsAnalyze() {
-    const { day_from, day_to } = readStatsDays();
-    const analyze_id = document.getElementById("statsAnalyzeSelect").value;
-    if (!analyze_id) return alert("Seleziona un modulo analyze");
-    if (!day_from || !day_to) return alert("Imposta il range giorni");
-    state.statsAnalyzeId = analyze_id;
-    state.statsJobRunning = true;
-    state.statsProgress = null;
-    state.statsMarkdown = "";
-    state.statsSummary = null;
-    renderStatsJobUi(state);
-    renderStatsAnalyze(state);
-    emitAck("stats.analyze.start", { analyze_id, day_from, day_to }).catch((err) => {
+    emitAck("stats.backtest.start", { strategy_id, strategy_version, day_from, day_to }).catch((err) => {
         state.statsJobRunning = false;
         renderStatsJobUi(state);
         alert(err);
@@ -547,30 +573,19 @@ function cancelStatsJob() {
 }
 
 
-function applyStatsRules() {
-    const btn = document.getElementById("statsApplyRulesBtn");
-    const rules = btn.dataset.rules;
+function applyStatsRules(rules) {
     if (!rules) return;
-    const { day_from, day_to } = readStatsDays();
-    if (!day_from || !day_to) return alert("Imposta il range giorni");
-    const analyze_id = document.getElementById("statsAnalyzeSelect").value || null;
-    const name = document.getElementById("statsAnalyzeName").value.trim();
-    const payload = { rules, day_from, day_to };
-    if (name) {
-        payload.name = name;
-    } else if (analyze_id) {
-        payload.analyze_id = analyze_id;
-    } else {
-        return alert("Nome modulo obbligatorio (o seleziona un modulo esistente)");
-    }
+    const simulation_id = state.statsAnalyzeSimulationId
+        || document.getElementById("statsAnalyzeSimSelect").value;
+    if (!simulation_id) return alert("Seleziona una Simulation");
+    state.statsAnalyzeSimulationId = simulation_id;
+    const payload = { rules, simulation_id };
+    if (state.statsAnalyzeId) payload.analyze_id = state.statsAnalyzeId;
+    else payload.name = `auto-${Date.now().toString(36).slice(-6)}`;
     setStatsChatBusy(true);
-    document.getElementById("statsChatStatusLabel").textContent = "Codegen + auto-run…";
+    document.getElementById("statsChatStatusLabel").textContent = "Codegen + analisi in corso…";
     document.getElementById("statsChatStatusLabel").classList.remove("d-none");
-    // Ack immediato (accepted); codegen/auto-run via eventi status/analyzes/job.
-    emitAck("stats.rules.apply", payload).then(() => {
-        state.statsProposed = null;
-        renderStatsProposed(null);
-    }).catch((err) => {
+    emitAck("stats.rules.apply", payload).catch((err) => {
         setStatsChatBusy(false);
         alert(err);
     });
@@ -613,17 +628,49 @@ function showStrategyModalTab(tabId) {
     if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
 }
 
+function fillStrategyModalVersions(strategy, selectedVersion) {
+    const sel = document.getElementById("strategyModalVersion");
+    if (!strategy) {
+        sel.innerHTML = `<option value="1">1</option>`;
+        sel.value = "1";
+        sel.disabled = true;
+        return;
+    }
+    const versions = strategy.versions || [{ version: strategy.version || 1 }];
+    sel.innerHTML = versions.map((v) =>
+        `<option value="${v.version}">${v.version}</option>`).join("");
+    const tip = strategy.version || 1;
+    const pick = selectedVersion != null ? selectedVersion : tip;
+    sel.value = String(pick);
+    sel.disabled = false;
+}
+
+function applyStrategyVersionBase(strategy, version) {
+    const versions = strategy.versions || [];
+    const snap = versions.find((v) => v.version === version) || {
+        rules: strategy.rules, coded_rules: strategy.coded_rules,
+    };
+    document.getElementById("strategyModalRules").value = snap.rules || "";
+    document.getElementById("strategyModalRules").dataset.original = snap.rules || "";
+    document.getElementById("strategyModalCodedRules").value = snap.coded_rules || "";
+}
+
 function openStrategyModal(mode, strategy = null) {
     document.getElementById("strategyModalMode").value = mode;
     document.getElementById("strategyModalId").value = strategy?.id || "";
     document.getElementById("strategyModalName").value = strategy?.name || "";
+    document.getElementById("strategyModalName").dataset.original = strategy?.name || "";
     document.getElementById("strategyModalDescription").value = strategy?.description || "";
-    document.getElementById("strategyModalRules").value = strategy?.rules || "";
-    document.getElementById("strategyModalRules").dataset.original = strategy?.rules || "";
-    document.getElementById("strategyModalCodedRules").value = strategy?.coded_rules || "";
     document.getElementById("strategyModalTitle").textContent = mode === "create" ? "New strategy" : "Edit strategy";
     const showRules = state.strategyType === "deterministic" || strategy?.type === "deterministic";
     document.getElementById("strategyModalRulesWrap").classList.toggle("d-none", !showRules);
+    fillStrategyModalVersions(strategy, strategy?.version);
+    if (strategy) applyStrategyVersionBase(strategy, strategy.version);
+    else {
+        document.getElementById("strategyModalRules").value = "";
+        document.getElementById("strategyModalRules").dataset.original = "";
+        document.getElementById("strategyModalCodedRules").value = "";
+    }
     setStrategyModalBusy(false);
     showStrategyModalTab("strategyRulesTab");
     strategyModal.show();
@@ -642,12 +689,24 @@ function setStrategyModalBusy(busy, text = "") {
     closeBtn.disabled = busy;
 }
 
+function refreshStrategyModalFromStrategy(s, name, description, rules) {
+    document.getElementById("strategyModalMode").value = "edit";
+    document.getElementById("strategyModalId").value = s.id;
+    document.getElementById("strategyModalName").value = s.name || name;
+    document.getElementById("strategyModalName").dataset.original = s.name || name;
+    document.getElementById("strategyModalDescription").value = s.description ?? description;
+    document.getElementById("strategyModalTitle").textContent = "Edit strategy";
+    fillStrategyModalVersions(s, s.version);
+    applyStrategyVersionBase(s, s.version);
+}
+
 function saveStrategyModal() {
     const mode = document.getElementById("strategyModalMode").value;
     const name = document.getElementById("strategyModalName").value.trim();
     const description = document.getElementById("strategyModalDescription").value;
     const rules = document.getElementById("strategyModalRules").value;
     const strategyId = document.getElementById("strategyModalId").value;
+    const baseVersion = Number(document.getElementById("strategyModalVersion").value) || 1;
     if (!name) return alert("Name required");
     const isDet = state.strategyType === "deterministic" || (
         mode === "edit" && state.strategies.find((s) => s.id === strategyId)?.type === "deterministic"
@@ -662,23 +721,22 @@ function saveStrategyModal() {
     } else {
         setStrategyModalBusy(true, rulesChanged ? "Regenerating Python module…" : "Saving…");
         req = emitAck("strategy.update", {
-            strategy_id: strategyId, name, description, rules, rules_changed: rulesChanged,
+            strategy_id: strategyId, name, description, rules,
+            rules_changed: rulesChanged, base_version: baseVersion,
         });
     }
     req.then((res) => {
         const s = res.strategy;
-        if (s) state.selectedStrategyId = s.id;
+        if (s) {
+            state.selectedStrategyId = s.id;
+            const idx = state.strategies.findIndex((x) => x.id === s.id);
+            if (idx >= 0) state.strategies[idx] = { ...state.strategies[idx], ...s };
+            else state.strategies = [s, ...state.strategies];
+        }
         setStrategyModalBusy(false);
         renderBotPanel(state);
         if (isDet && rulesChanged && s) {
-            document.getElementById("strategyModalMode").value = "edit";
-            document.getElementById("strategyModalId").value = s.id;
-            document.getElementById("strategyModalName").value = s.name || name;
-            document.getElementById("strategyModalDescription").value = s.description ?? description;
-            document.getElementById("strategyModalRules").value = s.rules ?? rules;
-            document.getElementById("strategyModalRules").dataset.original = s.rules ?? rules;
-            document.getElementById("strategyModalCodedRules").value = s.coded_rules || "";
-            document.getElementById("strategyModalTitle").textContent = "Edit strategy";
+            refreshStrategyModalFromStrategy(s, name, description, rules);
             showStrategyModalTab("strategyCodedRulesTab");
             return;
         }
@@ -713,7 +771,7 @@ socket.on("bootstrap", (payload) => {
     renderAgentContext(state);
     loadAgentExecutions();
     ensureStatsDayDefaults();
-    renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsJobRunning);
+    renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsStrategyVersion, state.statsJobRunning);
     refreshStatsPanels();
 });
 
@@ -736,10 +794,7 @@ socket.on("session", (payload) => {
     const roundStart = payload.loaded && payload.sec === 300 && (
         !prev?.loaded || prev.market_start_ts !== payload.market_start_ts || prev.round_ended
     );
-    if (roundStart) {
-        state.chartFreeView = true;
-        selectLeftTab("candles-tab");
-    }
+    if (roundStart) selectLeftTab("candles-tab");
     updateRoundNavButtons();
     renderAccounts(state);
     renderTick(state);
@@ -779,9 +834,7 @@ socket.on("chart", (payload) => {
     if (payload.full_reset) {
         state.chartPrevious = payload.previous || [];
         state.chartCurrent = payload.current;
-        const freeView = state.chartFreeView;
-        state.chartFreeView = false;
-        setCandles(state.chartPrevious, state.chartCurrent, { freeView });
+        setCandles(state.chartPrevious, state.chartCurrent);
     } else if (payload.current) {
         state.chartCurrent = payload.current;
         updateCurrentCandle(payload.current);
@@ -827,7 +880,7 @@ socket.on("strategies", (payload) => {
     renderBotPanel(state);
     renderAgentContext(state);
     renderAgentProposed(state.agentProposed, state.selectedStrategyId);
-    renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsJobRunning);
+    renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsStrategyVersion, state.statsJobRunning);
     renderStatsJobUi(state);
 });
 
@@ -848,7 +901,8 @@ socket.on("stats.job.done", (payload) => {
         resetStatsDrill();
         renderStatsBacktest(state);
     } else {
-        state.statsMarkdown = payload.markdown || "";
+        state.statsSummary = payload.summary || null;
+        setStatsChatBusy(false);
         renderStatsAnalyze(state);
     }
     renderStatsJobUi(state);
@@ -878,10 +932,11 @@ socket.on("stats.chat.message", (payload) => {
         if (!last || last.ts !== payload.message.ts || last.content !== payload.message.content) {
             state.statsChatMessages = [...state.statsChatMessages, payload.message];
         }
+        renderStatsChat(state.statsChatMessages, { thinking: state.statsChatBusy });
     }
-    if (payload.proposed_rules !== undefined) {
-        state.statsProposed = payload.proposed_rules;
-        renderStatsProposed(state.statsProposed);
+    if (payload.proposed_rules?.rules) {
+        applyStatsRules(payload.proposed_rules.rules);
+        return;
     }
     setStatsChatBusy(false);
 });
@@ -899,14 +954,11 @@ socket.on("stats.analyzes", (payload) => {
     state.statsAnalyzes = payload.analyzes || [];
     if (payload.applied_id) {
         state.statsAnalyzeId = payload.applied_id;
-        document.getElementById("statsAnalyzeName").value = "";
-        // Auto-run dopo apply: UI job in attesa di progress.
         state.statsJobRunning = true;
         state.statsProgress = null;
     } else if (state.statsAnalyzeId && !state.statsAnalyzes.some((a) => a.id === state.statsAnalyzeId)) {
         state.statsAnalyzeId = state.statsAnalyzes[0]?.id || null;
     }
-    renderStatsAnalyzeSelect(state.statsAnalyzes, state.statsAnalyzeId);
     renderStatsJobUi(state);
 });
 
@@ -916,7 +968,12 @@ socket.on("stats.simulations", (payload) => {
     else if (state.statsSimulationId && !state.statsSimulations.some((s) => s.id === state.statsSimulationId)) {
         state.statsSimulationId = null;
     }
+    if (state.statsAnalyzeSimulationId
+        && !state.statsSimulations.some((s) => s.id === state.statsAnalyzeSimulationId && s.has_orders)) {
+        state.statsAnalyzeSimulationId = null;
+    }
     renderStatsSimulationSelect(state.statsSimulations, state.statsSimulationId);
+    renderStatsAnalyzeSimSelect(state.statsSimulations, state.statsAnalyzeSimulationId);
 });
 
 socket.on("agent.chat.message", (payload) => {
@@ -944,7 +1001,9 @@ socket.on("agent.session.deleted", (payload) => {
 
 socket.on("agent.chat.status", (payload) => {
     if (payload.phase === "thinking") {
-        setAgentStatus("Thinking…");
+        const detail = payload.detail || "Thinking…";
+        if (state.agentBusy) setAgentThinkingDetail(detail);
+        else setAgentBusyUi(true, detail);
         return;
     }
     // idle: riallinea da disco (evento message può essere andato perso).
@@ -1219,7 +1278,9 @@ document.getElementById("agentContextBody").addEventListener("click", (e) => {
             .then(applyAgentFocus).catch(alert);
     }
 });
-document.getElementById("agentDeleteSessionBtn").addEventListener("click", () => {
+document.getElementById("agentContextBody").addEventListener("click", (e) => {
+    const btn = e.target.closest("#agentDeleteSessionBtn");
+    if (!btn || btn.disabled) return;
     if (!state.agentSessionId) return alert("Seleziona una sessione");
     const sid = state.agentSessionId;
     if (!confirm(`Delete session ${sid} permanently (chat, orders, exec log)?`)) return;
@@ -1253,18 +1314,37 @@ document.getElementById("leftTabs").addEventListener("shown.bs.tab", (e) => {
     if (e.target.id === "agent-tab") {
         renderAgentContext(state);
         loadAgentExecutions();
-    }
-    if (e.target.id === "stats-tab") {
-        ensureStatsDayDefaults();
-        refreshStatsPanels();
-        loadStatsAnalyzes();
-        loadStatsSimulations();
-        loadStatsChatHistory();
+        const inner = document.querySelector("#agentInnerTabs .nav-link.active");
+        if (inner?.id === "agent-backtest-tab") refreshAgentBacktestTab();
+        else if (inner?.id === "agent-analyze-tab") refreshAgentAnalyzeTab();
     }
 });
 
-document.getElementById("statsModeBacktestBtn").addEventListener("click", () => setStatsMode("backtest"));
-document.getElementById("statsModeAnalyzeBtn").addEventListener("click", () => setStatsMode("analyze"));
+document.getElementById("agentInnerTabs").addEventListener("shown.bs.tab", (e) => {
+    if (e.target.id === "agent-session-chat-tab") {
+        renderAgentContext(state);
+        loadAgentExecutions();
+    } else if (e.target.id === "agent-backtest-tab") {
+        refreshAgentBacktestTab();
+    } else if (e.target.id === "agent-analyze-tab") {
+        refreshAgentAnalyzeTab();
+    }
+});
+
+function refreshAgentBacktestTab() {
+    setStatsMode("backtest");
+    ensureStatsDayDefaults();
+    refreshStatsPanels();
+    loadStatsSimulations();
+}
+
+function refreshAgentAnalyzeTab() {
+    setStatsMode("analyze");
+    refreshStatsPanels();
+    loadStatsAnalyzes();
+    loadStatsSimulations();
+    loadStatsChatHistory();
+}
 document.getElementById("statsDayFrom").addEventListener("change", () => {
     state.statsDayFrom = document.getElementById("statsDayFrom").value;
     renderStatsDays(state.statsDayFrom, state.statsDayTo);
@@ -1280,23 +1360,34 @@ for (const id of ["statsDayFrom", "statsDayTo"]) {
 }
 document.getElementById("statsStrategySelect").addEventListener("change", (e) => {
     state.statsStrategyId = e.target.value || null;
+    state.statsStrategyVersion = null;
     e.target.classList.toggle("is-placeholder", !e.target.value);
+    renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsStrategyVersion, state.statsJobRunning);
     renderStatsJobUi(state);
 });
 document.getElementById("statsStrategySelect").addEventListener("input", (e) => {
     state.statsStrategyId = e.target.value || null;
+    state.statsStrategyVersion = null;
     e.target.classList.toggle("is-placeholder", !e.target.value);
+    renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsStrategyVersion, state.statsJobRunning);
     renderStatsJobUi(state);
 });
-document.getElementById("statsAnalyzeSelect").addEventListener("change", (e) => {
-    state.statsAnalyzeId = e.target.value || null;
-    renderStatsAnalyzeSelect(state.statsAnalyzes, state.statsAnalyzeId);
-    renderStatsJobUi(state);
+document.getElementById("statsStrategyVersionSelect").addEventListener("change", (e) => {
+    state.statsStrategyVersion = e.target.value ? Number(e.target.value) : null;
+});
+document.getElementById("strategyModalVersion").addEventListener("change", (e) => {
+    const sid = document.getElementById("strategyModalId").value;
+    const strategy = state.strategies.find((s) => s.id === sid);
+    if (!strategy) return;
+    applyStrategyVersionBase(strategy, Number(e.target.value));
+    showStrategyModalTab("strategyRulesTab");
+});
+document.getElementById("statsAnalyzeSimSelect").addEventListener("change", (e) => {
+    state.statsAnalyzeSimulationId = e.target.value || null;
+    renderStatsAnalyzeSimSelect(state.statsSimulations, state.statsAnalyzeSimulationId);
 });
 document.getElementById("statsBacktestRunBtn").addEventListener("click", startStatsBacktest);
-document.getElementById("statsAnalyzeRunBtn").addEventListener("click", startStatsAnalyze);
 document.getElementById("statsJobCancelBtn").addEventListener("click", cancelStatsJob);
-document.getElementById("statsAnalyzeCancelBtn").addEventListener("click", cancelStatsJob);
 document.getElementById("statsBacktestTableBody").addEventListener("click", (e) => {
     const roundTr = e.target.closest("tr[data-round-ts]");
     if (roundTr) {
@@ -1328,15 +1419,6 @@ document.getElementById("statsResultsBreadcrumb").addEventListener("click", (e) 
     }
     renderStatsBacktest(state);
 });
-document.getElementById("statsAnalyzeDeleteBtn").addEventListener("click", () => {
-    const id = document.getElementById("statsAnalyzeSelect").value;
-    if (!id) return;
-    if (!confirm(`Delete analyze module ${id}?`)) return;
-    emitAck("stats.analyze.delete", { analyze_id: id }).then(() => {
-        if (state.statsAnalyzeId === id) state.statsAnalyzeId = null;
-        loadStatsAnalyzes();
-    }).catch(alert);
-});
 document.getElementById("statsSimulationSelect").addEventListener("change", (e) => {
     const id = e.target.value || null;
     state.statsSimulationId = id;
@@ -1355,13 +1437,13 @@ document.getElementById("statsSimulationDeleteBtn").addEventListener("click", ()
     }).catch(alert);
 });
 document.getElementById("statsSendBtn").addEventListener("click", sendStatsMessage);
+document.getElementById("statsChatClearBtn").addEventListener("click", clearStatsChat);
 document.getElementById("statsChatInput").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         sendStatsMessage();
     }
 });
-document.getElementById("statsApplyRulesBtn").addEventListener("click", applyStatsRules);
 
 renderStakeButtons();
 renderReplaySpeedButtons(state.replaySpeed);

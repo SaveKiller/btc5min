@@ -7,9 +7,9 @@ import re
 import tempfile
 from pathlib import Path
 
-from dashv2.agent_chat import append_message, load_thread
+from dashv2.agents.agent_chat import append_message, load_thread
 from dashv2.config import reload_agent_system_prompt
-from dashv2.cursor_client import call_model
+from dashv2.agents.cursor_client import call_model
 from dashv2.execution_log import execution_session_meta, read_execution_session
 from dashv2.history import account_summary, accounts_dir, load_account, order_rows_from_ledger
 from dashv2.strategies import list_strategies, load_strategy, module_path, strategies_dir
@@ -19,6 +19,19 @@ _MAX_TOOL_ROUNDS = 3
 _HISTORY_RECENT = 40
 _THREAD_TAIL = 30
 _EXEC_TAIL = 40
+
+_TOOL_PROGRESS = {
+    "strategy.list": "Elenco strategie…",
+    "strategy.get": "Lettura strategia…",
+    "account.summary": "Lettura account…",
+    "history.recent": "Lettura history ordini…",
+    "session.snapshot": "Snapshot sessione…",
+    "exec_log.session": "Lettura exec log…",
+    "round.summary": "Summary round…",
+    "round.tick": "Lettura tick round…",
+    "rounds.list": "Elenco round del giorno…",
+    "strategy.apply_rules": "Applicazione rules…",
+}
 
 
 class AgentService:
@@ -35,7 +48,12 @@ class AgentService:
     def set_apply_rules_fn(self, fn) -> None:
         self._apply_rules_fn = fn
 
-    def run_turn(self, session_id: str, account_id: str, user_text: str) -> dict:
+    def run_turn(
+        self, session_id: str, account_id: str, user_text: str,
+        on_progress=None,
+    ) -> dict:
+        """on_progress(detail: str) opzionale: aggiornamenti di fase per la UI."""
+        self._progress(on_progress, "Preparazione contesto…")
         append_message(self.history_dir, session_id, "user", user_text, account_id=account_id)
         system = reload_agent_system_prompt()
         live = self._tool_ctx_fn()
@@ -53,7 +71,11 @@ class AgentService:
         model = self.cfg["agent_cursor_model"]
         reply = None
         with tempfile.TemporaryDirectory(prefix="dashv2-agent-") as td:
-            for _ in range(_MAX_TOOL_ROUNDS + 1):
+            for round_i in range(_MAX_TOOL_ROUNDS + 1):
+                self._progress(
+                    on_progress,
+                    "Chiamo il modello…" if round_i == 0 else "Rielaboro con il modello…",
+                )
                 raw = call_model(
                     prompt, model_id=model["id"], params=model["params"], cwd=td,
                     reject_meta=False,
@@ -62,13 +84,16 @@ class AgentService:
                 if tool_req is None:
                     reply = raw.strip()
                     break
+                tool_name = self._normalize_tool_name(tool_req["tool"])
+                label = _TOOL_PROGRESS.get(tool_name, f"Tool {tool_name}…")
+                self._progress(on_progress, label)
                 try:
-                    result = self._run_tool(tool_req["tool"], tool_req.get("args") or {}, account_id, live)
+                    result = self._run_tool(tool_name, tool_req.get("args") or {}, account_id, live)
                 except Exception as e:
                     result = {"error": str(e)}
                 prompt = (
                     f"{system}\n\n"
-                    f"=== TOOL RESULT ({tool_req['tool']}) ===\n"
+                    f"=== TOOL RESULT ({tool_name}) ===\n"
                     f"{json.dumps(result, ensure_ascii=False, indent=2)}\n\n"
                     f"=== CONTESTO CORRENTE ===\n{context}\n\n"
                     f"=== CRONOLOGIA CHAT ===\n{messages_blob}\n\n"
@@ -77,9 +102,15 @@ class AgentService:
                 )
             if reply is None:
                 reply = raw.strip()
+        self._progress(on_progress, "Salvo la risposta…")
         msg = append_message(self.history_dir, session_id, "assistant", reply, account_id=account_id)
         proposed = self._extract_proposed_rules(reply)
         return {"message": msg, "proposed_rules": proposed}
+
+    @staticmethod
+    def _progress(on_progress, detail: str) -> None:
+        if on_progress is not None:
+            on_progress(detail)
 
     def _tool_catalog_text(self) -> str:
         return (
@@ -118,12 +149,16 @@ class AgentService:
         if selected_id:
             s = load_strategy(self.strategies_root, selected_id)
             py = ""
-            mp = module_path(self.strategies_root, selected_id)
+            mp = module_path(self.strategies_root, selected_id, s["version"])
             if mp.is_file():
                 py = mp.read_text(encoding="utf-8")[:8000]
             selected_block = (
                 f"\nStrategia selezionata {selected_id} ({s['name']}):\n"
-                f"RULES:\n{s.get('rules', '')}\n\nPYTHON:\n{py}\n"
+                f"RULES:\n{s.get('rules', '')}\n\n"
+                f"CODED RULES (comportamento dal codice; l'utente può discuterle e chiedere "
+                f"spiegazioni / correzioni via riscrittura rules):\n"
+                f"{s.get('coded_rules') or '(vuote)'}\n\n"
+                f"PYTHON:\n{py}\n"
             )
         live_sid = live.get("session_id")
         focus_sid = live.get("agent_session_id") or live_sid
@@ -195,7 +230,7 @@ class AgentService:
             sid = args["strategy_id"]
             data = load_strategy(self.strategies_root, sid)
             py = ""
-            mp = module_path(self.strategies_root, sid)
+            mp = module_path(self.strategies_root, sid, data["version"])
             if mp.is_file():
                 py = mp.read_text(encoding="utf-8")
             return {"strategy": data, "python_source": py}

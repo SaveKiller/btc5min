@@ -125,7 +125,9 @@ def run_strategy_round(
             "n_wins": n_wins,
             "n_losses": n_losses,
             "traded": len(closed) > 0,
+            "orders": list(closed),
+            "action_errors": action_errors,
         }
     except Exception as e:
         print(f"batch strategy round error: {e}", flush=True)
-        return {**base, "ok": False, "error": str(e)}
+        return {**base, "ok": False, "error": str(e), "orders": [], "action_errors": []}

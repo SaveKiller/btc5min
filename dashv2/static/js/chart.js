@@ -1,12 +1,13 @@
 /** Lightweight Charts v5 — candele replay senza dati futuri. */
 
+const VISIBLE_CANDLES = 80;
+
 let chart = null;
 let candleSeries = null;
 let chartContainer = null;
 let candleCount = 0;
 let currentRoundCandleTime = null;
 let chartViewFree = false;
-let chartAutoscaleLockPending = false;
 let autoscaleLockScheduled = false;
 let layoutQueued = false;
 
@@ -32,18 +33,20 @@ function scheduleAutoscaleLock() {
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
             autoscaleLockScheduled = false;
-            chartAutoscaleLockPending = false;
             candleSeries?.priceScale().applyOptions({ autoScale: false });
         });
     });
 }
 
 
-function fitRoundStartViewport() {
+function fitViewport() {
     if (!chart || !candleCount || !chartContainer?.clientWidth || !chartContainer?.clientHeight) return false;
+    const visible = Math.min(VISIBLE_CANDLES, candleCount);
+    const from = Math.max(0, candleCount - visible);
+    const to = Math.max(from + 1, candleCount);
     const w = Math.max(120, chartContainer.clientWidth - 58);
-    chart.timeScale().applyOptions({ barSpacing: Math.max(4, w / candleCount) });
-    chart.timeScale().setVisibleLogicalRange({ from: 0, to: Math.max(1, candleCount) });
+    chart.timeScale().applyOptions({ barSpacing: Math.max(4, w / visible) });
+    chart.timeScale().setVisibleLogicalRange({ from, to });
     candleSeries.priceScale().applyOptions({ autoScale: true });
     return true;
 }
@@ -58,13 +61,12 @@ function applyChartLayout() {
         return;
     }
     if (chartViewFree) {
-        if (fitRoundStartViewport()) {
+        if (fitViewport()) {
             chartViewFree = false;
             scheduleAutoscaleLock();
         }
         return;
     }
-    if (chartAutoscaleLockPending) scheduleAutoscaleLock();
 }
 
 
@@ -95,14 +97,13 @@ export function initChart(container) {
 }
 
 
-export function setCandles(previous, current, opts = {}) {
+export function setCandles(previous, current) {
     const data = [...(previous || []).filter(candleValid)];
     if (current && candleValid(current)) data.push(current);
     data.sort((a, b) => a.time - b.time);
     candleCount = data.length;
     currentRoundCandleTime = current?.time ?? null;
-    chartViewFree = !!opts.freeView;
-    chartAutoscaleLockPending = !opts.freeView;
+    chartViewFree = true;
     candleSeries.priceScale().applyOptions({ autoScale: true });
     candleSeries.setData(data.map((c) => ({
         time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
@@ -115,7 +116,7 @@ export function setCandles(previous, current, opts = {}) {
 export function updateCurrentCandle(candle) {
     if (!candle || !candleValid(candle)) return;
     if (!candleCount) {
-        setCandles([], candle, { freeView: chartViewFree });
+        setCandles([], candle);
         return;
     }
     if (currentRoundCandleTime !== candle.time) {

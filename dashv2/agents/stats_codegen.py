@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import tempfile
 
-from dashv2.cursor_client import call_model
+from dashv2.agents.cursor_client import call_model
 
 _FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
@@ -18,7 +18,7 @@ def analyze_round(round_view: dict) -> dict:
 Opzionale:
 
 def reduce_results(per_round: list[dict]) -> str:
-    ...  # Markdown aggregato; se assente il server usa un fallback
+    ...  # Markdown aggregato IN ITALIANO; se assente il server usa un fallback
 
 round_view (read-only, da build_round_view):
   market_start_ts: int
@@ -29,6 +29,8 @@ round_view (read-only, da build_round_view):
   fee_rate: float
   secs: list[int]          # secondi presenti, ordinati
   ticks: list[dict]        # un dict per sec, stesso ordine di secs
+  orders: list[dict]       # SOLO se Analyze su simulation backtest
+  strategy: dict           # SOLO se simulation: {id, name, version}
 
 Chiavi tipiche di ogni tick:
   sec, recv_ts_ms, chainlink_btc, chainlink_stale,
@@ -36,10 +38,15 @@ Chiavi tipiche di ogni tick:
   up_mid_c, down_mid_c, majority_side,
   vol, side_risk, dwin_a, dwin_b_pct
 
+Chiavi tipiche di ogni order (se presente):
+  id, side, entry_sec, exit_sec, size_usd, shares, avg_entry_price,
+  pnl_usd, result (won|lost|closed), close_type (settlement|manual),
+  reason, close_reason, entry_fee_usd, exit_fee_usd, entry_btc, exit_btc
+
 analyze_round deve ritornare un dict JSON-serializzabile (metriche per-round).
 Il runner mergea ok/error/market_start_ts/hour_utc sopra quel dict.
 
-Vietato: rete, scrittura su disco, import arbitrari pesanti.
+Vietato: rete, scrittura su disco, import arbitrari pesanti, rieseguire strategy.
 Consentito: stdlib (+ numpy solo se già in env). Nessun side-effect I/O.
 '''
 

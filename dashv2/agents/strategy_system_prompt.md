@@ -1,6 +1,6 @@
-Accortezze sul contesto runtime (ctx):
+# Codegen rules → Python (oltre al COMMON sopra)
 
-PRINCIPIO: le rules sono scritte dall'utente che guarda la **dashboard**. Etichette, percentuali e numeri vanno letti come in UI e mappati ai campi reali di `ctx`. Non trattare i nomi UI (Model A, Rq, zona rossa, LIQ2…) come variabili Python.
+Accortezze sul contesto runtime (`ctx`). Le rules sono scritte dall'utente che guarda la **dashboard**: etichette e numeri come in UI, mappati ai campi reali di `ctx`. Non trattare i nomi UI come variabili Python.
 
 ---
 
@@ -8,8 +8,7 @@ PRINCIPIO: le rules sono scritte dall'utente che guarda la **dashboard**. Etiche
 
 Sinonimi tipici → campo reale:
 
-- SEC TO END / secondi mancanti / countdown → `sec` (COUNTDOWN 300→0, NON tempo trascorso)
-- zone colorate → range su `sec` (vedi sotto)
+- SEC TO END / secondi mancanti / countdown → `sec` (COUNTDOWN 300→0, NON tempo trascorso; zone = vedi COMMON)
 - BTC/USD / prezzo BTC → `chainlink_btc`
 - PTB → `ptb_chainlink`
 - DELTA / delta / scostamento → `delta_usd` (int USD col segno)
@@ -22,7 +21,7 @@ Sinonimi tipici → campo reale:
 - Rq / Rs / risk → `risk[side]["rq"]` / `risk[side]["rs"]` (card UP o DOWN)
 - LIQ2 → `liq2_ask_usd`
 - Size → `size_usd` su ogni `order.place`; size già aperte in `open_orders[].size_usd`
-- PNL / gain / profitto / perdita / MTM → `open_orders[].mtm_usd`
+- PnL / gain / profitto / perdita / stop loss / take profit → `open_orders[].mtm_usd` (verso utente: **PnL**, mai MTM — vedi COMMON)
 - Open orders / ordini aperti → `open_orders` (filtra per `strategy_id`)
 
 `vol` (V30/V60/…) è in ctx ma **non** in UI oggi: usalo solo se le rules lo nominano esplicitamente.
@@ -42,6 +41,7 @@ OUTCOME: anti-spoiler — non usarlo durante il round.
 5. QUOTA SENZA ASK/BID: se dice solo “quota” / soglie in centesimi, intendi SEMPRE l'ask (`up_ask_c` / `down_ask_c`). Bid solo se esplicito.
 6. Apri o chiudi solo se `tradable` è True.
 7. `mtm_usd` può essere `None`: non confrontarlo con numeri senza check; usa anche `mtm_available` / `close_enabled` prima di chiudere.
+8. Implementazione fasce alte (oltre al COMMON): se le rules dicono “apri su Up o Down quando la quota di quel lato è tra 80 e 94”, preferisci UN percorso sul lato in fascia — tipicamente `majority_side` e la sua ask. Evita due rami gemelli `if up_in_band / elif down_in_band` quando l’intento è “il lato con quota alta”. Se servono due controlli separati, non commentare “preferenza Up” / “se entrambi”.
 
 Snippet canonico (copialo/adattalo, non reinventarlo):
 
@@ -58,21 +58,7 @@ def dwin_pct_for_side(ctx, side, key):  # key "a"|"b"
 Esempio: "Model A >= 75% o Model B >= 75%" in ingresso sul majority:
 `a = dwin_pct_for_side(ctx, majority_side, "a"); b = dwin_pct_for_side(ctx, majority_side, "b"); ok = (a is not None and a >= 75) or (b is not None and b >= 75)`.
 
----
-
-## Tempo e zone colorate
-
-- Nelle rules l'utente può (e deve poter) dire solo “zona bianca/verde/…”: è terminologia ufficiale. Tu le traduci in confronti su `sec`; non serve che le rules ripetano i secondi.
-- `ctx["sec"]` è un COUNTDOWN: secondi MANCANTI alla scadenza (300 → 0). Esempio: "non entrare se mancano meno di 5 secondi" → `if sec < 5`. SBAGLIATO: `sec >= 300-5`.
-- NON interpretare mai `sec` come tempo trascorso dall'inizio del round (errore tipico: "primi N secondi" / "dal secondo N in poi").
-- Zone colorate = tempo mancante:
-  - zona bianca: 300s–241s
-  - zona verde: 240s–181s
-  - zona blu/azzurra: 180s–121s
-  - zona gialla/arancio: 120s–61s
-  - zona rossa: 60s–0s
-  Esempio: "non aprire in zona bianca" → non place se `sec >= 241`.
-  Esempio: "ordine positivo in zona rossa, non chiudere" → positivo e `sec < 61`.
+Zone → confronti su `sec` (range nel COMMON): es. "non aprire in zona bianca" → non place se `sec >= 241`; "ordine positivo in zona rossa, non chiudere" → positivo e `sec < 61`.
 
 ---
 

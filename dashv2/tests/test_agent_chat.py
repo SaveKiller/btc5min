@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from dashv2.agent_chat import append_message, clear_thread, load_thread
-from dashv2.agent_service import AgentService
+from dashv2.agents.agent_chat import append_message, clear_thread, load_thread
+from dashv2.agents.agent_service import AgentService
 from dashv2.execution_log import append_execution, read_execution_session
 from dashv2.history import accounts_dir, create_account
 from dashv2.sessions import create_session, list_sessions_for_account, load_session
@@ -165,10 +165,15 @@ class TestAgentServiceTools(unittest.TestCase):
                 "agent_session_id": "sessX",
                 "round_tools": None, "bot_active": False, "active_strategy_ids": [],
             })
-            with patch("dashv2.agent_service.call_model", return_value="Ciao, parliamo di strategie."):
-                res = svc.run_turn("sessX", acc["id"], "aiuto")
+            with patch("dashv2.agents.agent_service.call_model", return_value="Ciao, parliamo di strategie."):
+                progress = []
+                res = svc.run_turn(
+                    "sessX", acc["id"], "aiuto",
+                    on_progress=progress.append,
+                )
             self.assertIn("strategie", res["message"]["content"])
             self.assertEqual(len(load_thread(history, "sessX")), 2)
+            self.assertTrue(any("modello" in p.lower() for p in progress))
 
 
 if __name__ == "__main__":

@@ -44,7 +44,7 @@ La V2 nasce da un disegno esplicito (vedi `docs/dash-prompt-v2.md`):
 | Strategy load (shim) | `bot.select` → stato engine + forward `strategy.load` → plugin `*_bot.py` | Implementato (es. `random`) |
 | Strategy types | DETERMINISTICA / INFERENZIALE / AGENTICA | Solo documentale (piano separato) |
 | Consulto peer | `consult.send` / `consult.message` sul bridge | Predisposto (relay + hook plugin; UI chat da fare) |
-| Tab STATS + RoundBatch | Job backtest/analyze sul **server** (`stats.*`, pool) | Implementato |
+| Tab AGENT (Backtest/Analyze) + RoundBatch | Job backtest/analyze sul **server** (`stats.*`, pool) | Implementato |
 
 ---
 
@@ -384,7 +384,7 @@ Struttura in memoria dopo `load(mts)`:
 
 ### Candele
 
-- `previous_candles(mts, count)`: slot `mts - 300*(i+1)`; OHLC da BTC del round precedente; **buchi restano buchi** (no fill).
+- `candles(before_ts)`: tutte le candele OHLC disponibili da `data_dir` (cache in-process); se `before_ts` → solo `time < before_ts` (anti-spoiler). Idle: `before_ts=None`; round caricato: `before_ts=mts` + `current_candle`.
 - `current_candle(loaded, sec)`: solo tick con `s >= sec` (asse countdown: presente + passato); open = PTB; se nessun prezzo → flat su PTB.
 
 ---
@@ -456,7 +456,7 @@ dashv2/history/          # history_dir da setup.json (gitignored tipicamente)
 
 Alla mint (`round.load` / `_restart_round`) l’engine scrive `history/sessions/session_{id}.json` con `account_id` attivo, `market_start_ts`, `started_at_utc`, `active_strategy_ids`.
 
-- `round.unload`: scarica round dall’engine (`loaded=False`, clear `session_id`/ordini RAM); **non** cancella registro/exec/chat su disco. Rifiuta se open orders. UI: prima voce del dropdown Session in tab AI AGENT («Unload session»), non più pulsante in Accounts.
+- `round.unload`: scarica round dall’engine (`loaded=False`, clear `session_id`/ordini RAM); **non** cancella registro/exec/chat su disco. Rifiuta se open orders. UI: prima voce del dropdown Session in tab AGENT («Unload session»), non più pulsante in Accounts.
 - Cambio account / NEW: vietati se `loaded`. Sblocco solo dopo unload (o avvio senza round).
 - Dropdown sessioni AI Agent: `list_sessions_for_account(active_account_id)`.
 
@@ -602,15 +602,15 @@ Ack sincrono tranne `round.load` (ack immediato `{ok:true}`, errori via evento `
 | `session.sync` | `{}` | `{ok}` + re-push eventi |
 | `consult.send` | `{text, ...}` | relay peer (no pipe data) |
 | `stats.backtest.start` | `{strategy_id, day_from, day_to}` | `{ok, accepted}` — job su server (no pipe) |
-| `stats.analyze.start` | `{analyze_id, day_from, day_to}` | `{ok, accepted}` |
+| `stats.analyze.start` | `{analyze_id, day_from, day_to}` **oppure** `{analyze_id, simulation_id}` | `{ok, accepted}` |
 | `stats.job.cancel` | `{}` | `{ok}` → evento `stats.job.cancelled` |
 | `stats.chat.send` | `{text}` | `{ok, accepted}` — thread Stats |
 | `stats.chat.history` | `{}` | `{ok, messages, busy}` |
-| `stats.rules.apply` | `{rules, day_from, day_to, analyze_id?, name?}` | `{ok, accepted}` — codegen in thread OS; poi `stats.analyzes` + auto-run |
+| `stats.rules.apply` | `{rules, day_from, day_to, analyze_id?, name?}` **oppure** con `simulation_id` al posto del range | `{ok, accepted}` — codegen in thread OS; poi `stats.analyzes` + auto-run |
 | `stats.analyze.list` | `{}` | `{ok, analyzes}` |
 | `stats.analyze.delete` | `{analyze_id}` | `{ok}` + evento `stats.analyzes` |
-| `stats.simulation.list` | `{}` | `{ok, simulations}` |
-| `stats.simulation.load` | `{simulation_id}` | `{ok, simulation}` — full JSON (table + rounds) |
+| `stats.simulation.list` | `{}` | `{ok, simulations}` (include `has_orders`) |
+| `stats.simulation.load` | `{simulation_id}` | `{ok, simulation}` — meta + rounds aggregati (senza hydratare tutti gli orders) |
 | `stats.simulation.delete` | `{simulation_id}` | `{ok}` + evento `stats.simulations` |
 
 I comandi `stats.*` e `agent.*` sono gestiti **localmente dal bridge** (non forward IPC all’Engine).
@@ -638,7 +638,7 @@ Errori: `{error: string}` in ack, oppure evento `error` per load fallito.
 | `round_end` | sec 0 | `outcome`, `final_chainlink`, `settled_orders` |
 | `error` | load fallito (async) | `{message}` |
 | `stats.job.progress` | durante batch | `{kind, done, total, errors}` |
-| `stats.job.done` | fine batch ok | backtest: `{kind, table, summary, simulation_id}`; analyze: `{kind, markdown, summary}` |
+| `stats.job.done` | fine batch ok | backtest: `{kind, table, summary, simulation_id, rounds}` (rounds slim, no orders); analyze: `{kind, markdown, summary}` |
 | `stats.job.error` | job fallito / secondo start | `{message, kind}` |
 | `stats.job.cancelled` | dopo cancel | `{kind}` |
 | `stats.chat.message` | risposta chat Stats | `{message, proposed_rules?}` |
@@ -723,29 +723,29 @@ Nessun bundler. Moduli ES in `static/js/`, vendor offline in `static/vendor/`.
 
 | File | Ruolo |
 |------|--------|
-| `static/index.html` | DOM: header replay, tabs left (CANDLES / ACCOUNTS / BOT / AI AGENT), pannello ordini right, modal account |
+| `static/index.html` | DOM: header replay, tabs left (CANDLES / ACCOUNTS / STRATEGY / AGENT), pannello ordini right, modal account |
 | `static/css/dashboard.css` | Stile (token/misure mockup v38) |
 | `static/js/app.js` | Stato client, Socket.IO, binding controlli, CSV export |
 | `static/js/render.js` | Aggiornamento DOM (tick, ladder, ordini, picker, history, accounts) |
 | `static/js/chart.js` | Lightweight Charts v5 — candele 5m |
 
-### AI Agent (tab AI AGENT)
+### AI Agent (tab AGENT)
 
 Chat human-only con **Grok 4.5 High** (`agent_cursor_label` in setup), Cursor SDK come codegen (`reject_meta=False`).
 
 | Pezzo | Path / comando |
 |-------|----------------|
-| Persistenza thread | `history/agent/session_{session_id}/thread.json` (`agent_chat.py`) — chat a tema sessione |
+| Persistenza thread | `history/agent/session_{session_id}/thread.json` (`agents/agent_chat.py`) — chat a tema sessione |
 | Registro sessioni | `history/sessions/session_{id}.json` (`sessions.py`); ownership `account_id` alla mint |
-| Orchestrazione | `agent_service.py` + `agent_system_prompt.md` (cita sempre `session_id` nelle analisi) |
-| Tool round | `agent_round_tools.py` |
+| Orchestrazione | `agents/agent_service.py` + `agents/common_prompt.md` + `agents/agent_system_prompt.md` (cita sempre `session_id` nelle analisi) |
+| Tool round | `agents/agent_round_tools.py` |
 | Exec log | `history/executions/{session_id}.jsonl` (`execution_log.py`); lista meta nel Context dropdown **filtrata per account** |
 | Socket | `agent.chat.*` keyed su `session_id`; `agent.session.select` / `agent.session.delete` (cancella registro+chat+exec+ledger); `round.unload` sblocca account. |
-| Turni lunghi | `run_turn` in **thread OS** (non greenlet); `agent.chat.history` ack include `busy`; UI poll history ogni 5s mentre Thinking; human reconnect = replace `human_sid`. |
+| Turni lunghi | `run_turn` in **thread OS** (non greenlet); `agent.chat.status` con `detail` di fase (modello / tool / …); `agent.chat.history` ack include `busy`; UI poll history ogni 5s mentre busy; human reconnect = replace `human_sid`. |
 
 Rules-first: proposte in chat (fence `rules`); apply solo con conferma UI o tool `strategy.apply_rules` + `confirm:true` → codegen update. Vietato write diretto del `.py`.
 
-### Stats (tab STATS) — batch sul server
+### Stats (sotto-tab AGENT Backtest/Analyze) — batch sul server
 
 Design / piano: [`docs/superpowers/specs/2026-07-19-stats-tab-batch-design.md`](superpowers/specs/2026-07-19-stats-tab-batch-design.md), [`docs/superpowers/plans/2026-07-19-stats-tab-batch.md`](superpowers/plans/2026-07-19-stats-tab-batch.md).
 
@@ -768,7 +768,7 @@ Replay UI (Engine) può restare attivo durante un batch; I/O disco condiviso acc
 | Cancel | `stats.job.cancel` → soft-cancel v1: pending futures cancellati; worker in-flight sul round corrente possono ancora finire. Poi `stats.job.cancelled` (**niente** `done` con tabella/Markdown parziali). Hard-kill dei processi worker: non in v1. |
 | Size backtest | `default_order_size_usd` per Up e Down (non le size della sessione UI) |
 | Ledger | I job **non** scrivono `history/accounts/` |
-| After apply | `stats.rules.apply` → ack `{ok, accepted}`; codegen su thread OS; emit `stats.analyzes` (`applied_id`) + auto-run analyze su `day_from`/`day_to` |
+| After apply | `stats.rules.apply` → ack `{ok, accepted}`; codegen su thread OS; emit `stats.analyzes` (`applied_id`) + auto-run analyze su `day_from`/`day_to` **oppure** `simulation_id` |
 
 #### Comandi e eventi `stats.*` (human-only)
 
@@ -777,36 +777,37 @@ Vedi tabelle §12. Riepilogo:
 | Comando | Ruolo |
 |---------|--------|
 | `stats.backtest.start` | Range giorni + `strategy_id` → pool strategy |
-| `stats.analyze.start` | Range + `analyze_id` → pool analyze |
+| `stats.analyze.start` | Range + `analyze_id` → pool analyze; oppure `simulation_id` → merge orders da SQLite |
 | `stats.job.cancel` | Annulla job corrente |
 | `stats.chat.send` / `history` | Thread chat Analyze (non legato a `session_id` replay) |
-| `stats.rules.apply` | Rules → ack accepted; codegen thread + auto-run |
+| `stats.rules.apply` | Rules → ack accepted; codegen thread + auto-run (range o simulation) |
 | `stats.analyze.list` / `delete` | CRUD moduli analyze |
-| `stats.simulation.list` / `load` / `delete` | Sessioni backtest persistite |
+| `stats.simulation.list` / `load` / `delete` | Sessioni backtest persistite (SQLite v2 + JSON v1 legacy) |
 
 | Evento | Payload tipico |
 |--------|----------------|
 | `stats.job.progress` | `{kind, done, total, errors}` |
-| `stats.job.done` | backtest: `{kind, table, summary, simulation_id}`; analyze: `{kind, markdown, summary}` |
+| `stats.job.done` | backtest: `{kind, table, summary, simulation_id, rounds}` (rounds slim); analyze: `{kind, markdown, summary}` |
 | `stats.job.error` | `{message, kind}` (anche secondo start) |
 | `stats.job.cancelled` | `{kind}` |
 | `stats.chat.message` / `status` | risposta chat / thinking |
 | `stats.analyzes` | lista moduli dopo apply/delete |
-| `stats.simulations` | lista sessioni dopo run/delete (`selected_id` opzionale) |
+| `stats.simulations` | lista sessioni dopo run/delete (`selected_id` opzionale, `has_orders`) |
 
 #### Flusso backtest
 
-1. UI: tab STATS → Backtest; range `day_from`/`day_to`; select strategy; Run.
+1. UI: tab AGENT → Backtest; range `day_from`/`day_to`; select strategy; Run.
 2. Server: `list_batch_rounds` → tasks `{market_start_ts, bin_path, hour_utc, …}`.
-3. `RoundBatchRunner` → worker `process_task` → `run_strategy_round` (hook strategy + `OrderEngine`).
+3. `RoundBatchRunner` → worker `process_task` → `run_strategy_round` (hook strategy + `OrderEngine` + `orders`).
 4. `reduce_strategy_rows` → 24 righe ore UTC (`UTC_HOUR_MARKETS`) + totale.
-5. Persist `history/simulations/simulation_{id}.json` (table + rounds raw) → emit `stats.job.done` + `stats.simulations`.
+5. Persist `history/simulations/simulation_{id}.sqlite` (meta + rounds + orders) → emit `stats.job.done` (rounds slim) + `stats.simulations`.
 
 #### Flusso analyze
 
 1. Chat Stats → Applica rules → `stats_codegen` scrive `analyze_{id}.json` + `.py`.
-2. Auto-run (o Run manuale) → worker chiama `analyze_round`; reduce via `reduce_results` del modulo o fallback Markdown server-side.
-3. Emit `stats.job.done` → UI `<pre class="stats-md">`.
+2. Auto-run (o Run manuale) su range giorni **oppure** `simulation_id` (merge `orders` da SQLite).
+3. Worker chiama `analyze_round(round_view)`; reduce via `reduce_results` o fallback Markdown.
+4. Emit `stats.job.done` → UI `<pre class="stats-md">`.
 
 #### Mappa file Stats / batch
 
@@ -821,19 +822,19 @@ Vedi tabelle §12. Riepilogo:
 | Reduce 24h / MD | `batch/reduce.py` + `batch/markets.py` (`UTC_HOUR_MARKETS`) |
 | Chat + apply | `stats_service.py`; thread `history/stats/thread.json` |
 | CRUD moduli | `stats_modules.py` — `history/stats/analyze_{id}.json` + `.py` |
-| Sessioni backtest | `simulations.py` — `history/simulations/simulation_{id}.json` (table + rounds raw) |
-| Codegen | `stats_codegen.py` + `stats_system_prompt.md` |
+| Sessioni backtest | `simulations.py` — `history/simulations/simulation_{id}.sqlite` (v2) + JSON v1 legacy read-only |
+| Codegen | `agents/stats_codegen.py` + `agents/stats_system_prompt.md` |
 | Socket handlers | `server.py` — `_STATS_CMDS`, orchestrazione job |
-| UI | `static/index.html` (`#stats-tab`), `app.js`, `render.js`, `dashboard.css` |
+| UI | `static/index.html` (`#agent-tab` sotto-tab Backtest/Analyze), `app.js`, `render.js`, `dashboard.css` |
 
 #### UI (segmented Backtest \| Analyze)
 
-- Tab `#stats-tab` / `#statsPane` dopo BOT; in `LEFT_TAB_IDS` + localStorage.
+- Sotto-tab `#agent-backtest-tab` / `#agent-analyze-tab` dentro `#agentPane`; tab principale `#agent-tab` in `LEFT_TAB_IDS` + localStorage.
 - Header condiviso: range giorni (default min/max da `round_days`).
 - Backtest: date range + strategy/Run/Cancel nel header; Session (+ Delete), progress, tabella 24h + TOTAL + summary.
-- Analyze: chat, Applica rules, select/delete moduli, Markdown grezzo (niente vendor MD).
+- Analyze: chat, Applica rules, select/delete moduli, dropdown Simulation opzionale, Markdown grezzo (niente vendor MD).
 
-Ogni Run backtest crea `history/simulations/simulation_{id}.json` (summary + table + rounds raw). Selezionare una sessione ripristina strategy, range giorni e risultati.
+Ogni Run backtest crea `history/simulations/simulation_{id}.sqlite` (summary + table + rounds + orders). Selezionare una sessione Backtest ripristina strategy, range giorni e risultati aggregati. Analyze può riusare una session SQLite come contesto `orders`.
 
 Drill tabella risultati (solo backtest, da `rounds` in memoria client):
 
@@ -846,7 +847,7 @@ Navigazione indietro: breadcrumb nel titolo pannello. Riga TOTAL non cliccabile.
 #### Smoke checklist (manuale)
 
 ```
-1. Avvia dashv2, apri STATS → Backtest
+1. Avvia dashv2, apri AGENT → Backtest
 2. Range 1 giorno con round, seleziona strategy, Run
 3. Progress avanza; tabella 24h popolata; totale coerente
 4. Analyze: chiedi "conteggio inversioni majority_side ultimo minuto"; Applica; Markdown appare
@@ -870,13 +871,13 @@ Slider: `pointerdown` → pause; `input` → `replay.preview`; `pointerup` → `
 |------|------|
 | Header / play / timeline / BTC | `index.html` + `render.js` (`renderTick`) + `app.js` |
 | Chart | `chart.js` + eventi `chart` da engine |
-| AI Agent chat | `index.html` (`#agentPane`) + `render.js` (`renderAgent*`) + `app.js` |
+| AI Agent chat | `index.html` (`#agentPane` sotto-tab SESSION CHAT / Backtest / Analyze) + `render.js` (`renderAgent*` / `renderStats*`) + `app.js` |
 | Ladder / signal / BUY | `render.js` + previews da tick/order |
 | Open orders / Close / Cancel | `render.js` (`renderOrders`) |
 | History / CSV / session groups | `render.js` (`renderHistory`) + `app.js` |
 | Accounts | `render.js` + comandi `account.*` |
-| Bot / Strategy | tab BOT + `renderBotSelect` + comandi `bot.*` |
-| Stats (batch) | tab STATS + `renderStats*` + comandi `stats.*` (server-only) |
+| Bot / Strategy | tab STRATEGY + `renderBotPanel` + comandi `bot.*` |
+| Stats (batch) | sotto-tab AGENT Backtest/Analyze + `renderStats*` + comandi `stats.*` (server-only) |
 | Stile | `dashboard.css` |
 
 ---
@@ -892,7 +893,6 @@ Chiavi obbligatorie (`_REQUIRED`):
 | `data_dir` | Path relativo a `dashv2/` verso i round (es. `../data`) |
 | `history_dir` | Path relativo ledger (es. `history`) |
 | `host` / `port` | Bind HTTP |
-| `chart_previous_candles` | Quante candele 5m precedenti caricare |
 | `default_order_size_usd` | Size iniziale Up/Down (anche size fissa dei job backtest Stats) |
 | `stats_workers` | Worker `ProcessPoolExecutor` per RoundBatch sul server |
 | `stall_reconnect_sec` | Soglia stale Chainlink (allineata al collector) |
@@ -937,11 +937,13 @@ Env vars previsti per live reale (non letti dallo stub): `POLY_API_KEY`, `POLY_A
 | `dashv2/history.py` | Account ledger JSON — **backend del plugin replay** |
 | `dashv2/execution_log.py` | Jsonl esecuzione ordini per session_id |
 | `dashv2/sessions.py` | Registro sessioni (ownership account) |
-| `dashv2/agent_chat.py` / `agent_service.py` / `agent_round_tools.py` | Chat AI Agent + tool |
-| `dashv2/agent_system_prompt.md` | System prompt agent (IT, domain, rules-first) |
-| `dashv2/stats_service.py` / `stats_modules.py` / `stats_codegen.py` | Chat Stats + CRUD analyze + codegen |
-| `dashv2/simulations.py` | Persistenza sessioni backtest (`history/simulations/`) |
-| `dashv2/stats_system_prompt.md` | System prompt codegen analyze |
+| `dashv2/agents/` | Package agenti: chat, codegen, Cursor SDK, prompt (vedi `agents/README.md`) |
+| `dashv2/agents/agent_chat.py` / `agent_service.py` / `agent_round_tools.py` | Chat AI Agent + tool |
+| `dashv2/agents/common_prompt.md` | Dominio condiviso (Polymarket, lessico UI, zone, rules/coded rules) |
+| `dashv2/agents/agent_system_prompt.md` | Prompt agent-specific (COMMON + questo; IT, session, tools, rules-first) |
+| `dashv2/stats_service.py` / `stats_modules.py` | Chat Stats + CRUD analyze |
+| `dashv2/agents/stats_codegen.py` / `stats_system_prompt.md` | Codegen analyze |
+| `dashv2/simulations.py` | Persistenza sessioni backtest SQLite (`history/simulations/`) |
 | `dashv2/batch/__init__.py` | Package RoundBatch |
 | `dashv2/batch/markets.py` | `UTC_HOUR_MARKETS` (24 etichette, allineate al picker JS) |
 | `dashv2/batch/listing.py` | `list_batch_rounds(repo, day_from, day_to)` |
@@ -954,7 +956,7 @@ Env vars previsti per live reale (non letti dallo stub): `POLY_API_KEY`, `POLY_A
 | `dashv2/txt_rows.py` | Parse indicatori dal `.txt` |
 | `dashv2/config.py` + `setup.json` | Config fail-hard (`engine_plugin`, `agent_cursor_label`) |
 | `dashv2/bots/` | Processo bot + plugin strategy shim (`bot_process.py`, `*_bot.py`) |
-| `dashv2/static/index.html` | DOM (header replay, tabs CANDLES/ACCOUNTS/BOT/STATS/AI AGENT, ordini) |
+| `dashv2/static/index.html` | DOM (header replay, tabs CANDLES/ACCOUNTS/STRATEGY/AGENT, ordini) |
 | `dashv2/static/css/dashboard.css` | Stile (token/misure mockup v38) |
 | `dashv2/static/js/app.js` | Stato client, Socket.IO, binding, CSV, wire `stats.*` |
 | `dashv2/static/js/render.js` | DOM tick/ladder/ordini/picker/history/accounts/Stats |
@@ -995,12 +997,12 @@ python -m unittest discover -s dashv2/tests
 | `test_stats_service.py` | Chat Stats + apply rules |
 | `test_stats_codegen.py` | Codegen moduli analyze |
 
-Smoke manuale replay: `dashv2.bat` → load → play → seek → BUY → close/cancel o settlement → history/CSV; tab AI AGENT con account attivo.
+Smoke manuale replay: `dashv2.bat` → load → play → seek → BUY → close/cancel o settlement → history/CSV; tab AGENT con account attivo.
 
 Smoke manuale **STATS** (vedi anche §13 Stats):
 
 ```
-1. Avvia dashv2, apri STATS → Backtest
+1. Avvia dashv2, apri AGENT → Backtest
 2. Range 1 giorno con round, seleziona strategy, Run
 3. Progress avanza; tabella 24h popolata; totale coerente
 4. Analyze: chiedi "conteggio inversioni majority_side ultimo minuto"; Applica; Markdown appare
@@ -1077,7 +1079,7 @@ Qualsiasi UI che espone liste di round, history, nomi file, tooltip, chart “fu
 | Concetto | Cos’è | Dove vive |
 |----------|-------|-----------|
 | **Bot** | Processo OS sempre spawnato; client Socket.IO `role=bot` | `bot_process.py` / `run_bot_process` |
-| **Strategy** | Logica decisionale caricata *dentro* il bot | moduli `strategy_{id}.py` + JSON catalogo |
+| **Strategy** | Logica decisionale caricata *dentro* il bot | moduli `strategy_{id}_v{N}.py` + JSON catalogo |
 | **Engine (plugin)** | Fonte di verità round + `active_strategy_ids` / `bot_active` | plugin attiva in `dashv2-engine` |
 
 Il server scambia comandi/eventi di trading **solo** col bot. La strategy non è un peer Socket.IO.
@@ -1093,9 +1095,11 @@ Il server scambia comandi/eventi di trading **solo** col bot. La strategy non è
 ### Deterministic: rules → Python
 
 1. UI modal: name, description, **rules** (testo) + **coded_rules** (readonly, post-codegen).
+   - **Rename in-place:** cambio `name` su `strategy.update` (stesso `id`, tutte le versioni restano sotto quel nome).
+   - **Clone:** `strategy.clone` → nuova strategy v1 (fork vero; source intatta; nome `… (copy)`).
 2. Server (`strategy.create` / `update` se rules cambiano): Cursor SDK (`cursor_label` + `cursor_models` in `setup.json`) genera il modulo; progress via evento `strategy.generate`.
 3. Seconda pass Cursor: dal `.py` → testo colloquiale `coded_rules` (sezioni `Apertura` / `Chiusura` / `Vincoli`, termini dashboard, senza variabili codice); fallimento → `coded_rules` vuoto, Python comunque salvato.
-4. Persistenza: `history/strategies/strategy_{id}.json` (`rules`, `coded_rules`, `module_file`) + `strategy_{id}.py`.
+4. Persistenza: `history/strategies/strategy_{id}.json` (`rules`, `coded_rules`, `version`, `versions[]`, `module_file`) + `strategy_{id}_v{N}.py` (archivio immutabile per N).
 5. UI modal: tab **Rules** | **Coded rules**; dopo codegen la modale resta aperta e passa a Coded rules.
 4. Human `strategy.load` → engine aggiorna `active_strategy_ids` → server emit `strategy.sync` `{strategy_ids}` al bot.
 5. Bot: `importlib` del `.py`, fan-out `on_tick` / `on_round_start` / `on_round_end`; crash per-strategy → skip tick (log).
@@ -1103,7 +1107,7 @@ Il server scambia comandi/eventi di trading **solo** col bot. La strategy non è
 Contratto modulo: `on_tick(ctx) -> list[dict]` (azioni `order.place|close|cancel`).
 Su ogni `order.place` la strategy sceglie `size_usd` (float libero per ordine; può cambiare tra scommesse dello stesso round). Le size già aperte sono in `open_orders[].size_usd`.
 
-Config codegen: `cursor_label` (es. `"Composer 2.5"`) punta a un `label` in `cursor_models` (`id` SDK + `params`). System prompt: file `dashv2/strategy_system_prompt.md` (riletto a ogni create/update deterministic) — lessico **dashboard → ctx** (Model A/B, Rq/Rs, zone, LIQ2, quota=ask, …). Shape tipate di `dwin_*` / `risk` / ecc. nel `_CONTRACT` di `strategy_codegen.py`. Env: `CURSOR_API_KEY` (`.env`).
+Config codegen: `cursor_label` (es. `"Composer 2.5"`) punta a un `label` in `cursor_models` (`id` SDK + `params`). System prompt: `dashv2/agents/common_prompt.md` + `dashv2/agents/strategy_system_prompt.md` (riletti a ogni create/update deterministic) — lessico **dashboard → ctx** (Model A/B, Rq/Rs, zone, LIQ2, quota=ask, …). Shape tipate di `dwin_*` / `risk` / ecc. nel `_CONTRACT` di `agents/strategy_codegen.py`. Env: `CURSOR_API_KEY` (`.env`).
 
 ### Multi-strategy
 
@@ -1124,8 +1128,11 @@ Attivazione:
 | File | Ruolo |
 |------|--------|
 | `strategies.py` | Repository JSON + `.py` |
-| `strategy_codegen.py` / `cursor_client.py` | Generazione modulo via Cursor SDK |
-| `strategy_system_prompt.md` | System prompt codegen (hot-reload pre-create) |
+| `agents/strategy_codegen.py` / `agents/cursor_client.py` | Generazione modulo via Cursor SDK |
+| `agents/common_prompt.md` | Dominio condiviso (agente / codegen / coded rules) |
+| `agents/coded_rules_prompt.md` | Reverse-pass Python→coded rules (COMMON + questo; placeholder `{{SOURCE}}`) |
+| `agents/strategy_system_prompt.md` | Prompt codegen-specific (COMMON + questo; hot-reload pre-create) |
+| `agents/README.md` | Mappa package agenti |
 | `bots/runner.py` | importlib cache + dispatch hook |
 | `bots/bot_process.py` | Processo bot Socket.IO + runner |
 | `bots/protocol.py` | Contratto legacy `BotPlugin` (shim) |
@@ -1192,4 +1199,4 @@ Browser          ServerBridge              Engine (plugin replay)
 
 ---
 
-*Ultimo allineamento al codice: Engine shell + plugin replay/live, `engine_plugin`, bot processo fisso + strategy.load, soft-respawn, consult relay, actor/source, tab STATS + RoundBatch (`stats.*` sul server).*
+*Ultimo allineamento al codice: Engine shell + plugin replay/live, `engine_plugin`, bot processo fisso + strategy.load, soft-respawn, consult relay, actor/source, tab AGENT (SESSION CHAT / Backtest / Analyze) + RoundBatch (`stats.*` sul server).*
