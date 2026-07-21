@@ -167,7 +167,7 @@ class ReplayEngine:
                 return
             if cmd == "round.unload": result = self._cmd_round_unload()
             elif cmd == "rounds.list": result = self._cmd_rounds_list(payload)
-            elif cmd == "replay.play": result = self._cmd_replay_play()
+            elif cmd == "replay.play": result = self._cmd_replay_play(payload)
             elif cmd == "replay.pause": result = self._cmd_replay_pause()
             elif cmd == "replay.speed": result = self._cmd_replay_speed(payload)
             elif cmd == "replay.seek": result = self._cmd_replay_seek(payload)
@@ -203,8 +203,9 @@ class ReplayEngine:
         if self.active_account_id is None:
             raise Exception("no active account")
         mts = int(payload["market_start_ts"])
+        start_sec = self._clamp_start_sec(int(payload["start_sec"]))
         self.loaded = self.repo.load(mts)
-        self.sec = 300
+        self.sec = start_sec
         self.playing = True
         self.round_ended = False
         self.session_id = uuid.uuid4().hex[:12]
@@ -212,7 +213,7 @@ class ReplayEngine:
         self.seq = 0
         self.orders.reset(self.cfg["default_order_size_usd"], self.cfg["default_order_size_usd"])
         self._prev_candles = self.repo.candles(before_ts=mts)
-        self._round_advanced = False
+        self._round_advanced = start_sec != 300
         result = {"ok": True, "market_start_ts": mts}
         def after():
             self._write_session_begin()
@@ -224,6 +225,9 @@ class ReplayEngine:
             self._emit_accounts()
             self._emit_bot_status()
         return result, after
+
+    def _clamp_start_sec(self, sec: int) -> int:
+        return max(5, min(300, sec))
 
     def _cmd_round_unload(self) -> dict:
         if not self.loaded:
@@ -276,10 +280,10 @@ class ReplayEngine:
         self._emit_bot_status()
         return {"ok": True, "sec": self.sec, "playing": playing, "restarted": True}
 
-    def _cmd_replay_play(self) -> dict:
+    def _cmd_replay_play(self, payload: dict) -> dict:
         if not self.loaded: raise Exception("no round loaded")
         if self.round_ended:
-            return self._restart_round(playing=True, sec=300)
+            return self._restart_round(playing=True, sec=self._clamp_start_sec(int(payload["start_sec"])))
         self.playing = True
         self._next_tick_at = time.monotonic()
         self._emit_session()

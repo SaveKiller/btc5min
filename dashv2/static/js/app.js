@@ -5,13 +5,16 @@ import {
     renderOrders, renderOutcome, renderRoundPickerDays, renderRoundPickerHours, renderRoundPickerRounds,
     renderSessionHistory, renderStakeButtons, renderTick, setDisconnectBanner, toggleHistorySession,
     updateTimelineSecLabel,
-    renderStatsMode, renderStatsDays, renderStatsStrategySelect,
+    renderStatsMode, renderStatsDays, renderStatsStrategySelect, renderStatsStrategyVersionSelect,
     renderStatsSimulationSelect, renderStatsAnalyzeSimSelect, renderStatsJobUi, renderStatsBacktest, renderStatsAnalyze,
     renderStatsChat,
 } from "./render.js";
 
 const REPLAY_SPEED_KEY = "dashv2_replay_speed";
 const REPLAY_SPEEDS = [1, 2, 5];
+const REPLAY_START_SEC_KEY = "dashv2_replay_start_sec";
+const REPLAY_START_SEC_MIN = 5;
+const REPLAY_START_SEC_MAX = 300;
 const LEFT_TAB_KEY = "dashv2_left_tab";
 const LEFT_TAB_IDS = ["candles-tab", "accounts-tab", "bot-tab", "agent-tab"];
 const DEFAULT_LEFT_TAB = "accounts-tab";
@@ -26,6 +29,7 @@ const state = {
     chartPrevious: [], chartCurrent: null, scrubbing: false, wasPlaying: false,
     activeRoundTs: null, syncSizesOnNextOrders: false, loadedRoundDays: {},
     roundDays: [], roundNav: [], replaySpeed: loadStoredReplaySpeed(),
+    startSec: loadStoredStartSec(),
     agentMessages: [], agentBusy: false, agentThinkingDetail: "", agentProposed: null,
     agentSessionId: null, executionSessions: [], agentFocus: null,
     sessionPickerDay: null,
@@ -99,6 +103,37 @@ function loadStoredReplaySpeed() {
 }
 
 
+function clampStartSec(sec) {
+    const n = Math.round(Number(sec));
+    if (!Number.isFinite(n)) return REPLAY_START_SEC_MAX;
+    if (n < REPLAY_START_SEC_MIN) return REPLAY_START_SEC_MIN;
+    if (n > REPLAY_START_SEC_MAX) return REPLAY_START_SEC_MAX;
+    return n;
+}
+
+
+function loadStoredStartSec() {
+    const raw = localStorage.getItem(REPLAY_START_SEC_KEY);
+    if (raw == null) return REPLAY_START_SEC_MAX;
+    return clampStartSec(raw);
+}
+
+
+function persistStartSec(sec) {
+    const clamped = clampStartSec(sec);
+    state.startSec = clamped;
+    localStorage.setItem(REPLAY_START_SEC_KEY, String(clamped));
+    document.getElementById("replayStartSec").value = String(clamped);
+}
+
+
+function syncStartSecForRound() {
+    const clamped = clampStartSec(state.startSec);
+    if (clamped !== state.startSec) persistStartSec(clamped);
+    return clamped;
+}
+
+
 function loadStoredLeftTab() {
     const tabId = localStorage.getItem(LEFT_TAB_KEY);
     if (tabId === "stats-tab") return "agent-tab";
@@ -109,6 +144,16 @@ function loadStoredLeftTab() {
 function persistLeftTab(tabId) {
     if (!LEFT_TAB_IDS.includes(tabId)) return;
     localStorage.setItem(LEFT_TAB_KEY, tabId);
+}
+
+
+function initToolbarTooltips() {
+    document.querySelectorAll(".toolbar [data-bs-toggle='tooltip']").forEach((el) => {
+        bootstrap.Tooltip.getOrCreateInstance(el, {
+            container: "body",
+            delay: { show: 350, hide: 80 },
+        });
+    });
 }
 
 
@@ -168,7 +213,7 @@ socket.on("disconnect", () => setDisconnectBanner(true));
 socket.on("connect_error", () => setDisconnectBanner(true));
 
 function loadRound(market_start_ts) {
-    socket.emit("round.load", { market_start_ts });
+    socket.emit("round.load", { market_start_ts, start_sec: syncStartSecForRound() });
 }
 
 function updateRoundNavButtons() {
@@ -856,9 +901,7 @@ socket.on("session", (payload) => {
         state.syncSizesOnNextOrders = true;
     }
     if (!payload.loaded) state.activeRoundTs = null;
-    const roundStart = payload.loaded && payload.sec === 300 && (
-        !prev?.loaded || prev.market_start_ts !== payload.market_start_ts || prev.round_ended
-    );
+    const roundStart = payload.loaded && payload.session_id && payload.session_id !== prev?.session_id;
     if (roundStart) selectLeftTab("candles-tab");
     updateRoundNavButtons();
     renderAccounts(state);
@@ -1089,10 +1132,15 @@ socket.on("agent.session", (payload) => {
 });
 
 
-document.getElementById("playBtn").addEventListener("click", () => emitAck("replay.play").catch(handleUiError));
+document.getElementById("playBtn").addEventListener("click", () => {
+    emitAck("replay.play", { start_sec: syncStartSecForRound() }).catch(handleUiError);
+});
 document.getElementById("pauseBtn").addEventListener("click", () => emitAck("replay.pause").catch(handleUiError));
 document.querySelectorAll(".replay-speed-btn").forEach((btn) => {
     btn.addEventListener("click", () => applyReplaySpeed(Number(btn.dataset.speed)).catch(handleUiError));
+});
+document.getElementById("replayStartSec").addEventListener("change", () => {
+    persistStartSec(document.getElementById("replayStartSec").value);
 });
 document.getElementById("prevRoundBtn").addEventListener("click", () => loadAdjacentRound(-1));
 document.getElementById("nextRoundBtn").addEventListener("click", () => loadAdjacentRound(1));
@@ -1526,6 +1574,8 @@ document.getElementById("statsChatInput").addEventListener("keydown", (e) => {
 
 renderStakeButtons();
 renderReplaySpeedButtons(state.replaySpeed);
+persistStartSec(state.startSec);
+initToolbarTooltips();
 initChart(document.getElementById("chartContainer"));
 layoutReplayScale();
 window.addEventListener("resize", () => { layoutReplayScale(); relayoutChart(); });

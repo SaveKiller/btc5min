@@ -18,20 +18,27 @@
     </div>
     <span class="divider d-none d-md-block"></span>
     <div class="btn-group" role="group" aria-label="Round navigation">
-      <button class="btn btn-outline-secondary" id="prevRoundBtn" type="button" aria-label="Previous round" disabled><i class="bi bi-caret-left-fill"></i></button>
-      <button class="btn btn-outline-secondary" id="loadRoundBtn" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Load round"><i class="bi bi-folder2-open"></i></button>
-      <button class="btn btn-outline-secondary" id="nextRoundBtn" type="button" aria-label="Next round" disabled><i class="bi bi-caret-right-fill"></i></button>
+      <span class="toolbar-tip" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Round precedente">
+        <button class="btn btn-outline-secondary" id="prevRoundBtn" type="button" aria-label="Round precedente" disabled><i class="bi bi-caret-left-fill"></i></button>
+      </span>
+      <span class="toolbar-tip" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Carica round">
+        <button class="btn btn-outline-secondary" id="loadRoundBtn" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Carica round"><i class="bi bi-folder2-open"></i></button>
+      </span>
+      <span class="toolbar-tip" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Round successivo">
+        <button class="btn btn-outline-secondary" id="nextRoundBtn" type="button" aria-label="Round successivo" disabled><i class="bi bi-caret-right-fill"></i></button>
+      </span>
       <ul class="dropdown-menu round-picker-menu" id="roundPickerMenu" data-bs-auto-close="true"></ul>
     </div>
     <div class="btn-group" role="group" aria-label="Playback">
-      <button class="btn btn-outline-secondary" id="playBtn" type="button" aria-label="Play"><i class="bi bi-play-fill"></i></button>
-      <button class="btn btn-primary" id="pauseBtn" type="button" aria-label="Pause"><i class="bi bi-pause-fill"></i></button>
+      <button class="btn btn-outline-secondary" id="playBtn" type="button" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Avvia replay" aria-label="Avvia replay"><i class="bi bi-play-fill"></i></button>
+      <button class="btn btn-primary" id="pauseBtn" type="button" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Pausa replay" aria-label="Pausa replay"><i class="bi bi-pause-fill"></i></button>
     </div>
     <div class="btn-group" role="group" aria-label="Playback speed">
-      <button class="btn btn-primary replay-speed-btn active" type="button" data-speed="1">x1</button>
-      <button class="btn btn-outline-secondary replay-speed-btn" type="button" data-speed="2">x2</button>
-      <button class="btn btn-outline-secondary replay-speed-btn" type="button" data-speed="5">x5</button>
+      <button class="btn btn-primary replay-speed-btn active" type="button" data-speed="1" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Velocità ×1">x1</button>
+      <button class="btn btn-outline-secondary replay-speed-btn" type="button" data-speed="2" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Velocità ×2">x2</button>
+      <button class="btn btn-outline-secondary replay-speed-btn" type="button" data-speed="5" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Velocità ×5">x5</button>
     </div>
+    <input type="number" class="form-control replay-start-sec" id="replayStartSec" min="5" max="300" step="1" value="300" aria-label="Secondo iniziale del round" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Secondo iniziale del round (5–300)">
     <span class="divider d-none d-md-block" aria-hidden="true"></span>
     <div class="toolbar-timeline flex-grow-1 d-flex align-items-center gap-0 min-w-0">
       <div class="timeline-block flex-grow-1 min-w-0">
