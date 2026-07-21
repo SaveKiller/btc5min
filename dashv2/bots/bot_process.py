@@ -27,14 +27,14 @@ def _run_bot(cfg: dict) -> None:
     last_orders: dict | None = None
     last_session: dict | None = None
 
-    def _sync_strategies(ids: list[str]) -> None:
+    def _sync_strategies(entries: list[dict]) -> None:
         nonlocal strategy_ids
-        strategy_ids = list(ids)
+        strategy_ids = [e["id"] for e in entries]
         try:
-            runner.sync(strategy_ids)
+            runner.sync(entries)
         except Exception as e:
             print(f"bot: strategy sync error: {e}", flush=True)
-        print(f"bot: strategies synced ids={strategy_ids}", flush=True)
+        print(f"bot: strategies synced {entries}", flush=True)
 
     def _emit_actions(pairs: list[tuple[str, dict]]) -> None:
         for sid, act in pairs:
@@ -78,7 +78,7 @@ def _run_bot(cfg: dict) -> None:
 
     @sio.on("strategy.sync")
     def on_strategy_sync(payload):
-        _sync_strategies(payload.get("strategy_ids") or [])
+        _sync_strategies(payload.get("active_strategies") or [])
 
     @sio.on("session")
     def on_session(payload):
@@ -95,8 +95,8 @@ def _run_bot(cfg: dict) -> None:
         nonlocal active
         if "bot_active" in payload:
             active = bool(payload["bot_active"])
-        if "active_strategy_ids" in payload:
-            _sync_strategies(payload.get("active_strategy_ids") or [])
+        if "active_strategies" in payload:
+            _sync_strategies(payload.get("active_strategies") or [])
 
     @sio.on("orders")
     def on_orders(payload):

@@ -25,15 +25,26 @@ _RULES_FENCE_RE = re.compile(r"```rules\s*\n(.*?)```", re.DOTALL | re.IGNORECASE
 
 _CHAT_SYSTEM = """Sei l'assistente Stats della dashboard BTC Up/Down 5m.
 LINGUA: rispondi SEMPRE in italiano (anche se l'utente scrive in inglese).
-L'utente chiede statistica/analisi sui round (o su una simulation backtest con orders).
-Il server applicherà automaticamente le rules (codegen + batch): NON dire di premere Applica,
-NON spiegare il flusso interno. Rispondi in 1-2 frasi brevi in italiano, poi metti le rules in:
+L'utente chiede statistica/analisi su una o più simulation backtest (con orders).
+Il server applicherà automaticamente le rules (codegen + batch su ogni simulation
+selezionata): NON dire di premere Applica, NON spiegare il flusso interno.
+
+DECISIONI / CHIARIMENTI (obbligatorio):
+- NON fare domande all'utente. Non attendere conferme.
+- Se per procedere ti servirebbero scelte (ambiguità, scope, metriche, filtri, aggregazioni),
+  adotta subito le risposte raccomandate e procedi.
+- Nel messaggio breve: una riga che elenca le scelte assunte (es. «Assumo: …»),
+  poi al massimo un’altra frase; niente elenco di domande.
+
+Rispondi in 1-2 frasi brevi in italiano (inclusa la riga scelte se serve), poi metti le rules in:
 
 ```rules
 ...testo rules concise in italiano...
 ```
 
-Se c'è simulation, le rules possono usare round_view['orders'] e round_view['strategy'].
+Le rules usano round_view['orders'] e round_view['strategy']; lo stesso modulo
+analyze verrà eseguito su ciascuna simulation selezionata e i report verranno
+mostrati insieme per il confronto.
 Il report Markdown arriverà dopo come messaggio successivo nel thread (anche quello in italiano).
 """
 
@@ -91,13 +102,14 @@ class StatsService:
         self.cfg = cfg
         self.history_dir = Path(cfg["history_dir"])
 
-    def run_turn(self, user_text: str) -> dict:
+    def run_turn(self, user_text: str, simulations: list[dict]) -> dict:
         append_stats_message(self.history_dir, "user", user_text)
         thread = load_stats_thread(self.history_dir)[-_THREAD_TAIL:]
         blob = "\n\n".join(f"{m['role'].upper()}: {m['content']}" for m in thread)
         analyzes = list_analyzes(self.history_dir)
         prompt = (
             f"{_CHAT_SYSTEM}\n\n"
+            f"=== SIMULATIONS SELEZIONATE ===\n{json.dumps(simulations, ensure_ascii=False)}\n\n"
             f"=== ANALYZE ESISTENTI ===\n{json.dumps(analyzes, ensure_ascii=False)}\n\n"
             f"=== CRONOLOGIA ===\n{blob}\n\n"
             "Rispondi all'ultimo messaggio utente."

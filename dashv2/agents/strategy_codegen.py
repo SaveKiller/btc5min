@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import re
 import tempfile
+from collections.abc import Callable
 
 from dashv2.agents.cursor_client import call_model
 from dashv2.config import reload_coded_rules_prompt
+
+ProgressCb = Callable[[str, str], None]
+
+
+def _emit(on_progress: ProgressCb | None, phase: str, message: str) -> None:
+    if on_progress is not None:
+        on_progress(phase, message)
 
 _FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
@@ -99,24 +107,58 @@ def validate_module_source(source: str) -> None:
 
 def generate_strategy_module(
     rules: str, *, model_id: str, params: dict[str, str], system_prompt: str,
-    max_attempts: int,
+    max_attempts: int, model_label: str | None = None,
+    on_progress: ProgressCb | None = None,
 ) -> str:
     """Chiama Cursor, estrae e valida il sorgente Python.
 
     Su SyntaxError/IndentationError ritenta fino a max_attempts senza propagare
     l'errore intermedio (il popup UI arriva solo se falliscono tutti i tentativi).
     """
+    label = model_label or model_id
+    _emit(on_progress, "prompt", f"Preparazione prompt rules → Python ({label})…")
     prompt = build_codegen_prompt(rules, system_prompt)
+    _emit(
+        on_progress, "prompt_ready",
+        f"Prompt pronto ({len(prompt)} caratteri, rules {len(rules.strip())} caratteri) — "
+        f"chiamo {label}…",
+    )
     last_err: BaseException | None = None
-    for _ in range(max_attempts):
+    for attempt in range(1, max_attempts + 1):
+        if attempt > 1:
+            detail = f"{type(last_err).__name__}: {last_err}" if last_err else "errore precedente"
+            _emit(
+                on_progress, "regen",
+                f"Errore nel modulo generato ({detail}) — "
+                f"rigenerazione {attempt}/{max_attempts} con {label}…",
+            )
+        else:
+            _emit(
+                on_progress, "generating",
+                f"Generazione modulo Python con {label} (tentativo 1/{max_attempts})…",
+            )
         with tempfile.TemporaryDirectory(prefix="dashv2-cursor-") as tmp:
-            raw = call_model(prompt, model_id=model_id, params=params, cwd=tmp)
+            raw = call_model(
+                prompt, model_id=model_id, params=params, cwd=tmp,
+                model_label=label, on_progress=on_progress, task_label="modulo Python",
+            )
+        _emit(on_progress, "extract", "Estrazione codice Python dalla risposta del modello…")
         source = extract_python_source(raw)
+        _emit(
+            on_progress, "validate",
+            f"Validazione modulo ({len(source)} caratteri): compile + on_tick…",
+        )
         try:
             validate_module_source(source)
+            _emit(on_progress, "validated", "Modulo Python valido.")
             return source
         except SyntaxError as e:
             last_err = e
+            _emit(
+                on_progress, "validate_fail",
+                f"Sintassi non valida (riga {e.lineno}): {e.msg} — "
+                + ("si ritenta…" if attempt < max_attempts else "tentativi esauriti"),
+            )
     raise last_err
 
 
@@ -146,17 +188,45 @@ def validate_coded_rules(text: str) -> None:
 
 def generate_coded_rules(
     source: str, *, model_id: str, params: dict[str, str], max_attempts: int = 2,
+    model_label: str | None = None, on_progress: ProgressCb | None = None,
 ) -> str:
     """Seconda pass: dal Python alle coded_rules schematiche."""
+    label = model_label or model_id
+    _emit(on_progress, "coded_prompt", f"Preparazione prompt Python → coded rules ({label})…")
     prompt = build_coded_rules_prompt(source)
+    _emit(
+        on_progress, "coded_prompt_ready",
+        f"Prompt coded rules pronto (sorgente {len(source)} caratteri) — chiamo {label}…",
+    )
     last_err: BaseException | None = None
-    for _ in range(max_attempts):
+    for attempt in range(1, max_attempts + 1):
+        if attempt > 1:
+            detail = f"{type(last_err).__name__}: {last_err}" if last_err else "errore precedente"
+            _emit(
+                on_progress, "coded_regen",
+                f"Coded rules incomplete ({detail}) — "
+                f"rigenerazione {attempt}/{max_attempts} con {label}…",
+            )
+        else:
+            _emit(
+                on_progress, "coded_rules",
+                f"Scrittura coded rules con {label} (tentativo 1/{max_attempts})…",
+            )
         with tempfile.TemporaryDirectory(prefix="dashv2-coded-") as tmp:
-            raw = call_model(prompt, model_id=model_id, params=params, cwd=tmp)
+            raw = call_model(
+                prompt, model_id=model_id, params=params, cwd=tmp,
+                model_label=label, on_progress=on_progress, task_label="coded rules",
+            )
+        _emit(on_progress, "coded_extract", "Estrazione sezioni Apertura / Chiusura / Vincoli…")
         text = extract_coded_rules(raw)
         try:
             validate_coded_rules(text)
+            _emit(on_progress, "coded_validated", "Coded rules complete.")
             return text
         except RuntimeError as e:
             last_err = e
+            _emit(
+                on_progress, "coded_validate_fail",
+                f"{e} — " + ("si ritenta…" if attempt < max_attempts else "tentativi esauriti"),
+            )
     raise last_err

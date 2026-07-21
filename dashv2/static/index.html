@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BT5 Replay Dashboard</title>
+  <title>Studio Replay 1.0</title>
   <link href="/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
   <link href="/vendor/bootstrap-icons/bootstrap-icons.min.css" rel="stylesheet">
   <link href="/css/dashboard.css" rel="stylesheet">
@@ -72,7 +72,7 @@
           <button class="nav-link" id="bot-tab" data-bs-toggle="tab" data-bs-target="#botPane" type="button" role="tab" aria-controls="botPane" aria-selected="false"><i class="bi bi-cpu tab-icon bot-tab-icon is-paused" id="botTabIcon" aria-hidden="true"></i><span>STRATEGY</span></button>
         </li>
         <li class="nav-item ms-auto" role="presentation">
-          <button class="nav-link" id="agent-tab" data-bs-toggle="tab" data-bs-target="#agentPane" type="button" role="tab" aria-controls="agentPane" aria-selected="false"><i class="bi bi-chat-square-text tab-icon agent-tab-icon" aria-hidden="true"></i><span>AGENT</span></button>
+          <button class="nav-link" id="agent-tab" data-bs-toggle="tab" data-bs-target="#agentPane" type="button" role="tab" aria-controls="agentPane" aria-selected="false"><i class="bi bi-person-workspace tab-icon agent-tab-icon" aria-hidden="true"></i><span>AGENT</span></button>
         </li>
       </ul>
       <div class="tab-content workspace-tab-content flex-grow-1 min-h-0">
@@ -111,6 +111,7 @@
                 <button class="btn btn-sm btn-primary" id="newAccountBtn" type="button">NEW</button>
                 <button class="btn btn-sm btn-outline-secondary" id="renameAccountBtn" type="button" disabled>RENAME</button>
                 <button class="btn btn-sm btn-outline-secondary" id="editAccountBtn" type="button" disabled>EDIT</button>
+                <button class="btn btn-sm btn-outline-secondary" id="unloadRoundBtn" type="button" disabled>UNLOAD ROUND</button>
               </div>
             </article>
             <article class="app-panel account-summary-panel mb-2" id="accountSummaryPanel">
@@ -138,7 +139,7 @@
             <article class="app-panel flex-grow-1 min-h-0 d-flex flex-column">
               <div class="panel-head"><span class="panel-title">BOT AND STRATEGIES</span></div>
               <div class="bot-status-row px-3 pt-3 d-flex align-items-center gap-3">
-                <img class="bot-status-icon" src="/imgs/cpu_ai.png" alt="" width="40" height="40">
+                <i class="bi bi-cpu bot-status-icon is-paused" id="botStatusIcon" aria-hidden="true"></i>
                 <div class="bot-switch-wrap d-flex align-items-center gap-2 flex-shrink-0">
                   <span class="tiny text-muted-app mb-0">BOT</span>
                   <div class="form-check form-switch mb-0">
@@ -167,7 +168,7 @@
               </div>
               <div class="px-3 pb-3 flex-grow-1 min-h-0 d-flex flex-column">
                 <ul class="strategy-catalog-list flex-grow-1 mb-0" id="strategyCatalogList"></ul>
-                <p class="tiny text-muted-app mt-2 mb-0">Use + to add to bot; remove from LOADED labels. Double-click to edit.</p>
+                <p class="tiny text-muted-app mt-2 mb-0">Double-click to pick version in edit, then + to add that version to bot.</p>
               </div>
             </article>
           </div>
@@ -182,7 +183,7 @@
                 <button class="nav-link" id="agent-backtest-tab" data-bs-toggle="tab" data-bs-target="#agentBacktestPane" type="button" role="tab" aria-controls="agentBacktestPane" aria-selected="false"><i class="bi bi-clock-history tab-icon" aria-hidden="true"></i><span>BACKTEST</span></button>
               </li>
               <li class="nav-item" role="presentation">
-                <button class="nav-link" id="agent-analyze-tab" data-bs-toggle="tab" data-bs-target="#agentAnalyzePane" type="button" role="tab" aria-controls="agentAnalyzePane" aria-selected="false"><i class="bi bi-search tab-icon" aria-hidden="true"></i><span>ANALYZE</span></button>
+                <button class="nav-link" id="agent-analyze-tab" data-bs-toggle="tab" data-bs-target="#agentAnalyzePane" type="button" role="tab" aria-controls="agentAnalyzePane" aria-selected="false"><i class="bi bi-search tab-icon" aria-hidden="true"></i><span>BACKTEST ANALYSIS</span></button>
               </li>
             </ul>
             <div class="tab-content agent-inner-tab-content flex-grow-1 min-h-0">
@@ -226,8 +227,18 @@
                         <span class="stats-day-display" id="statsDayToDisplay"></span>
                         <input class="form-control form-control-sm stats-day-input" type="date" id="statsDayTo" aria-label="Day to">
                       </div>
-                      <select class="form-select form-select-sm stats-strategy-select" id="statsStrategySelect" aria-label="Strategy"></select>
-                      <select class="form-select form-select-sm stats-strategy-version-select flex-shrink-0" id="statsStrategyVersionSelect" aria-label="Strategy version" style="max-width:5.5rem"></select>
+                      <div class="dropdown stats-strategy-dropdown flex-shrink-0">
+                        <button class="form-select form-select-sm stats-strategy-select text-start is-placeholder"
+                          type="button" id="statsStrategyBtn" data-bs-toggle="dropdown" aria-expanded="false"
+                          aria-label="Strategy">Strategy</button>
+                        <ul class="dropdown-menu stats-bs-select-menu" id="statsStrategyMenu"></ul>
+                      </div>
+                      <div class="dropdown stats-strategy-version-dropdown flex-shrink-0">
+                        <button class="form-select form-select-sm stats-strategy-version-select text-start"
+                          type="button" id="statsStrategyVersionBtn" data-bs-toggle="dropdown" aria-expanded="false"
+                          aria-label="Strategy version" disabled>v—</button>
+                        <ul class="dropdown-menu stats-bs-select-menu stats-bs-select-menu-sm" id="statsStrategyVersionMenu"></ul>
+                      </div>
                       <button class="btn btn-sm btn-primary flex-shrink-0" id="statsBacktestRunBtn" type="button">Run</button>
                       <button class="btn btn-sm btn-outline-secondary flex-shrink-0" id="statsJobCancelBtn" type="button" disabled>Cancel</button>
                     </div>
@@ -236,8 +247,13 @@
                     <article class="app-panel flex-shrink-0">
                       <div class="p-3 d-flex flex-nowrap align-items-center gap-3 stats-session-row">
                         <div class="d-flex flex-column gap-1 flex-shrink-0 min-w-0">
-                          <label class="tiny text-muted-app mb-0" for="statsSimulationSelect">Session</label>
-                          <select class="form-select form-select-sm stats-session-select" id="statsSimulationSelect" aria-label="Simulation session"></select>
+                          <label class="tiny text-muted-app mb-0" for="statsSimulationBtn">Session</label>
+                          <div class="dropdown stats-session-dropdown">
+                            <button class="form-select form-select-sm stats-session-select text-start is-placeholder"
+                              type="button" id="statsSimulationBtn" data-bs-toggle="dropdown" aria-expanded="false"
+                              aria-label="Simulation session">— sessioni —</button>
+                            <ul class="dropdown-menu stats-bs-select-menu" id="statsSimulationMenu"></ul>
+                          </div>
                         </div>
                         <div class="stats-session-divider flex-shrink-0" aria-hidden="true"></div>
                         <div class="d-flex flex-nowrap align-items-center gap-2 flex-grow-1 min-w-0">
@@ -283,11 +299,14 @@
                   <article class="app-panel flex-shrink-0">
                     <div class="panel-head"><span class="panel-title">ANALYZE</span></div>
                     <div class="p-3 d-flex flex-column gap-1">
-                      <label class="tiny text-muted-app mb-0" for="statsAnalyzeSimSelect">Simulation</label>
+                      <label class="tiny text-muted-app mb-0" for="statsAnalyzeSimBtn">Simulation</label>
                       <div class="stats-analyze-sim-row">
-                        <select class="form-select form-select-sm stats-analyze-sim-select" id="statsAnalyzeSimSelect" aria-label="Analyze simulation">
-                          <option value="">— seleziona simulation —</option>
-                        </select>
+                        <div class="dropdown stats-analyze-sim-dropdown">
+                          <button class="form-select form-select-sm stats-analyze-sim-select text-start"
+                            type="button" id="statsAnalyzeSimBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                            aria-expanded="false" aria-label="Analyze simulations">— seleziona simulation —</button>
+                          <ul class="dropdown-menu stats-analyze-sim-menu" id="statsAnalyzeSimMenu"></ul>
+                        </div>
                         <div class="d-flex align-items-center gap-2 stats-progress-row stats-analyze-progress-wrap min-w-0 flex-grow-1">
                           <div class="progress stats-progress stats-analyze-progress flex-grow-1 mb-0" role="progressbar" aria-valuemin="0" aria-valuemax="100">
                             <div class="progress-bar" id="statsAnalyzeProgressBar" style="width:0%"></div>
@@ -319,7 +338,7 @@
 
     <div class="workspace-right">
       <article class="app-panel order-book h-100 d-flex flex-column">
-        <div class="panel-head d-flex align-items-center gap-3 flex-wrap">
+        <div class="panel-head d-flex align-items-center gap-2 flex-nowrap order-book-head">
           <span class="panel-title engine-plugin-label" id="enginePluginLabel">REPLAY</span>
           <span class="order-head-divider" aria-hidden="true"></span>
           <div class="order-head-stat">
@@ -342,14 +361,9 @@
             <div class="order-head-stat-value" id="orderOutcome">---</div>
           </div>
           <span class="order-head-divider" aria-hidden="true"></span>
-          <div class="order-head-stat order-head-stat-time">
+          <div class="order-head-stat">
             <div class="tiny text-muted-app">CURRENT TIME</div>
             <div class="order-head-stat-value" id="orderRoundTime">—</div>
-          </div>
-          <span class="order-head-divider" aria-hidden="true"></span>
-          <div class="order-head-stat">
-            <div class="tiny text-muted-app">SEC TO END</div>
-            <div class="order-head-stat-value" id="orderSecToEnd">—</div>
           </div>
           <span class="order-head-divider" aria-hidden="true"></span>
           <div class="order-head-stat">
@@ -361,16 +375,21 @@
           <section class="reference-ladder mb-4" aria-label="Price reference ladder">
             <div class="reference-cell zero" id="refNeg">0</div>
             <div class="reference-track" id="refNegTrack"><div class="fill neg" id="refNegFill"></div><div class="ticks"><span style="left:0%">-120</span><span style="left:33.33%">-80</span><span style="left:50%">-60</span><span style="left:66.67%">-40</span><span style="left:83.33%">-20</span><span style="left:100%">0</span></div></div>
-            <div class="reference-cell time-remaining" id="refCountdown">—</div>
+            <div class="reference-countdown">
+              <div class="reference-cell time-remaining" id="refCountdown">—</div>
+              <div class="reference-countdown-label">DELTA</div>
+            </div>
             <div class="reference-track" id="refPosTrack"><div class="fill" id="refPosFill"></div><div class="ticks"><span style="left:0%">0</span><span style="left:16.67%">20</span><span style="left:33.33%">40</span><span style="left:50%">60</span><span style="left:66.67%">80</span><span style="left:100%">120</span></div></div>
             <div class="reference-cell positive" id="refPos">0</div>
           </section>
           <div class="row g-4 mb-3">
             <div class="col-6">
               <section class="direction-panel h-100">
-                <button class="btn btn-down w-100 py-3 fw-bold direction-btn" id="buyDownBtn" type="button" disabled>
-                  <i class="bi bi-arrow-down-circle me-1"></i><span class="label-down">DOWN</span>
-                  <span class="ms-1" id="downAskLabel">—</span>
+                <button class="btn btn-down w-100 fw-bold direction-btn" id="buyDownBtn" type="button" disabled>
+                  <span class="direction-main">
+                    <span class="label-down">DOWN</span>
+                    <span id="downAskLabel">—</span>
+                  </span>
                   <span class="direction-win-block opacity-75">
                     <span id="downProfitLabel">—</span>
                     <span class="direction-win-pct" id="downProfitPctLabel">—</span>
@@ -380,9 +399,9 @@
                 <div class="size-block mt-3 border-secondary-subtle">
                   <label class="form-label tiny text-muted-app mb-1">Size for DOWN (USD)</label>
                   <div class="d-flex align-items-center gap-2 w-100 overflow-hidden">
-                    <div class="input-group input-group-sm size-input" style="width:135px;flex:0 0 135px">
+                    <div class="input-group input-group-sm size-input">
                       <span class="input-group-text">$</span>
-                      <input class="form-control fw-semibold" id="sizeDownInput" value="100">
+                      <input class="form-control fw-semibold" id="sizeDownInput" value="100" maxlength="4" inputmode="numeric">
                     </div>
                     <div class="stake d-flex gap-1 flex-grow-1" data-side="Down"></div>
                   </div>
@@ -391,9 +410,11 @@
             </div>
             <div class="col-6">
               <section class="direction-panel h-100">
-                <button class="btn btn-up w-100 py-3 fw-bold direction-btn" id="buyUpBtn" type="button" disabled>
-                  <i class="bi bi-arrow-up-circle me-1"></i><span class="label-up">UP</span>
-                  <span class="ms-1" id="upAskLabel">—</span>
+                <button class="btn btn-up w-100 fw-bold direction-btn" id="buyUpBtn" type="button" disabled>
+                  <span class="direction-main">
+                    <span class="label-up">UP</span>
+                    <span id="upAskLabel">—</span>
+                  </span>
                   <span class="direction-win-block opacity-75">
                     <span id="upProfitLabel">—</span>
                     <span class="direction-win-pct" id="upProfitPctLabel">—</span>
@@ -403,9 +424,9 @@
                 <div class="size-block mt-3 border-secondary-subtle">
                   <label class="form-label tiny text-muted-app mb-1">Size for UP (USD)</label>
                   <div class="d-flex align-items-center gap-2 w-100 overflow-hidden">
-                    <div class="input-group input-group-sm size-input" style="width:135px;flex:0 0 135px">
+                    <div class="input-group input-group-sm size-input">
                       <span class="input-group-text">$</span>
-                      <input class="form-control fw-semibold" id="sizeUpInput" value="100">
+                      <input class="form-control fw-semibold" id="sizeUpInput" value="100" maxlength="4" inputmode="numeric">
                     </div>
                     <div class="stake d-flex gap-1 flex-grow-1" data-side="Up"></div>
                   </div>
@@ -426,6 +447,21 @@
     </div>
   </section>
 </main>
+
+<div class="modal fade" id="noticeModal" tabindex="-1" aria-labelledby="noticeModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="noticeModalTitle">Avviso</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="noticeModalBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Ok</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div class="modal fade" id="accountModal" tabindex="-1" aria-labelledby="accountModalTitle" aria-hidden="true">
   <div class="modal-dialog">
@@ -499,12 +535,13 @@
               <textarea class="form-control strategy-coded-rules-input" id="strategyModalCodedRules" rows="14" readonly placeholder="Dopo il salvataggio: ciò che il codice fa davvero (Apertura / Chiusura / Vincoli). Puoi discuterle in chat AI: spiegazioni, dubbi, e se qualcosa è sbagliato l’agente indica come riscrivere le rules."></textarea>
             </div>
           </div>
+          <textarea class="form-control strategy-generate-log mt-2" id="strategyModalGenerateLog" rows="4" readonly placeholder="Log generazione modello…"></textarea>
         </div>
       </div>
       <div class="modal-footer">
         <div id="strategyModalProgress" class="d-none align-items-center text-success me-auto">
           <div class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></div>
-          <span id="strategyModalProgressText">Generating…</span>
+          <span id="strategyModalProgressText">creazione/modifica strategia...</span>
         </div>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" id="strategyModalCancelBtn">Cancel</button>
         <button type="button" class="btn btn-primary" id="strategyModalSaveBtn">Save</button>

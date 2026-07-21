@@ -36,12 +36,38 @@ class TestSeekAndHistory(unittest.TestCase):
         eng = OrderEngine(100, 100)
         tick = {"chainlink_btc": 90000.0, "partial": False, "gap": False, "up_ask": 0.55, "up_bid": 0.53, "down_ask": 0.45, "down_bid": 0.43}
         book = _book()
-        eng.place("Up", 10.0, 200, tick, book, 0.02, ACCOUNT_ID, "user")
+        placed = eng.place("Up", 10.0, 200, tick, book, 0.02, ACCOUNT_ID, "user")
         eng.close(eng.open_orders[0]["id"], 150, tick, book, 0.02)
         self.assertEqual(len(eng.open_orders), 0)
         eng.prune_seek(180)
         self.assertEqual(len(eng.open_orders), 1)
         self.assertEqual(len(eng.closed_orders), 0)
+        self.assertEqual(eng.open_orders[0]["id"], placed["id"])
+        self.assertEqual(eng.open_orders[0]["entry_sec"], 200)
+        self.assertNotIn("exit_sec", eng.open_orders[0])
+
+    def test_prune_seek_before_entry_drops_manual_close(self):
+        """Seek prima di entry elimina del tutto un ordine già chiuso a mano."""
+        eng = OrderEngine(100, 100)
+        tick = {"chainlink_btc": 90000.0, "partial": False, "gap": False, "up_ask": 0.55, "up_bid": 0.53, "down_ask": 0.45, "down_bid": 0.43}
+        book = _book()
+        eng.place("Up", 10.0, 50, tick, book, 0.02, ACCOUNT_ID, "user")
+        eng.close(eng.open_orders[0]["id"], 40, tick, book, 0.02)
+        self.assertEqual(len(eng.closed_orders), 1)
+        eng.prune_seek(80)
+        self.assertEqual(eng.open_orders, [])
+        self.assertEqual(eng.closed_orders, [])
+
+    def test_prune_seek_after_exit_keeps_manual_close(self):
+        eng = OrderEngine(100, 100)
+        tick = {"chainlink_btc": 90000.0, "partial": False, "gap": False, "up_ask": 0.55, "up_bid": 0.53, "down_ask": 0.45, "down_bid": 0.43}
+        book = _book()
+        eng.place("Up", 10.0, 50, tick, book, 0.02, ACCOUNT_ID, "user")
+        eng.close(eng.open_orders[0]["id"], 40, tick, book, 0.02)
+        eng.prune_seek(30)
+        self.assertEqual(len(eng.open_orders), 0)
+        self.assertEqual(len(eng.closed_orders), 1)
+        self.assertEqual(eng.closed_orders[0]["exit_sec"], 40)
 
     def test_prune_seek_forward_keeps_open_order(self):
         eng = OrderEngine(100, 100)

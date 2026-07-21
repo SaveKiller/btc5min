@@ -419,11 +419,14 @@ Rimuove da `open_orders` **senza** passare da closed/history.
 
 ### Seek causale — `prune_seek(sec)`
 
-Asse countdown: `sec` alto = inizio round, `sec` basso = fine.
+Asse countdown: `sec` alto = inizio round, `sec` basso = fine. Solo se il round **non** è ancora concluso (`round_ended=False`; ledger non ancora scritto).
 
 - Tiene open solo ordini con `entry_sec >= sec` (già piazzati “nel passato” del cursore).
-- Close manuali con `exit_sec < sec` (chiusura ancora nel “futuro” rispetto al nuovo cursore) → **riaperti**.
-- Settlement chiusi restano in closed.
+- Close manuali:
+  - `exit_sec >= sec` → restano closed (chiusura già avvenuta rispetto al cursore);
+  - `entry_sec >= sec` e `exit_sec < sec` → **riaperti** con i dati originari (cursore tra entry e exit);
+  - `entry_sec < sec` → **eliminati** (cursore prima dell’apertura; spariscono anche dalla history live in RAM).
+- Settlement chiusi restano in closed (in pratica solo dopo fine round; lo seek post-`round_ended` fa `_restart_round`).
 
 ### Scrub
 

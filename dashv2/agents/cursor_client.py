@@ -5,8 +5,12 @@ from __future__ import annotations
 import codecs
 import os
 import sys
+import threading
 import time
+from collections.abc import Callable
 from typing import Any, Mapping
+
+ProgressCb = Callable[[str, str], None]
 
 
 def _patch_cursor_sdk_windows() -> None:
@@ -80,6 +84,7 @@ from cursor_sdk import (  # noqa: E402
 
 _RETRIES = 3
 _RETRY_DELAY_SEC = 15
+_WAIT_TICK_SEC = 2.0
 
 _META_MARKERS = (
     "ho salvato", "file salvato", "salvato in `", "I saved", "I've created",
@@ -87,30 +92,77 @@ _META_MARKERS = (
 )
 
 
+def _emit(on_progress: ProgressCb | None, phase: str, message: str) -> None:
+    if on_progress is not None:
+        on_progress(phase, message)
+
+
 def call_model(
     prompt: str, *, model_id: str, params: dict[str, str], cwd: str,
-    reject_meta: bool = True,
+    reject_meta: bool = True, model_label: str | None = None,
+    on_progress: ProgressCb | None = None, task_label: str = "model",
 ) -> str:
     """Invoca Cursor Agent locale; restituisce solo il testo del risultato."""
     api_key = os.environ["CURSOR_API_KEY"]
+    label = model_label or model_id
     model = ModelSelection(
         id=model_id,
         params=[ModelParameterValue(id=k, value=v) for k, v in params.items()],
     )
     last_err: Exception | None = None
     for attempt in range(1, _RETRIES + 1):
+        if attempt > 1:
+            _emit(
+                on_progress, "cursor_retry",
+                f"Errore Cursor sulla run precedente — ritento {task_label} "
+                f"({attempt}/{_RETRIES}) tra {_RETRY_DELAY_SEC}s…",
+            )
+            time.sleep(_RETRY_DELAY_SEC)
+        _emit(
+            on_progress, "cursor_start",
+            f"Avvio agente Cursor per {task_label} con {label}"
+            + (f" (tentativo {attempt}/{_RETRIES})" if attempt > 1 else "") + "…",
+        )
         try:
             with Agent.create(
                 api_key=api_key,
                 model=model,
                 local=LocalAgentOptions(cwd=cwd, auto_review=False),
             ) as agent:
+                _emit(
+                    on_progress, "cursor_send",
+                    f"Prompt inviato a {label} — attesa risposta ({task_label})…",
+                )
                 run = agent.send(prompt)
-                result = run.wait()
+                stop = threading.Event()
+                t0 = time.monotonic()
+
+                def _wait_ticks() -> None:
+                    while not stop.wait(_WAIT_TICK_SEC):
+                        sec = int(time.monotonic() - t0)
+                        _emit(
+                            on_progress, "cursor_wait",
+                            f"In attesa di {label} ({task_label})… {sec}s — "
+                            f"il modello sta generando la risposta",
+                        )
+
+                ticker = threading.Thread(target=_wait_ticks, daemon=True, name="cursor-wait-tick")
+                ticker.start()
+                try:
+                    result = run.wait()
+                finally:
+                    stop.set()
+                    ticker.join(timeout=1.0)
         except CursorAgentError as e:
             raise RuntimeError(f"Cursor startup failed: {e.message}") from e
         if result.status == "finished" and result.result and result.result.strip():
             text = result.result.strip()
+            elapsed = int(time.monotonic() - t0)
+            _emit(
+                on_progress, "cursor_done",
+                f"Risposta ricevuta da {label} ({task_label}) in {elapsed}s "
+                f"({len(text)} caratteri)…",
+            )
             if reject_meta:
                 for marker in _META_MARKERS:
                     if marker.lower() in text.lower():
@@ -119,6 +171,9 @@ def call_model(
         last_err = RuntimeError(
             f"Cursor run failed: status={result.status} run_id={result.id} attempt={attempt}")
         print(f"cursor_client: {last_err}", flush=True)
-        if attempt < _RETRIES:
-            time.sleep(_RETRY_DELAY_SEC)
+        _emit(
+            on_progress, "cursor_fail",
+            f"Run Cursor fallita (status={result.status}) per {task_label}"
+            + (f" — ritento…" if attempt < _RETRIES else " — tentativi esauriti"),
+        )
     raise last_err

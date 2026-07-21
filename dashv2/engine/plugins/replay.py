@@ -20,8 +20,8 @@ from dashv2.orders import OrderEngine
 from dashv2.rounds import LoadedRound, RoundRepository
 from dashv2.strategies import (
     clone_strategy, create_strategy, delete_strategy, list_strategies,
-    load_active_ids, load_strategy, save_active_ids, strategies_dir, strategy_summary,
-    update_strategy,
+    load_active, load_strategy, save_active, strategies_dir, strategy_summary,
+    update_strategy, version_snapshot,
 )
 
 
@@ -105,7 +105,9 @@ class ReplayEngine:
         self.accounts_root = accounts_dir(Path(cfg["history_dir"]))
         self.active_account_id: str | None = load_active_account_id(self.accounts_root)
         self.strategies_root = strategies_dir(Path(cfg["history_dir"]))
-        self.active_strategy_ids: list[str] = load_active_ids(self.strategies_root)
+        active = load_active(self.strategies_root)
+        self.active_strategy_ids: list[str] = [e["id"] for e in active]
+        self.active_strategy_versions: dict[str, int] = {e["id"]: e["version"] for e in active}
         self.loaded: LoadedRound | None = None
         self.sec = 300
         self.playing = False
@@ -149,6 +151,7 @@ class ReplayEngine:
             "engine_plugin": self.engine_plugin, "account_backend": self.account_backend,
             "strategies": list_strategies(self.strategies_root),
             "active_strategy_ids": list(self.active_strategy_ids),
+            "active_strategies": self._active_entries(),
             "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
         }
 
@@ -559,25 +562,39 @@ class ReplayEngine:
         return not self.playing
 
     def _persist_active_ids(self) -> None:
-        save_active_ids(self.strategies_root, self.active_strategy_ids)
+        save_active(self.strategies_root, self._active_entries())
+
+    def _active_entries(self) -> list[dict]:
+        return [
+            {"id": sid, "version": self.active_strategy_versions[sid]}
+            for sid in self.active_strategy_ids
+        ]
 
     def _strategies_snapshot(self) -> list[dict]:
         out: list[dict] = []
         for sid in self.active_strategy_ids:
             data = load_strategy(self.strategies_root, sid)
-            out.append({**strategy_summary(data), "active": True})
+            ver = self.active_strategy_versions[sid]
+            snap = version_snapshot(data, ver)
+            out.append({
+                **strategy_summary(data), "active": True,
+                "active_version": ver, "rules": snap["rules"],
+                "coded_rules": snap["coded_rules"], "module_file": snap["module_file"],
+            })
         return out
 
     def _emit_strategies(self) -> None:
         self._emit_event("strategies", {
             "strategies": list_strategies(self.strategies_root),
             "active_strategy_ids": list(self.active_strategy_ids),
+            "active_strategies": self._active_entries(),
         })
 
     def _cmd_bot_list(self) -> dict:
         return {
             "ok": True, "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
             "strategies": self._strategies_snapshot(), "active_strategy_ids": list(self.active_strategy_ids),
+            "active_strategies": self._active_entries(),
             "catalog": list_strategies(self.strategies_root),
         }
 
@@ -592,6 +609,7 @@ class ReplayEngine:
         return {
             "ok": True, "strategies": list_strategies(self.strategies_root, stype),
             "active_strategy_ids": list(self.active_strategy_ids),
+            "active_strategies": self._active_entries(),
         }
 
     def _cmd_strategy_create(self, payload: dict) -> dict:
@@ -626,23 +644,31 @@ class ReplayEngine:
         sid = payload["strategy_id"]
         if sid in self.active_strategy_ids:
             self.active_strategy_ids = [x for x in self.active_strategy_ids if x != sid]
+            self.active_strategy_versions.pop(sid, None)
             self._persist_active_ids()
         delete_strategy(self.strategies_root, sid)
         self._emit_strategies()
         self._emit_bot_status()
-        return {"ok": True, "active_strategy_ids": list(self.active_strategy_ids)}
+        return {
+            "ok": True, "active_strategy_ids": list(self.active_strategy_ids),
+            "active_strategies": self._active_entries(),
+        }
 
     def _cmd_strategy_load(self, payload: dict) -> dict:
         sid = payload["strategy_id"]
-        load_strategy(self.strategies_root, sid)
+        ver = int(payload["strategy_version"])
+        data = load_strategy(self.strategies_root, sid)
+        version_snapshot(data, ver)
         if sid in self.active_strategy_ids:
             raise Exception(f"strategy already active: {sid}")
         self.active_strategy_ids.append(sid)
+        self.active_strategy_versions[sid] = ver
         self._persist_active_ids()
         self._emit_strategies()
         self._emit_bot_status()
         return {
             "ok": True, "active_strategy_ids": list(self.active_strategy_ids),
+            "active_strategies": self._active_entries(),
             "strategies": self._strategies_snapshot(),
         }
 
@@ -651,11 +677,13 @@ class ReplayEngine:
         if sid not in self.active_strategy_ids:
             raise Exception(f"strategy not active: {sid}")
         self.active_strategy_ids = [x for x in self.active_strategy_ids if x != sid]
+        self.active_strategy_versions.pop(sid, None)
         self._persist_active_ids()
         self._emit_strategies()
         self._emit_bot_status()
         return {
             "ok": True, "active_strategy_ids": list(self.active_strategy_ids),
+            "active_strategies": self._active_entries(),
             "strategies": self._strategies_snapshot(),
         }
 
@@ -761,6 +789,7 @@ class ReplayEngine:
                 "account_backend": self.account_backend,
                 "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
                 "active_strategy_ids": list(self.active_strategy_ids),
+                "active_strategies": self._active_entries(),
             })
             return
         dt = datetime.fromtimestamp(self.loaded.market_start_ts, tz=timezone.utc)
@@ -781,6 +810,7 @@ class ReplayEngine:
             "account_backend": self.account_backend,
             "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
             "active_strategy_ids": list(self.active_strategy_ids),
+            "active_strategies": self._active_entries(),
         })
 
     def _emit_idle_chart(self) -> None:
@@ -812,6 +842,7 @@ class ReplayEngine:
             "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
             "strategies": self._strategies_snapshot(),
             "active_strategy_ids": list(self.active_strategy_ids),
+            "active_strategies": self._active_entries(),
             "loaded": bool(self.active_strategy_ids),
         })
 

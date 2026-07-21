@@ -33,13 +33,18 @@ def process_task(task: dict) -> dict:
                 size_down=float(task["size_down"]),
             )
         if job == "analyze":
-            return run_analyze_round(
+            out = run_analyze_round(
                 loaded,
                 Path(task["module_path"]),
                 orders=task["orders"] if "orders" in task else None,
                 strategy=task["strategy"] if "strategy" in task else None,
             )
+            out["simulation_id"] = task["simulation_id"]
+            return out
         raise Exception(f"unknown job: {job}")
     except Exception as e:
         print(f"batch worker error: {e}", flush=True)
-        return {**base, "ok": False, "error": str(e)}
+        err = {**base, "ok": False, "error": str(e)}
+        if task["job"] == "analyze":
+            err["simulation_id"] = task["simulation_id"]
+        return err

@@ -49,12 +49,19 @@ function signedStatClass(v) {
 }
 
 
-const TIMELINE_THUMB_PX = 16;
 const BAND_EDGE_PAD_PX = 12;
+const BAND_END_PAD_PX = 26;
+
+
+function timelineThumbPx() {
+    const label = document.getElementById("timelineSecLabel");
+    return Math.max(label?.offsetWidth || 0, 40);
+}
 
 
 function timelineThumbLeft(pct) {
-    return `calc(${pct * 100}% + ${(0.5 - pct) * TIMELINE_THUMB_PX}px)`;
+    const tw = timelineThumbPx();
+    return `calc(${pct * 100}% + ${(0.5 - pct) * tw}px)`;
 }
 
 
@@ -77,9 +84,9 @@ export function layoutReplayScale() {
         const spanPct = until.pct - from.pct;
         const endHalf = inclusive ? until.half : -until.half;
         const startPad = from.pct === 0 ? BAND_EDGE_PAD_PX : 0;
-        const endPad = inclusive ? BAND_EDGE_PAD_PX : 0;
-        band.style.left = `calc(${from.pct * 100}% + ${(0.5 - from.pct) * TIMELINE_THUMB_PX}px - ${from.half + startPad}px)`;
-        band.style.width = `calc(${spanPct * 100}% + ${(from.pct - until.pct) * TIMELINE_THUMB_PX}px + ${from.half + endHalf + startPad + endPad}px)`;
+        const endPad = inclusive ? BAND_END_PAD_PX : 0;
+        band.style.left = `calc(${from.pct * 100}% + ${(0.5 - from.pct) * timelineThumbPx()}px - ${from.half + startPad}px)`;
+        band.style.width = `calc(${spanPct * 100}% + ${(from.pct - until.pct) * timelineThumbPx()}px + ${from.half + endHalf + startPad + endPad}px)`;
     });
 }
 
@@ -92,23 +99,30 @@ function applySecBandClass(el, sec) {
 }
 
 
-function updateTimelineSecLabel(sec, progress) {
+export function updateTimelineSecLabel(sec, progress) {
     const slider = $("timelineSlider");
     const label = $("timelineSecLabel");
+    const wrap = slider.parentElement;
     label.textContent = String(sec);
     applySecBandClass(label, sec);
     applySecBandClass(slider, sec);
+    const tw = Math.max(label.offsetWidth, 40);
+    wrap.style.setProperty("--timeline-thumb-w", `${tw}px`);
     const min = Number(slider.min);
     const max = Number(slider.max);
     const pct = (progress - min) / (max - min);
     label.style.left = timelineThumbLeft(pct);
+    if (wrap.dataset.thumbW !== String(tw)) {
+        wrap.dataset.thumbW = String(tw);
+        layoutReplayScale();
+    }
 }
 
 
 export function renderStakeButtons() {
-    const amounts = [1, 10, 20, 50, 100];
+    const amounts = [1, 10, 50, 100];
     document.querySelectorAll(".stake[data-side]").forEach((wrap) => {
-        wrap.innerHTML = amounts.map((n) => `<button class="btn btn-sm btn-outline-secondary stake-btn" type="button" data-amount="${n}">$${n}</button>`).join("");
+        wrap.innerHTML = amounts.map((n) => `<button class="btn btn-sm btn-outline-secondary stake-btn" type="button" data-amount="${n}">${n}</button>`).join("");
     });
 }
 
@@ -303,12 +317,12 @@ export function renderTick(state) {
     const session = state.session;
     if (session?.loaded) {
         $("replayTimestamp").textContent = session.replay_timestamp;
-        $("timelineSlider").value = String(session.progress);
-        updateTimelineSecLabel(session.sec, session.progress);
+        // Durante scrub la posizione è solo del drag locale (vedi input su timelineSlider).
+        if (!state.scrubbing) {
+            $("timelineSlider").value = String(session.progress);
+            updateTimelineSecLabel(session.sec, session.progress);
+        }
         $("refPtb").textContent = Math.round(session.ptb_chainlink).toLocaleString("en-US");
-        const secEl = $("orderSecToEnd");
-        secEl.textContent = String(session.sec);
-        applySecBandClass(secEl, session.sec);
         $("orderRoundTime").textContent = formatRoundClockUtc(session.market_start_ts, session.sec);
         if (!session.round_ended) $("orderOutcome").textContent = "---";
         const countdown = $("refCountdown");
@@ -582,6 +596,7 @@ export function renderAccounts(state) {
     $("newAccountBtn").disabled = locked;
     $("renameAccountBtn").disabled = !hasActive;
     $("editAccountBtn").disabled = !hasActive;
+    $("unloadRoundBtn").disabled = !state.session?.loaded;
     $("exportCsvBtn").disabled = !hasActive;
     renderAccountSummary(state.activeAccount);
     renderBotPanel(state);
@@ -596,9 +611,14 @@ export function renderBotPanel(state) {
     $("botTabIcon").className = state.botActive
         ? "bi bi-cpu tab-icon bot-tab-icon is-active"
         : "bi bi-cpu tab-icon bot-tab-icon is-paused";
+    $("botStatusIcon").className = state.botActive
+        ? "bi bi-cpu bot-status-icon is-active"
+        : "bi bi-cpu bot-status-icon is-paused";
 
 
     const activeIds = state.activeStrategyIds || [];
+    const activeVer = Object.fromEntries(
+        (state.activeStrategies || []).map((e) => [e.id, e.version]));
     const byId = Object.fromEntries((state.strategies || []).map((s) => [s.id, s]));
     const activeQueue = $("botActiveList");
     if (!activeIds.length) {
@@ -606,10 +626,12 @@ export function renderBotPanel(state) {
     } else {
         activeQueue.innerHTML = activeIds.map((id) => {
             const s = byId[id] || { id, name: id };
+            const ver = activeVer[id];
+            const label = ver != null ? `${s.name} v${ver}` : s.name;
             return `<span class="bot-active-label" data-id="${s.id}">
-                <span class="bot-active-label-name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
+                <span class="bot-active-label-name" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
                 <span class="bot-active-label-sep" aria-hidden="true"></span>
-                <button type="button" class="bot-active-label-x" data-unload="${s.id}" title="Remove from bot" aria-label="Remove ${escapeHtml(s.name)}"><i class="bi bi-x-lg" aria-hidden="true"></i></button>
+                <button type="button" class="bot-active-label-x" data-unload="${s.id}" title="Remove from bot" aria-label="Remove ${escapeHtml(label)}"><i class="bi bi-x-lg" aria-hidden="true"></i></button>
             </span>`;
         }).join("");
     }
@@ -626,15 +648,19 @@ export function renderBotPanel(state) {
         catalogList.innerHTML = catalog.map((s) => {
             const sel = s.id === selectedId ? " selected" : "";
             const isActive = activeIds.includes(s.id);
+            const catalogVer = state.strategyCatalogVersions?.[s.id] ?? s.version ?? 1;
             const desc = (s.description || "").trim();
             const tip = desc || "Double-click to edit";
             const descHtml = desc
                 ? `<span class="desc">${escapeHtml(desc)}</span>`
                 : "";
-            return `<li class="strategy-catalog-item${sel}" data-id="${s.id}" title="${escapeHtml(tip)}">
+            return `<li class="strategy-catalog-item${sel}" data-id="${s.id}" data-version="${catalogVer}" title="${escapeHtml(tip)}">
                 <div class="meta">
                     <div class="title-row">
-                        <span class="name">${escapeHtml(s.name)}</span>
+                        <span class="name-wrap">
+                            <span class="name">${escapeHtml(s.name)}</span>
+                            <span class="sver">V${catalogVer}</span>
+                        </span>
                         <span class="stype">${escapeHtml(s.type).toUpperCase()}</span>
                     </div>
                     ${descHtml}
@@ -942,81 +968,118 @@ function formatStatsExecDisplay(isoUtc) {
 
 
 export function renderStatsStrategySelect(strategies, selectedId, selectedVersion, jobRunning) {
-    const sel = $("statsStrategySelect");
+    const btn = $("statsStrategyBtn");
+    const menu = $("statsStrategyMenu");
     const list = strategies || [];
-    const opts = list.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("");
-    sel.innerHTML = `<option value="">Strategy</option>` + opts;
-    if (selectedId && list.some((s) => s.id === selectedId)) sel.value = selectedId;
-    else sel.value = "";
-    sel.classList.toggle("is-placeholder", !sel.value);
-    sel.disabled = !!jobRunning;
-    renderStatsStrategyVersionSelect(list, sel.value || null, selectedVersion, jobRunning);
-    $("statsBacktestRunBtn").disabled = !!jobRunning || !sel.value;
+    const selected = selectedId && list.find((s) => s.id === selectedId);
+    btn.textContent = selected ? selected.name : "Strategy";
+    btn.classList.toggle("is-placeholder", !selected);
+    btn.disabled = !!jobRunning;
+    menu.innerHTML = `<li><button type="button" class="dropdown-item stats-bs-select-item${!selected ? " active" : ""}" data-value="">Strategy</button></li>`
+        + list.map((s) => {
+            const act = s.id === selectedId ? " active" : "";
+            return `<li><button type="button" class="dropdown-item stats-bs-select-item${act}" data-value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</button></li>`;
+        }).join("");
+    renderStatsStrategyVersionSelect(list, selected ? selected.id : null, selectedVersion, jobRunning);
+    $("statsBacktestRunBtn").disabled = !!jobRunning || !selected;
 }
 
 
 export function renderStatsStrategyVersionSelect(strategies, selectedId, selectedVersion, jobRunning) {
-    const sel = $("statsStrategyVersionSelect");
+    const btn = $("statsStrategyVersionBtn");
+    const menu = $("statsStrategyVersionMenu");
     const s = (strategies || []).find((x) => x.id === selectedId);
     if (!s) {
-        sel.innerHTML = "";
-        sel.disabled = true;
+        btn.textContent = "v—";
+        btn.disabled = true;
+        menu.innerHTML = "";
         return;
     }
     const versions = s.versions || [{ version: s.version || 1 }];
-    sel.innerHTML = versions.map((v) =>
-        `<option value="${v.version}">v${v.version}</option>`).join("");
     const tip = s.version || 1;
     const pick = selectedVersion != null && versions.some((v) => v.version === selectedVersion)
         ? selectedVersion : tip;
-    sel.value = String(pick);
-    sel.disabled = !!jobRunning;
+    btn.textContent = `v${pick}`;
+    btn.disabled = !!jobRunning;
+    menu.innerHTML = versions.map((v) => {
+        const act = v.version === pick ? " active" : "";
+        return `<li><button type="button" class="dropdown-item stats-bs-select-item${act}" data-value="${v.version}">v${v.version}</button></li>`;
+    }).join("");
 }
 
 
 export function renderStatsSimulationSelect(simulations, selectedId) {
-    const sel = $("statsSimulationSelect");
+    const btn = $("statsSimulationBtn");
+    const menu = $("statsSimulationMenu");
     const list = simulations || [];
-    sel.innerHTML = list.length
-        ? `<option value="">— sessioni —</option>`
-            + list.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.label || s.id)}</option>`).join("")
-        : `<option value="">— nessuna sessione —</option>`;
-    if (selectedId && list.some((s) => s.id === selectedId)) sel.value = selectedId;
-    else sel.value = "";
+    const selected = selectedId && list.find((s) => s.id === selectedId);
+    const emptyLabel = list.length ? "— sessioni —" : "— nessuna sessione —";
+    btn.textContent = selected ? (selected.label || selected.id) : emptyLabel;
+    btn.classList.toggle("is-placeholder", !selected);
     const longest = list.reduce((n, s) => Math.max(n, (s.label || s.id || "").length), 12);
-    sel.style.width = `${Math.min(longest + 4, 64)}ch`;
-    $("statsSimulationDeleteBtn").disabled = !sel.value;
+    btn.style.width = `${Math.min(longest + 4, 64)}ch`;
+    $("statsSimulationDeleteBtn").disabled = !selected;
+    if (!list.length) {
+        menu.innerHTML = `<li><span class="dropdown-item-text text-muted-app tiny px-3">${emptyLabel}</span></li>`;
+        return;
+    }
+    menu.innerHTML = `<li><button type="button" class="dropdown-item stats-bs-select-item${!selected ? " active" : ""}" data-value="">${emptyLabel}</button></li>`
+        + list.map((s) => {
+            const act = s.id === selectedId ? " active" : "";
+            return `<li><button type="button" class="dropdown-item stats-bs-select-item${act}" data-value="${escapeHtml(s.id)}">${escapeHtml(s.label || s.id)}</button></li>`;
+        }).join("");
 }
 
 
-export function renderStatsAnalyzeSimSelect(simulations, selectedId) {
-    const sel = $("statsAnalyzeSimSelect");
+export function renderStatsAnalyzeSimSelect(simulations, selectedIds) {
+    const btn = $("statsAnalyzeSimBtn");
+    const menu = $("statsAnalyzeSimMenu");
     const placeholder = "— seleziona simulation —";
     const list = (simulations || []).filter((s) => s.has_orders);
-    sel.innerHTML = `<option value="">${placeholder}</option>`
-        + list.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.label || s.id)}</option>`).join("");
-    if (selectedId && list.some((s) => s.id === selectedId)) sel.value = selectedId;
-    else sel.value = "";
+    const ids = selectedIds || [];
+    const selected = new Set(ids);
+    let label = placeholder;
+    if (ids.length === 1) {
+        const one = list.find((s) => s.id === ids[0]);
+        label = one ? (one.label || one.id) : ids[0];
+    } else if (ids.length > 1) {
+        label = `${ids.length} simulation selezionate`;
+    }
+    btn.textContent = label;
     const longest = list.reduce((n, s) => Math.max(n, (s.label || s.id || "").length), placeholder.length);
-    sel.style.width = `${Math.min(longest + 4, 64)}ch`;
+    btn.style.width = `${Math.min(longest + 4, 64)}ch`;
+    if (!list.length) {
+        menu.innerHTML = `<li><span class="dropdown-item-text text-muted-app tiny px-3">— nessuna simulation —</span></li>`;
+        return;
+    }
+    menu.innerHTML = list.map((s) => {
+        const id = escapeHtml(s.id);
+        const checked = selected.has(s.id) ? " checked" : "";
+        return `<li><label class="dropdown-item stats-analyze-sim-item">`
+            + `<input class="form-check-input" type="checkbox" data-sim-id="${id}"${checked}>`
+            + `<span>${escapeHtml(s.label || s.id)}</span></label></li>`;
+    }).join("");
 }
 
 
 export function renderStatsJobUi(state) {
     const running = !!state.statsJobRunning;
     const prog = state.statsProgress;
+    const kind = prog?.kind;
     const done = prog ? Number(prog.done) || 0 : 0;
     const total = prog ? Number(prog.total) || 0 : 0;
     const pct = total ? Math.min(100, Math.round(100 * done / total)) : 0;
     const label = prog ? `${done} / ${total}` : "—";
-    $("statsProgressBar").style.width = `${running ? pct : 0}%`;
-    $("statsAnalyzeProgressBar").style.width = `${running ? pct : 0}%`;
-    $("statsProgressLabel").textContent = label;
-    $("statsAnalyzeProgressLabel").textContent = label;
-    const hasStrategy = !!(state.statsStrategyId || $("statsStrategySelect").value);
+    const showBt = running && kind === "backtest";
+    const showAn = running && kind === "analyze";
+    $("statsProgressBar").style.width = `${showBt ? pct : 0}%`;
+    $("statsProgressLabel").textContent = showBt ? label : "—";
+    $("statsAnalyzeProgressBar").style.width = `${showAn ? pct : 0}%`;
+    $("statsAnalyzeProgressLabel").textContent = showAn ? label : "—";
+    const hasStrategy = !!state.statsStrategyId;
     $("statsBacktestRunBtn").disabled = running || !hasStrategy;
-    $("statsStrategySelect").disabled = running;
-    $("statsStrategyVersionSelect").disabled = running || !$("statsStrategySelect").value;
+    $("statsStrategyBtn").disabled = running;
+    $("statsStrategyVersionBtn").disabled = running || !hasStrategy;
     $("statsJobCancelBtn").disabled = !running;
 }
 

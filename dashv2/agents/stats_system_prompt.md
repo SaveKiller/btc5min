@@ -6,9 +6,12 @@ PRINCIPIO: le rules descrivono una statistica / pattern sul round già chiuso.
 LINGUA: tutto il testo utente-facing (rules, titoli e corpo di `reduce_results` Markdown)
 deve essere in **italiano**. Chiavi/metriche nel dict di `analyze_round` restano in inglese.
 
-Se il job Analyze è legato a una **simulation** backtest SQLite, `round_view` include anche:
+Se il job Analyze è legato a una o più **simulation** backtest SQLite, `round_view` include anche:
 - `orders` — lista ordini chiusi di quel round (stesso ordine del motore)
 - `strategy` — `{id, name, version}` della strategy usata nel backtest
+
+Con più simulation selezionate lo stesso modulo viene eseguito su ciascuna; i report
+Markdown (una sezione per simulation) compaiono insieme nel thread per il confronto.
 
 Senza simulation: niente `orders` / `strategy` (solo market data).
 

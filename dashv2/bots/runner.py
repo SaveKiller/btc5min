@@ -7,40 +7,44 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from dashv2.strategies import load_strategy, module_path
+from dashv2.strategies import module_path, version_snapshot, load_strategy
 
 
 class StrategyRunner:
-    """Cache moduli strategy_{id}_v{tip}.py; fan-out hook → azioni."""
+    """Cache moduli strategy_{id}_v{N}.py; fan-out hook → azioni."""
 
     def __init__(self, strategies_root: Path) -> None:
         self.root = strategies_root
-        self._cache: dict[str, tuple[float, ModuleType]] = {}
+        self._cache: dict[str, tuple[float, int, ModuleType]] = {}
+        self._versions: dict[str, int] = {}
 
-    def sync(self, strategy_ids: list[str]) -> None:
-        keep = set(strategy_ids)
+    def sync(self, active: list[dict]) -> None:
+        """active = [{id, version}, …] — una versione per strategy_id."""
+        self._versions = {e["id"]: int(e["version"]) for e in active}
+        keep = set(self._versions)
         for sid in list(self._cache):
             if sid not in keep:
                 self._cache.pop(sid, None)
-        for sid in strategy_ids:
-            self._load(sid)
+        for sid, ver in self._versions.items():
+            self._load(sid, ver)
 
-    def _load(self, strategy_id: str) -> ModuleType:
+    def _load(self, strategy_id: str, version: int) -> ModuleType:
         data = load_strategy(self.root, strategy_id)
-        path = module_path(self.root, strategy_id, data["version"])
+        version_snapshot(data, version)
+        path = module_path(self.root, strategy_id, version)
         if not path.is_file():
             raise Exception(f"strategy module not found: {path}")
         mtime = path.stat().st_mtime
         cached = self._cache.get(strategy_id)
-        if cached is not None and cached[0] == mtime:
-            return cached[1]
-        name = f"dashv2_strategy_{strategy_id}_v{data['version']}"
+        if cached is not None and cached[0] == mtime and cached[1] == version:
+            return cached[2]
+        name = f"dashv2_strategy_{strategy_id}_v{version}"
         spec = importlib.util.spec_from_file_location(name, path)
         mod = importlib.util.module_from_spec(spec)
         sys.modules[name] = mod
         spec.loader.exec_module(mod)
-        self._cache[strategy_id] = (mtime, mod)
-        print(f"bot: loaded strategy module id={strategy_id} v{data['version']}", flush=True)
+        self._cache[strategy_id] = (mtime, version, mod)
+        print(f"bot: loaded strategy module id={strategy_id} v{version}", flush=True)
         return mod
 
     def dispatch(self, hook: str, strategy_ids: list[str], base_ctx: dict) -> list[tuple[str, dict]]:
@@ -48,9 +52,10 @@ class StrategyRunner:
         out: list[tuple[str, dict]] = []
         for sid in strategy_ids:
             try:
-                mod = self._load(sid)
+                ver = self._versions[sid]
+                mod = self._load(sid, ver)
                 fn = getattr(mod, hook)
-                ctx = {**base_ctx, "strategy_id": sid}
+                ctx = {**base_ctx, "strategy_id": sid, "strategy_version": ver}
                 actions = fn(ctx) or []
                 for act in actions:
                     out.append((sid, act))

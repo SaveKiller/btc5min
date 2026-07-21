@@ -123,19 +123,29 @@ class OrderEngine:
         return {**snap, "open": open_preview}
 
     def prune_seek(self, sec: int) -> None:
-        """Seek: ordini aperti solo se già piazzati (entry_sec >= sec); riapre close manuali nel futuro."""
+        """Seek: elimina ordini non ancora aperti; riapre close manuali tra entry e exit."""
         self.open_orders = [o for o in self.open_orders if o["entry_sec"] >= sec]
         revived: list[dict] = []
         kept_closed: list[dict] = []
         for c in self.closed_orders:
-            if c.get("close_type") == "manual" and c["exit_sec"] < sec:
-                base = {k: v for k, v in c.items() if k not in ("exit_sec", "exit_btc", "exit_price", "exit_fee_usd", "proceeds_usd", "pnl_usd", "result", "close_type")}
+            if c.get("close_type") != "manual":
+                kept_closed.append(c)
+                continue
+            if c["exit_sec"] >= sec:
+                # Chiusura già avvenuta rispetto al cursore → resta closed.
+                kept_closed.append(c)
+                continue
+            if c["entry_sec"] >= sec:
+                # Tra entry e exit → riapri con i dati originari.
+                base = {k: v for k, v in c.items() if k not in (
+                    "exit_sec", "exit_btc", "exit_price", "exit_fee_usd",
+                    "proceeds_usd", "pnl_usd", "result", "close_type", "close_reason",
+                )}
                 base["mtm_usd"] = None
                 base["mtm_available"] = False
                 base["close_enabled"] = False
                 revived.append(base)
-            else:
-                kept_closed.append(c)
+            # else: cursore prima di entry → elimina del tutto
         self.open_orders.extend(revived)
         self.closed_orders = kept_closed
 

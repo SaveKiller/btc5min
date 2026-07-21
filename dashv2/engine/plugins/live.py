@@ -43,7 +43,7 @@ class LiveEngine:
             "accounts": [], "active_account_id": None,
             "engine_plugin": self.engine_plugin, "account_backend": self.account_backend,
             "bots": [], "selected_bot_id": None, "bot_attach_allowed": False, "bot_active": False,
-            "strategies": [], "active_strategy_ids": [],
+            "strategies": [], "active_strategy_ids": [], "active_strategies": [],
         }
 
     def _handle_cmd(self, msg: dict) -> None:
@@ -61,7 +61,7 @@ class LiveEngine:
         if cmd in ("bot.list", "bot.set_active", "account.list", "strategy.list"):
             self.evt_conn.send(ipc.make_response(rid, {
                 "ok": True, "bots": [], "accounts": [], "strategies": [],
-                "active_strategy_ids": [], "active_account_id": None,
+                "active_strategy_ids": [], "active_strategies": [], "active_account_id": None,
                 "bot_attach_allowed": False, "bot_active": False,
             }))
             return

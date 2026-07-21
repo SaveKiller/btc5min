@@ -233,14 +233,35 @@ def clone_strategy(root: Path, strategy_id: str) -> dict:
     )
 
 
-def load_active_ids(root: Path) -> list[str]:
+def load_active(root: Path) -> list[dict]:
+    """Coda bot: [{id, version}, …]; migra active_ids legacy → tip."""
     path = _state_path(root)
     if not path.is_file():
         return []
     data = json.loads(path.read_text(encoding="utf-8"))
-    ids = data["active_ids"]
-    return [sid for sid in ids if _strategy_path(root, sid).is_file()]
+    if "active" in data:
+        out = []
+        for entry in data["active"]:
+            sid, ver = entry["id"], int(entry["version"])
+            if not _strategy_path(root, sid).is_file():
+                continue
+            out.append({"id": sid, "version": ver})
+        return out
+    out = []
+    for sid in data["active_ids"]:
+        if not _strategy_path(root, sid).is_file():
+            continue
+        out.append({"id": sid, "version": load_strategy(root, sid)["version"]})
+    return out
 
 
-def save_active_ids(root: Path, active_ids: list[str]) -> None:
-    _atomic_write(_state_path(root), {"active_ids": list(active_ids), "saved_at_utc": _utc_now_iso()})
+def save_active(root: Path, active: list[dict]) -> None:
+    payload = {
+        "active": [{"id": e["id"], "version": int(e["version"])} for e in active],
+        "saved_at_utc": _utc_now_iso(),
+    }
+    _atomic_write(_state_path(root), payload)
+
+
+def load_active_ids(root: Path) -> list[str]:
+    return [e["id"] for e in load_active(root)]

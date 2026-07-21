@@ -106,23 +106,29 @@ class TestCodegenParse(unittest.TestCase):
         good = "```python\ndef on_tick(ctx):\n    return []\n```\n"
         calls = {"n": 0}
 
-        def fake_call(prompt, model_id, params, cwd):
+        def fake_call(prompt, model_id, params, cwd, **kwargs):
             calls["n"] += 1
             return bad if calls["n"] == 1 else good
 
+        progress = []
         with unittest.mock.patch("dashv2.agents.strategy_codegen.call_model", side_effect=fake_call):
             from dashv2.agents.strategy_codegen import generate_strategy_module
             src = generate_strategy_module(
                 "buy", model_id="m", params={}, system_prompt="INDENTAZIONE note",
-                max_attempts=3,
+                max_attempts=3, model_label="Composer 2.5",
+                on_progress=lambda phase, msg: progress.append((phase, msg)),
             )
         self.assertIn("def on_tick", src)
         self.assertEqual(calls["n"], 2)
+        regen_msgs = [m for p, m in progress if p == "regen"]
+        self.assertEqual(len(regen_msgs), 1)
+        self.assertIn("rigenerazione 2/3", regen_msgs[0])
+        self.assertIn("Composer 2.5", regen_msgs[0])
 
     def test_codegen_raises_after_exhausted_retries(self):
         bad = "```python\ndef on_tick(ctx):\n  return []\n    return []\n```\n"
 
-        def fake_call(prompt, model_id, params, cwd):
+        def fake_call(prompt, model_id, params, cwd, **kwargs):
             return bad
 
         with unittest.mock.patch("dashv2.agents.strategy_codegen.call_model", side_effect=fake_call):
@@ -144,6 +150,28 @@ class TestCodegenParse(unittest.TestCase):
             )
         self.assertIn("Apertura:", out)
         self.assertIn("place Up", out)
+
+    def test_coded_rules_progress_on_regen(self):
+        calls = {"n": 0}
+
+        def fake_call(prompt, model_id, params, cwd, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return "solo testo senza sezioni"
+            return "Apertura:\n- x\n\nChiusura:\n- y\n\nVincoli:\n- z\n"
+
+        progress = []
+        with unittest.mock.patch("dashv2.agents.strategy_codegen.call_model", side_effect=fake_call):
+            from dashv2.agents.strategy_codegen import generate_coded_rules
+            out = generate_coded_rules(
+                _STUB, model_id="m", params={}, max_attempts=2,
+                model_label="Composer 2.5",
+                on_progress=lambda phase, msg: progress.append((phase, msg)),
+            )
+        self.assertIn("Apertura:", out)
+        regen = [m for p, m in progress if p == "coded_regen"]
+        self.assertEqual(len(regen), 1)
+        self.assertIn("rigenerazione 2/2", regen[0])
 
     def test_create_and_clone_coded_rules(self):
         with tempfile.TemporaryDirectory() as td:
@@ -260,7 +288,7 @@ class TestStrategyRunner(unittest.TestCase):
                 root, "Stub", "deterministic", "d", rules="buy at 200",
                 coded_rules="", module_file=mf, strategy_id="abc123def456")
             runner = StrategyRunner(root)
-            runner.sync([data["id"]])
+            runner.sync([{"id": data["id"], "version": 1}])
             pairs = runner.dispatch("on_tick", [data["id"]], {
                 "sec": 200, "tradable": True, "open_orders": [], "bot_active": True,
             })

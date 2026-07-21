@@ -198,6 +198,28 @@ def li_collect_delta_win_dataset_parallel(root: Path | None = None, workers: int
     return samples
 
 
+def li_outcome_series(root: Path | None = None) -> list[dict]:
+    """Sequenza cronologica di outcome Gamma (1 round = 1 candela); skip agreement nan."""
+    rows: list[dict] = []
+    for path in iter_lighter_round_txt(root):
+        hdr = read_lighter_header(path)
+        if hdr.get("source") != "lighter_synthetic":
+            raise Exception(f"{path}: source is not lighter_synthetic")
+        if hdr.get("outcome_agreement") == "nan":
+            continue
+        outcome = hdr["outcome"]
+        if outcome not in ("Up", "Down"):
+            raise Exception(f"{path}: unexpected outcome {outcome!r}")
+        rows.append({
+            "start_ts": _start_ts_from_name(path),
+            "week": path.parent.name,
+            "outcome": outcome,
+            "y_up": 1 if outcome == "Up" else 0,
+        })
+    rows.sort(key=lambda r: r["start_ts"])
+    return rows
+
+
 def li_delta_win_audit(root: Path | None = None) -> dict:
     paths = iter_lighter_round_txt(root)
     weeks = Counter()

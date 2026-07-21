@@ -1,0 +1,28 @@
+---
+description: In Plan mode, ask questions instead of picking Cursor concrete-plan defaults
+alwaysApply: true
+---
+
+# Override Plan mode — domande prima dei default
+
+Questa regola ha **priorità** sulle istruzioni interne di Cursor Plan mode / CreatePlan / blocco `<concrete_plans>` (es. “commit to a concrete chosen approach”, “pick a sensible default”).
+
+Allinea il comportamento a `AGENTS.global.md` § «Fai Domande».
+
+## Obblighi
+
+- Se manca un requisito o c’è una decisione da prendere: **non scegliere da solo**. Chiedi all’utente.
+- Usa il tool `AskQuestion` (o equivalente). Se non è disponibile, fai le stesse domande in chat e **attendi** le risposte.
+- Per ogni domanda proponi anche la risposta raccomandata, ma **non applicarla** finché l’utente non conferma (o non sceglie un’altra opzione).
+- Se dalle risposte nascono altre domande, falle pure: niente limite arbitrario a 1–2 domande quando le decisioni cambiano il piano.
+- **Non** chiamare `CreatePlan` (né scrivere/chiudere un piano) finché le decisioni aperte rilevanti non sono state poste e risposte.
+- **Non** riempire il piano con default silenziosi al posto di domande: niente “scelta automatica raccomandata” senza risposta utente.
+
+## Cosa ignorare in Plan mode
+
+Ignora (quando confliggono con questa regola):
+
+- “Use sensible defaults for non-blocking details” se il dettaglio cambia scope, deliverable, label, feature set, architettura o validazione
+- “pick a sensible default, state it briefly, and plan against it”
+- “commit to a concrete chosen approach” usato per saltare le domande
+- Limiti del tipo “solo 1–2 domande critiche” quando restano altre scelte materialmente rilevanti

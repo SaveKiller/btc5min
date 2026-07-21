@@ -14,7 +14,7 @@ from dashv2.engine.plugins.live import LiveEngine
 from dashv2.history import append_settled_orders, create_account, order_rows_from_ledger
 from dashv2.orders import OrderEngine
 from dashv2.server import _BOT_CMDS, _HUMAN_CMDS
-from dashv2.strategies import create_strategy, list_strategies, load_active_ids, strategies_dir, write_module
+from dashv2.strategies import create_strategy, list_strategies, load_active, strategies_dir, write_module
 from src.book import BookSnapshot
 
 
@@ -93,27 +93,45 @@ class TestBotAttach(unittest.TestCase):
             "rules": "buy up", "module_file": "strategy_x.py", "strategy_id": "aaa111bbb222",
         })
         sid = created["strategy"]["id"]
-        res = eng._cmd_strategy_load({"strategy_id": sid})
+        res = eng._cmd_strategy_load({"strategy_id": sid, "strategy_version": 1})
         self.assertEqual(res["active_strategy_ids"], [sid])
-        self.assertEqual(load_active_ids(eng.strategies_root), [sid])
+        self.assertEqual(res["active_strategies"], [{"id": sid, "version": 1}])
+        self.assertEqual(load_active(eng.strategies_root), [{"id": sid, "version": 1}])
         with self.assertRaises(Exception):
-            eng._cmd_strategy_load({"strategy_id": sid})
+            eng._cmd_strategy_load({"strategy_id": sid, "strategy_version": 1})
         res = eng._cmd_strategy_unload({"strategy_id": sid})
         self.assertEqual(res["active_strategy_ids"], [])
+        self.assertEqual(res["active_strategies"], [])
+
+    def test_load_specific_version(self):
+        eng = self._engine()
+        root = eng.strategies_root
+        mf1 = write_module(root, "vertest00001", "def on_tick(ctx): return []\n", 1)
+        created = eng._cmd_strategy_create({
+            "name": "Ver", "type": "deterministic", "description": "",
+            "rules": "v1", "module_file": mf1, "strategy_id": "vertest00001",
+        })
+        sid = created["strategy"]["id"]
+        write_module(root, sid, "def on_tick(ctx): return []\n", 2)
+        from dashv2.strategies import update_strategy
+        update_strategy(root, sid, "Ver", "", True, rules="v2", module_file=f"strategy_{sid}_v2.py", coded_rules="")
+        res = eng._cmd_strategy_load({"strategy_id": sid, "strategy_version": 1})
+        self.assertEqual(res["active_strategies"], [{"id": sid, "version": 1}])
+        self.assertEqual(load_active(root), [{"id": sid, "version": 1}])
 
     def test_load_allowed_while_playing(self):
         eng = self._engine()
         created = eng._cmd_strategy_create({"name": "Beta", "type": "inferential", "description": ""})
         sid = created["strategy"]["id"]
         eng.playing = True
-        res = eng._cmd_strategy_load({"strategy_id": sid})
+        res = eng._cmd_strategy_load({"strategy_id": sid, "strategy_version": 1})
         self.assertEqual(res["active_strategy_ids"], [sid])
 
     def test_delete_removes_from_active(self):
         eng = self._engine()
         created = eng._cmd_strategy_create({"name": "Gamma", "type": "agentic", "description": "x"})
         sid = created["strategy"]["id"]
-        eng._cmd_strategy_load({"strategy_id": sid})
+        eng._cmd_strategy_load({"strategy_id": sid, "strategy_version": 1})
         eng._cmd_strategy_delete({"strategy_id": sid})
         self.assertEqual(eng.active_strategy_ids, [])
         self.assertEqual(list_strategies(eng.strategies_root), [])
