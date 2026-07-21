@@ -16,7 +16,7 @@ class TestSimulations(unittest.TestCase):
     def test_create_list_load_delete_sqlite(self):
         with tempfile.TemporaryDirectory() as td:
             hist = Path(td)
-            table = {"hours": [], "total": {"rounds": 1, "traded": 1, "pos": 1, "neg": 0, "flat": 0, "pnl_sum": 1.0, "pnl_avg": 1.0}}
+            table = {"hours": [], "total": {"rounds": 1, "traded": 1, "pos": 1, "neg": 0, "flat": 0, "pnl_sum": 1.0, "pos_sum": 1.0, "neg_sum": 0.0, "pnl_avg_pos": 1.0, "pnl_avg_neg": None}}
             summary = {
                 "name": "prudence-80-1", "day_from": "2026-07-10", "day_to": "2026-07-18",
                 "workers": 10, "elapsed_sec": 1.2, "skipped": 0, "errors": 0, "rounds": 1,
@@ -76,7 +76,7 @@ class TestSimulations(unittest.TestCase):
                 "strategy_id": "s1", "strategy_name": "old", "strategy_version": 1,
                 "created_at_utc": "2026-07-19T15:24:00Z",
                 "day_from": "2026-07-10", "day_to": "2026-07-18",
-                "summary": {"name": "old"}, "table": {"hours": [], "total": {}},
+                "summary": {"name": "old", "rounds": 1}, "table": {"hours": [], "total": {"rounds": 1}},
                 "rounds": [{"market_start_ts": 9, "hour_utc": 1, "ok": True, "pnl_usd": 0.0, "traded": False}],
             }
             (root / "simulation_legacyjson01.json").write_text(
@@ -96,10 +96,11 @@ class TestSimulations(unittest.TestCase):
             "strategy_name": "s1", "strategy_version": 2,
             "created_at_utc": "2026-07-19T15:24:00Z",
             "day_from": "2026-07-10", "day_to": "2026-07-18",
+            "summary": {"rounds": 1},
         }
-        self.assertEqual(simulation_label(data), "s1 v2 · 2026-07-19 15:24 · 2026-07-10→18")
+        self.assertEqual(simulation_label(data), "s1 v2 · 2026-07-19 15:24 · 2026-07-10→18 · R1")
         data2 = {**data, "day_from": "2026-06-28", "day_to": "2026-07-02"}
-        self.assertEqual(simulation_label(data2), "s1 v2 · 2026-07-19 15:24 · 2026-06-28→07-02")
+        self.assertEqual(simulation_label(data2), "s1 v2 · 2026-07-19 15:24 · 2026-06-28→07-02 · R1")
 
 
 if __name__ == "__main__":

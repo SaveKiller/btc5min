@@ -1,0 +1,36 @@
+POSSIBILI CASI MAPPATI:
+
+
+EVENTI:
+
+E1: ultimo minuto, la quota raggiunge un valore alto X (es. > 80) in un lato L,
+la quota varia molto verso l'altro lato mentre il delta rimane dal lato originario,
+quota e delta sono di segno opposto. Può concludersi in entrambi i lati.
+=> fare una statistica di cosa fa l'outcome in tutti i casi di questo tipo
+
+E2: ultimo minuto, la quota raggiunge un valore alto X (es. > 80) in un lato L,
+il delta cambia di segno ma la quota rimane del segno/valore originario, 
+quota e delta sono di segno opposto. Può concludersi in entrambi i lati.
+
+E3: la quota raggiunge un valore alto X (es. > 80) poi negli ultimi S (es. 30) secondi
+il delta va dall'altra parte, la quota cambia segno e il round finisce dall'altro lato,
+1 inversione finale. Cambiamento di quota e delta rapidi, SL poco efficiente perchè
+salti molto grossi di quota.
+
+E4: la quota raggiunge un valore alto X (es. > 80) in un lato L, rimane vicino al valore X
+per S secondi, poi gradualmente delta e quota cambiano lato e il round finisce 
+nel lato opposto. Cambiamento di quota e delta progressivo, eventuale SL efficiente
+perchè assenza di salti di quota
+
+E5: la quota raggiunge un valore alto X (es. > 80) in un lato L, poi negli ultimi S (es. 30) secondi
+il delta va dall'altra parte, la quota cambia lato per S secondi in accordo al delta, 
+ma entrambi cambiano lato di nuovo e il round si chiude dal lato L iniziale, 2 inversioni finali.
+
+E10: la quota raggiunge un valore alto X (es. > 80) in un lato L, rimane vicino al valore X
+e il round chiude dal lato L, caso molto semplice
+
+E6: negli ultimi S (es 30) secondi il delta rimane vicino allo zero e oscilla molto tra 
+positivo e negativo, outcome totalmente imprevedibile (09/07 01:35)
+
+
+

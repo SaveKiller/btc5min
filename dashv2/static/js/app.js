@@ -5,9 +5,9 @@ import {
     renderOrders, renderOutcome, renderRoundPickerDays, renderRoundPickerHours, renderRoundPickerRounds,
     renderSessionHistory, renderStakeButtons, renderTick, setDisconnectBanner, toggleHistorySession,
     updateTimelineSecLabel,
-    renderStatsMode, renderStatsDays, renderStatsStrategySelect, renderStatsStrategyVersionSelect,
-    renderStatsSimulationSelect, renderStatsAnalyzeSimSelect, renderStatsJobUi, renderStatsBacktest, renderStatsAnalyze,
-    renderStatsChat,
+    renderStatsMode, renderStatsDays, renderStatsDayCalendar, renderStatsStrategySelect, renderStatsStrategyVersionSelect,
+    renderStatsSimPeriodSelect, renderStatsSimulationSelect, renderStatsAnalyzeSimSelect, renderStatsJobUi,
+    renderStatsBacktest, renderStatsAnalyze, renderStatsChat, statsSimMonthList,
 } from "./render.js";
 
 const REPLAY_SPEED_KEY = "dashv2_replay_speed";
@@ -16,7 +16,10 @@ const REPLAY_START_SEC_KEY = "dashv2_replay_start_sec";
 const REPLAY_START_SEC_MIN = 5;
 const REPLAY_START_SEC_MAX = 300;
 const LEFT_TAB_KEY = "dashv2_left_tab";
-const LEFT_TAB_IDS = ["candles-tab", "accounts-tab", "bot-tab", "agent-tab"];
+const LEFT_TAB_IDS = [
+    "candles-tab", "accounts-tab", "bot-tab",
+    "agent-backtest-tab", "agent-analyze-tab", "agent-session-chat-tab",
+];
 const DEFAULT_LEFT_TAB = "accounts-tab";
 const AGENT_HISTORY_POLL_MS = 5000;
 
@@ -38,6 +41,7 @@ const state = {
     statsStrategyId: null, statsStrategyVersion: null, statsAnalyzeId: null,
     statsAnalyzes: [],
     statsSimulations: [], statsSimulationId: null,
+    statsSimMonthYm: null, statsSimSearch: "",
     statsAnalyzeSimulationIds: [],
     statsJobRunning: false, statsProgress: null,
     statsTable: null, statsSummary: null, statsRounds: null,
@@ -136,7 +140,7 @@ function syncStartSecForRound() {
 
 function loadStoredLeftTab() {
     const tabId = localStorage.getItem(LEFT_TAB_KEY);
-    if (tabId === "stats-tab") return "agent-tab";
+    if (tabId === "stats-tab" || tabId === "agent-tab") return "agent-backtest-tab";
     return LEFT_TAB_IDS.includes(tabId) ? tabId : DEFAULT_LEFT_TAB;
 }
 
@@ -487,9 +491,34 @@ function ensureStatsDayDefaults() {
 
 
 function readStatsDays() {
-    state.statsDayFrom = document.getElementById("statsDayFrom").value;
-    state.statsDayTo = document.getElementById("statsDayTo").value;
     return { day_from: state.statsDayFrom, day_to: state.statsDayTo };
+}
+
+
+function statsValidDays() {
+    return new Set((state.roundDays || []).filter((d) => d.valid !== false).map((d) => d.day_utc));
+}
+
+
+function openStatsDayCalendar(role) {
+    const menu = document.getElementById(role === "from" ? "statsDayFromMenu" : "statsDayToMenu");
+    const selected = role === "from" ? state.statsDayFrom : state.statsDayTo;
+    let ym = menu.dataset.viewYm;
+    if (!ym) {
+        if (selected) ym = selected.slice(0, 7);
+        else {
+            const days = [...statsValidDays()].sort();
+            ym = days[0].slice(0, 7);
+        }
+    }
+    renderStatsDayCalendar(menu, {
+        role,
+        selected,
+        boundMin: role === "to" ? state.statsDayFrom : null,
+        boundMax: role === "from" ? state.statsDayTo : null,
+        validDays: statsValidDays(),
+        viewYm: ym,
+    });
 }
 
 
@@ -513,11 +542,22 @@ function setStatsBacktestResults({ table = null, summary = null, rounds = null }
 }
 
 
+function refreshStatsSimulationUi() {
+    const months = statsSimMonthList(state.statsSimulations);
+    if (!months.includes(state.statsSimMonthYm)) {
+        state.statsSimMonthYm = months[0] || null;
+    }
+    state.statsSimMonthYm = renderStatsSimPeriodSelect(months, state.statsSimMonthYm);
+    renderStatsSimulationSelect(
+        state.statsSimulations, state.statsSimulationId, state.statsSimMonthYm, state.statsSimSearch);
+}
+
+
 function refreshStatsPanels() {
     renderStatsMode(state.statsMode);
     renderStatsDays(state.statsDayFrom, state.statsDayTo);
     renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsStrategyVersion, state.statsJobRunning);
-    renderStatsSimulationSelect(state.statsSimulations, state.statsSimulationId);
+    refreshStatsSimulationUi();
     renderStatsAnalyzeSimSelect(state.statsSimulations, state.statsAnalyzeSimulationIds);
     renderStatsJobUi(state);
     renderStatsBacktest(state);
@@ -541,7 +581,7 @@ function loadStatsSimulations() {
         if (state.statsSimulationId && !state.statsSimulations.some((s) => s.id === state.statsSimulationId)) {
             state.statsSimulationId = null;
         }
-        renderStatsSimulationSelect(state.statsSimulations, state.statsSimulationId);
+        refreshStatsSimulationUi();
         state.statsAnalyzeSimulationIds = state.statsAnalyzeSimulationIds.filter(
             (id) => state.statsSimulations.some((s) => s.id === id && s.has_orders));
         renderStatsAnalyzeSimSelect(state.statsSimulations, state.statsAnalyzeSimulationIds);
@@ -551,6 +591,7 @@ function loadStatsSimulations() {
 
 function applyLoadedSimulation(sim) {
     state.statsSimulationId = sim.id;
+    state.statsSimMonthYm = (sim.exec_at || sim.created_at_utc || "").slice(0, 7);
     state.statsStrategyId = sim.strategy_id;
     state.statsStrategyVersion = sim.strategy_version;
     state.statsDayFrom = sim.day_from;
@@ -564,7 +605,7 @@ function applyLoadedSimulation(sim) {
     resetStatsDrill();
     renderStatsDays(state.statsDayFrom, state.statsDayTo);
     renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsStrategyVersion, state.statsJobRunning);
-    renderStatsSimulationSelect(state.statsSimulations, state.statsSimulationId);
+    refreshStatsSimulationUi();
     renderStatsBacktest(state);
     renderStatsJobUi(state);
 }
@@ -1074,13 +1115,16 @@ socket.on("stats.analyzes", (payload) => {
 
 socket.on("stats.simulations", (payload) => {
     state.statsSimulations = payload.simulations || [];
-    if (payload.selected_id) state.statsSimulationId = payload.selected_id;
-    else if (state.statsSimulationId && !state.statsSimulations.some((s) => s.id === state.statsSimulationId)) {
+    if (payload.selected_id) {
+        state.statsSimulationId = payload.selected_id;
+        const sim = state.statsSimulations.find((s) => s.id === payload.selected_id);
+        if (sim) state.statsSimMonthYm = (sim.exec_at || sim.created_at_utc || "").slice(0, 7);
+    } else if (state.statsSimulationId && !state.statsSimulations.some((s) => s.id === state.statsSimulationId)) {
         state.statsSimulationId = null;
     }
     state.statsAnalyzeSimulationIds = state.statsAnalyzeSimulationIds.filter(
         (id) => state.statsSimulations.some((s) => s.id === id && s.has_orders));
-    renderStatsSimulationSelect(state.statsSimulations, state.statsSimulationId);
+    refreshStatsSimulationUi();
     renderStatsAnalyzeSimSelect(state.statsSimulations, state.statsAnalyzeSimulationIds);
 });
 
@@ -1432,16 +1476,6 @@ document.getElementById("agentApplyRulesBtn").addEventListener("click", () => {
 document.getElementById("leftTabs").addEventListener("shown.bs.tab", (e) => {
     persistLeftTab(e.target.id);
     if (e.target.id === "candles-tab") relayoutChart();
-    if (e.target.id === "agent-tab") {
-        renderAgentContext(state);
-        loadAgentExecutions();
-        const inner = document.querySelector("#agentInnerTabs .nav-link.active");
-        if (inner?.id === "agent-backtest-tab") refreshAgentBacktestTab();
-        else if (inner?.id === "agent-analyze-tab") refreshAgentAnalyzeTab();
-    }
-});
-
-document.getElementById("agentInnerTabs").addEventListener("shown.bs.tab", (e) => {
     if (e.target.id === "agent-session-chat-tab") {
         renderAgentContext(state);
         loadAgentExecutions();
@@ -1466,19 +1500,43 @@ function refreshAgentAnalyzeTab() {
     loadStatsSimulations();
     loadStatsChatHistory();
 }
-document.getElementById("statsDayFrom").addEventListener("change", () => {
-    state.statsDayFrom = document.getElementById("statsDayFrom").value;
-    renderStatsDays(state.statsDayFrom, state.statsDayTo);
+document.getElementById("statsDayFromBtn").addEventListener("show.bs.dropdown", () => {
+    document.getElementById("statsDayFromMenu").dataset.viewYm = "";
+    openStatsDayCalendar("from");
 });
-document.getElementById("statsDayTo").addEventListener("change", () => {
-    state.statsDayTo = document.getElementById("statsDayTo").value;
-    renderStatsDays(state.statsDayFrom, state.statsDayTo);
+document.getElementById("statsDayToBtn").addEventListener("show.bs.dropdown", () => {
+    document.getElementById("statsDayToMenu").dataset.viewYm = "";
+    openStatsDayCalendar("to");
 });
-for (const id of ["statsDayFrom", "statsDayTo"]) {
-    const el = document.getElementById(id);
-    el.addEventListener("keydown", (e) => e.preventDefault());
-    el.addEventListener("click", () => { if (el.showPicker) el.showPicker(); });
+function onStatsDayMenuClick(role, e) {
+    const nav = e.target.closest("[data-cal-nav]");
+    if (nav) {
+        const menu = document.getElementById(role === "from" ? "statsDayFromMenu" : "statsDayToMenu");
+        const delta = Number(nav.dataset.calNav);
+        const cur = menu.dataset.viewYm;
+        const [y, m] = cur.split("-").map(Number);
+        const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+        menu.dataset.viewYm = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+        openStatsDayCalendar(role);
+        return;
+    }
+    const dayBtn = e.target.closest("button[data-day]");
+    if (!dayBtn || dayBtn.disabled) return;
+    const day = dayBtn.dataset.day;
+    if (role === "from") {
+        state.statsDayFrom = day;
+        if (state.statsDayTo && state.statsDayTo < day) state.statsDayTo = day;
+    } else {
+        state.statsDayTo = day;
+        if (state.statsDayFrom && state.statsDayFrom > day) state.statsDayFrom = day;
+    }
+    renderStatsDays(state.statsDayFrom, state.statsDayTo);
+    bootstrap.Dropdown.getInstance(
+        document.getElementById(role === "from" ? "statsDayFromBtn" : "statsDayToBtn"),
+    ).hide();
 }
+document.getElementById("statsDayFromMenu").addEventListener("click", (e) => onStatsDayMenuClick("from", e));
+document.getElementById("statsDayToMenu").addEventListener("click", (e) => onStatsDayMenuClick("to", e));
 document.getElementById("statsStrategyMenu").addEventListener("click", (e) => {
     const item = e.target.closest("[data-value]");
     if (!item) return;
@@ -1544,12 +1602,22 @@ document.getElementById("statsResultsBreadcrumb").addEventListener("click", (e) 
     }
     renderStatsBacktest(state);
 });
+document.getElementById("statsSimPeriodMenu").addEventListener("click", (e) => {
+    const item = e.target.closest("[data-value]");
+    if (!item) return;
+    state.statsSimMonthYm = item.dataset.value;
+    refreshStatsSimulationUi();
+});
+document.getElementById("statsSimSearch").addEventListener("input", (e) => {
+    state.statsSimSearch = e.target.value;
+    refreshStatsSimulationUi();
+});
 document.getElementById("statsSimulationMenu").addEventListener("click", (e) => {
     const item = e.target.closest("[data-value]");
     if (!item) return;
     const id = item.dataset.value || null;
     state.statsSimulationId = id;
-    renderStatsSimulationSelect(state.statsSimulations, state.statsSimulationId);
+    refreshStatsSimulationUi();
     if (id) loadStatsSimulation(id);
 });
 document.getElementById("statsSimulationDeleteBtn").addEventListener("click", () => {

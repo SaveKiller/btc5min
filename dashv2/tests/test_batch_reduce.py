@@ -28,6 +28,9 @@ class TestReduceStrategy(unittest.TestCase):
         self.assertEqual(h14["neg"], 1)
         self.assertEqual(h14["flat"], 1)
         self.assertEqual(h14["pnl_sum"], 1.0)
-        self.assertAlmostEqual(h14["pnl_avg"], 1.0 / 3)
+        self.assertAlmostEqual(h14["pnl_avg_pos"], 2.0)
+        self.assertAlmostEqual(h14["pnl_avg_neg"], -1.0)
         self.assertEqual(out["total"]["rounds"], 4)  # solo ok=True
         self.assertEqual(out["total"]["pnl_sum"], 6.0)
+        self.assertAlmostEqual(out["total"]["pnl_avg_pos"], (2.0 + 5.0) / 2)
+        self.assertAlmostEqual(out["total"]["pnl_avg_neg"], -1.0)

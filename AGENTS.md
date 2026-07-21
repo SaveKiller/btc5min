@@ -107,7 +107,7 @@ Se il task richiede comandi/eventi Socket.IO, ACL human/bot, payload o asse temp
 - **Open orders + Close / Cancel**: `render.js` (`renderOrders`) + `orders.py`
 - **Accounts**: `render.js` + comandi `account.*`
 - **Bot / Strategy**: tab STRATEGY — `render.js` (`renderBotPanel`) + comandi `bot.*`; icona `bi-cpu` verde/rosso con lo switch
-- **Agent**: tab AGENT — sotto-tab SESSION CHAT (chat Grok keyed su `session_id`), Backtest e Analyze (ex STATS); `agent.chat.*` / `agent.rules.apply` / `stats.*` in `app.js` + `dashv2/agents/` / `stats_service.py`
+- **Backtest / Backtest Analysis / Round Chat**: tab principali (ex sotto-tab di AGENT); `agent.chat.*` / `agent.rules.apply` / `stats.*` in `app.js` + `dashv2/agents/` / `stats_service.py`
 - **Closed order history + Export CSV**: `render.js` (`renderHistory`) + `history.py`; CSV generato lato client in `app.js`
 - **Stile / responsive**: `dashboard.css`
 

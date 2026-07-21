@@ -934,21 +934,12 @@ function fmtPnl(n) {
 }
 
 
-function fmtPnlInt(n) {
-    const v = Math.round(Number(n));
-    const sign = v > 0 ? "+" : "";
-    return `${sign}${v}`;
-}
-
-
 export function renderStatsMode(_mode) {
-    // Visibilità Backtest/Analyze gestita dalle sotto-tab Bootstrap in AGENT.
+    // Visibilità Backtest/Analyze gestita dai tab principali.
 }
 
 
 export function renderStatsDays(dayFrom, dayTo) {
-    $("statsDayFrom").value = dayFrom || "";
-    $("statsDayTo").value = dayTo || "";
     $("statsDayFromDisplay").textContent = formatStatsDayDisplay(dayFrom);
     $("statsDayToDisplay").textContent = formatStatsDayDisplay(dayTo);
 }
@@ -958,6 +949,74 @@ function formatStatsDayDisplay(iso) {
     if (!iso) return "";
     const [y, m, d] = iso.split("-");
     return `${d}/${m}/${y}`;
+}
+
+
+const STATS_MONTHS_IT = [
+    "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+    "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre",
+];
+const STATS_DOW_IT = ["lu", "ma", "me", "gi", "ve", "sa", "do"];
+
+
+function statsYmParts(ym) {
+    const [y, m] = ym.split("-").map(Number);
+    return { y, m };
+}
+
+
+/** Celle mese (lunedì-first): iso YYYY-MM-DD, day 1..31. */
+function statsMonthCells(ym) {
+    const { y, m } = statsYmParts(ym);
+    const first = new Date(Date.UTC(y, m - 1, 1));
+    // getUTCDay: 0=dom … 6=sab → offset lunedì-first
+    const startPad = (first.getUTCDay() + 6) % 7;
+    const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const cells = [];
+    for (let i = 0; i < startPad; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+        const iso = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        cells.push({ iso, day: d, inMonth: true });
+    }
+    while (cells.length % 7) cells.push(null);
+    return cells;
+}
+
+
+/**
+ * Calendario START/END: giorni con dati evidenziati; altrimenti disabled.
+ * boundMin/boundMax: vincolo reciproco START≤END.
+ */
+export function renderStatsDayCalendar(menuEl, {
+    role, selected, boundMin, boundMax, validDays, viewYm,
+}) {
+    const { y, m } = statsYmParts(viewYm);
+    const title = `${STATS_MONTHS_IT[m - 1]} ${y}`;
+    const cells = statsMonthCells(viewYm);
+    const dow = STATS_DOW_IT.map((d) => `<span>${d}</span>`).join("");
+    const grid = cells.map((c) => {
+        if (!c) return `<span></span>`;
+        const available = validDays.has(c.iso);
+        const inBound = (!boundMin || c.iso >= boundMin) && (!boundMax || c.iso <= boundMax);
+        const enabled = available && inBound;
+        const cls = [
+            "stats-cal-day",
+            c.iso === selected ? "is-selected" : "",
+            enabled ? "is-available" : "is-muted",
+        ].filter(Boolean).join(" ");
+        const dis = enabled ? "" : " disabled";
+        return `<button type="button" class="${cls}" data-day="${c.iso}"${dis}>${c.day}</button>`;
+    }).join("");
+    menuEl.dataset.viewYm = viewYm;
+    menuEl.dataset.role = role;
+    menuEl.innerHTML = `
+      <div class="stats-cal-head">
+        <button type="button" data-cal-nav="-1" aria-label="Mese precedente">‹</button>
+        <span>${title}</span>
+        <button type="button" data-cal-nav="1" aria-label="Mese successivo">›</button>
+      </div>
+      <div class="stats-cal-dow">${dow}</div>
+      <div class="stats-cal-grid">${grid}</div>`;
 }
 
 
@@ -990,43 +1049,143 @@ export function renderStatsStrategyVersionSelect(strategies, selectedId, selecte
     const menu = $("statsStrategyVersionMenu");
     const s = (strategies || []).find((x) => x.id === selectedId);
     if (!s) {
-        btn.textContent = "v—";
+        btn.textContent = "V —";
         btn.disabled = true;
         menu.innerHTML = "";
         return;
     }
-    const versions = s.versions || [{ version: s.version || 1 }];
+    const versions = [...(s.versions || [{ version: s.version || 1 }])]
+        .sort((a, b) => b.version - a.version);
     const tip = s.version || 1;
     const pick = selectedVersion != null && versions.some((v) => v.version === selectedVersion)
         ? selectedVersion : tip;
-    btn.textContent = `v${pick}`;
+    btn.textContent = `V ${pick}`;
     btn.disabled = !!jobRunning;
     menu.innerHTML = versions.map((v) => {
         const act = v.version === pick ? " active" : "";
-        return `<li><button type="button" class="dropdown-item stats-bs-select-item${act}" data-value="${v.version}">v${v.version}</button></li>`;
+        return `<li><button type="button" class="dropdown-item stats-bs-select-item${act}" data-value="${v.version}">V ${v.version}</button></li>`;
     }).join("");
 }
 
 
-export function renderStatsSimulationSelect(simulations, selectedId) {
+function fitSelectToLabels(btn, labels) {
+    const cs = getComputedStyle(btn);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    let max = 0;
+    for (const t of labels) max = Math.max(max, ctx.measureText(t).width);
+    const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    // freccia del form-select + bordo
+    btn.style.width = `${Math.ceil(max + pad + 28)}px`;
+}
+
+
+const STATS_MONTHS_EN = [
+    "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
+    "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER",
+];
+
+
+function statsSimMonthYm(sim) {
+    return (sim.exec_at || sim.created_at_utc || "").slice(0, 7);
+}
+
+
+function statsSimMonthLabel(ym) {
+    const [y, m] = ym.split("-");
+    return `${STATS_MONTHS_EN[Number(m) - 1]} ${y.slice(2)}`;
+}
+
+
+export function statsSimMonthList(simulations) {
+    const set = new Set();
+    for (const s of simulations) {
+        const ym = statsSimMonthYm(s);
+        if (ym.length === 7) set.add(ym);
+    }
+    return [...set].sort().reverse();
+}
+
+
+function filterStatsSimulations(simulations, monthYm, search) {
+    const q = search.trim().toLowerCase();
+    return simulations.filter((s) => {
+        if (monthYm && statsSimMonthYm(s) !== monthYm) return false;
+        if (!q) return true;
+        const hay = [
+            s.label, s.name_ver, s.exec_at, s.range_label, String(s.n_rounds ?? ""),
+            s.strategy_name, String(s.strategy_version ?? ""),
+        ].join(" ").toLowerCase();
+        return hay.includes(q);
+    });
+}
+
+
+export function renderStatsSimPeriodSelect(months, selectedYm) {
+    const btn = $("statsSimPeriodBtn");
+    const menu = $("statsSimPeriodMenu");
+    const selected = selectedYm && months.includes(selectedYm) ? selectedYm : (months[0] || null);
+    btn.textContent = selected ? statsSimMonthLabel(selected) : "—";
+    btn.classList.toggle("is-placeholder", !selected);
+    fitSelectToLabels(btn, months.length
+        ? months.map(statsSimMonthLabel)
+        : ["—"]);
+    btn.parentElement.style.width = btn.style.width;
+    if (!months.length) {
+        menu.innerHTML = `<li><span class="dropdown-item-text text-muted-app tiny px-3">—</span></li>`;
+        return selected;
+    }
+    menu.innerHTML = months.map((ym) => {
+        const act = ym === selected ? " active" : "";
+        return `<li><button type="button" class="dropdown-item stats-bs-select-item${act}" data-value="${escapeHtml(ym)}">${escapeHtml(statsSimMonthLabel(ym))}</button></li>`;
+    }).join("");
+    return selected;
+}
+
+
+export function renderStatsSimulationSelect(simulations, selectedId, monthYm, search) {
     const btn = $("statsSimulationBtn");
     const menu = $("statsSimulationMenu");
-    const list = simulations || [];
+    const block = $("statsSimBlock");
+    const list = filterStatsSimulations(simulations, monthYm, search);
     const selected = selectedId && list.find((s) => s.id === selectedId);
-    const emptyLabel = list.length ? "— sessioni —" : "— nessuna sessione —";
+    const emptyLabel = `${list.length} Simulations found`;
     btn.textContent = selected ? (selected.label || selected.id) : emptyLabel;
     btn.classList.toggle("is-placeholder", !selected);
-    const longest = list.reduce((n, s) => Math.max(n, (s.label || s.id || "").length), 12);
-    btn.style.width = `${Math.min(longest + 4, 64)}ch`;
+    const widthLabels = [emptyLabel, ...simulations.map((s) => s.label || s.id || "")];
+    fitSelectToLabels(btn, widthLabels);
+    block.style.width = btn.style.width;
+    btn.style.width = "100%";
     $("statsSimulationDeleteBtn").disabled = !selected;
     if (!list.length) {
         menu.innerHTML = `<li><span class="dropdown-item-text text-muted-app tiny px-3">${emptyLabel}</span></li>`;
         return;
     }
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    const cs = getComputedStyle(btn);
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const w = [0, 0, 0, 0];
+    for (const s of list) {
+        w[0] = Math.max(w[0], ctx.measureText(s.name_ver).width);
+        w[1] = Math.max(w[1], ctx.measureText(s.exec_at).width);
+        w[2] = Math.max(w[2], ctx.measureText(s.range_label).width);
+        w[3] = Math.max(w[3], ctx.measureText(String(s.n_rounds)).width);
+    }
+    menu.style.setProperty("--sim-c1", `${Math.ceil(w[0])}px`);
+    menu.style.setProperty("--sim-c2", `${Math.ceil(w[1])}px`);
+    menu.style.setProperty("--sim-c3", `${Math.ceil(w[2])}px`);
+    menu.style.setProperty("--sim-c4", `${Math.ceil(w[3])}px`);
     menu.innerHTML = `<li><button type="button" class="dropdown-item stats-bs-select-item${!selected ? " active" : ""}" data-value="">${emptyLabel}</button></li>`
         + list.map((s) => {
             const act = s.id === selectedId ? " active" : "";
-            return `<li><button type="button" class="dropdown-item stats-bs-select-item${act}" data-value="${escapeHtml(s.id)}">${escapeHtml(s.label || s.id)}</button></li>`;
+            return `<li><button type="button" class="dropdown-item stats-bs-select-item stats-sim-row${act}" data-value="${escapeHtml(s.id)}">`
+                + `<span class="stats-sim-col-name">${escapeHtml(s.name_ver)}</span>`
+                + `<span class="stats-sim-col-exec">${escapeHtml(s.exec_at)}</span>`
+                + `<span class="stats-sim-col-range">${escapeHtml(s.range_label)}</span>`
+                + `<span class="stats-sim-col-rounds">${Number(s.n_rounds)}</span>`
+                + `</button></li>`;
         }).join("");
 }
 
@@ -1090,7 +1249,11 @@ function pad2(n) {
 
 
 function emptyStatsAgg() {
-    return { rounds: 0, traded: 0, pos: 0, neg: 0, flat: 0, pnl_sum: 0.0, pnl_avg: 0.0 };
+    return {
+        rounds: 0, traded: 0, pos: 0, neg: 0, flat: 0,
+        pnl_sum: 0.0, pos_sum: 0.0, neg_sum: 0.0,
+        pnl_avg_pos: null, pnl_avg_neg: null,
+    };
 }
 
 
@@ -1100,14 +1263,15 @@ function accumulateStatsAgg(b, r) {
     if (r.traded) b.traded += 1;
     const pnl = Number(r.pnl_usd);
     b.pnl_sum += pnl;
-    if (pnl > 0) b.pos += 1;
-    else if (pnl < 0) b.neg += 1;
+    if (pnl > 0) { b.pos += 1; b.pos_sum += pnl; }
+    else if (pnl < 0) { b.neg += 1; b.neg_sum += pnl; }
     else b.flat += 1;
 }
 
 
 function finalizeStatsAgg(b) {
-    b.pnl_avg = b.rounds ? b.pnl_sum / b.rounds : 0;
+    b.pnl_avg_pos = b.pos ? b.pos_sum / b.pos : null;
+    b.pnl_avg_neg = b.neg ? b.neg_sum / b.neg : null;
     return b;
 }
 
@@ -1117,6 +1281,8 @@ function totalStatsAgg(rows) {
     for (const r of rows) {
         for (const k of ["rounds", "traded", "pos", "neg", "flat"]) t[k] += r[k];
         t.pnl_sum += r.pnl_sum;
+        t.pos_sum += r.pos_sum;
+        t.neg_sum += r.neg_sum;
     }
     return finalizeStatsAgg(t);
 }
@@ -1191,6 +1357,14 @@ function aggStatsDays(rounds, hour, slot) {
 }
 
 
+function statsPnlTd(n) {
+    if (n == null) return `<td class="text-end"></td>`;
+    const v = Number(n);
+    const cls = v > 0 ? "stats-sum-pos" : v < 0 ? "stats-sum-neg" : "";
+    return `<td class="text-end${cls ? ` ${cls}` : ""}">${fmtPnl(v)}</td>`;
+}
+
+
 function statsAggRowHtml(row, { drill = false, roundTs = null } = {}) {
     const clickable = drill || roundTs != null;
     const cls = clickable ? "stats-row-drill" : "";
@@ -1201,12 +1375,14 @@ function statsAggRowHtml(row, { drill = false, roundTs = null } = {}) {
         <td>${escapeHtml(row.label)}</td>
         <td>${escapeHtml(row.market)}</td>
         <td class="text-end">${row.rounds}</td>
-        <td class="text-end">${row.traded}</td>
-        <td class="text-end">${row.pos}</td>
-        <td class="text-end">${row.neg}</td>
+        <td class="text-end stats-sum-pos">${row.pos}</td>
+        <td class="text-end stats-sum-neg">${row.neg}</td>
         <td class="text-end">${row.flat}</td>
-        <td class="text-end">${fmtPnl(row.pnl_sum)}</td>
-        <td class="text-end">${fmtPnl(row.pnl_avg)}</td>
+        ${statsPnlTd(row.pnl_sum)}
+        ${statsPnlTd(row.pos ? row.pos_sum : null)}
+        ${statsPnlTd(row.neg ? row.neg_sum : null)}
+        ${statsPnlTd(row.pnl_avg_pos)}
+        ${statsPnlTd(row.pnl_avg_neg)}
     </tr>`;
 }
 
@@ -1215,12 +1391,14 @@ function statsTotalRowHtml(total) {
     return `<tr class="stats-backtest-table-total">
         <td colspan="2">TOTAL</td>
         <td class="text-end">${total.rounds}</td>
-        <td class="text-end">${total.traded}</td>
-        <td class="text-end">${total.pos}</td>
-        <td class="text-end">${total.neg}</td>
+        <td class="text-end stats-sum-pos">${total.pos}</td>
+        <td class="text-end stats-sum-neg">${total.neg}</td>
         <td class="text-end">${total.flat}</td>
-        <td class="text-end">${fmtPnl(total.pnl_sum)}</td>
-        <td class="text-end">${fmtPnl(total.pnl_avg)}</td>
+        ${statsPnlTd(total.pnl_sum)}
+        ${statsPnlTd(total.pos ? total.pos_sum : null)}
+        ${statsPnlTd(total.neg ? total.neg_sum : null)}
+        ${statsPnlTd(total.pnl_avg_pos)}
+        ${statsPnlTd(total.pnl_avg_neg)}
     </tr>`;
 }
 
@@ -1245,56 +1423,93 @@ function renderStatsResultsBreadcrumb(drill) {
 }
 
 
-function statsPnlClass(n) {
-    const v = Number(n);
-    if (v > 0) return "stats-sum-pos";
-    if (v < 0) return "stats-sum-neg";
-    return "";
+function statsPnlClassGe0(n) {
+    return Number(n) < 0 ? "stats-sum-neg" : "stats-sum-pos";
 }
 
 
-function computeStatsCumulative(rounds, table) {
-    if (rounds?.length) {
-        let n = 0;
-        let pnl = 0;
-        const days = new Set();
-        for (const r of rounds) {
-            if (!r.ok) continue;
-            n += 1;
-            pnl += Number(r.pnl_usd);
-            days.add(utcRoundParts(r.market_start_ts).day);
-        }
-        const nDays = days.size;
-        return { rounds: n, pnl_total: pnl, pnl_day: nDays ? pnl / nDays : 0 };
+function fmtUsdInt(n) {
+    return `${Math.round(Number(n))}$`;
+}
+
+
+function pctInt(part, total) {
+    return total ? Math.round((100 * part) / total) : 0;
+}
+
+
+/** Aggregati da rounds ok: conteggi, somme pnl pos/neg, giorni unici. */
+function computeStatsSessionDetail(rounds) {
+    let n = 0, pos = 0, neg = 0, flat = 0;
+    let pnl = 0, posSum = 0, negSum = 0;
+    const days = new Set();
+    for (const r of rounds) {
+        if (!r.ok) continue;
+        n += 1;
+        const p = Number(r.pnl_usd);
+        pnl += p;
+        days.add(utcRoundParts(r.market_start_ts).day);
+        if (p > 0) { pos += 1; posSum += p; }
+        else if (p < 0) { neg += 1; negSum += p; }
+        else flat += 1;
     }
-    const t = table?.total;
-    if (!t) return null;
-    return { rounds: t.rounds, pnl_total: t.pnl_sum, pnl_day: t.pnl_avg };
+    return {
+        rounds: n, pos, neg, flat, n_days: days.size,
+        pnl_total: pnl, pos_sum: posSum, neg_sum: negSum,
+        pos_mean: pos ? posSum / pos : null,
+        neg_mean: neg ? negSum / neg : null,
+    };
+}
+
+
+function renderStatsSessionDetailHtml(d) {
+    const n = d.rounds;
+    const posPct = pctInt(d.pos, n);
+    const negPct = pctInt(d.neg, n);
+    const flatPct = pctInt(d.flat, n);
+    const line1 = `ROUNDS: <span class="stats-sum-white">${n}</span>`
+        + ` = <span class="stats-sum-pos">${d.pos}</span>`
+        + ` + <span class="stats-sum-neg">${d.neg}</span>`
+        + ` + <span class="stats-sum-flat">${d.flat}</span>`
+        + ` = <span class="stats-sum-pos">${posPct}%</span>`
+        + ` + <span class="stats-sum-neg">${negPct}%</span>`
+        + ` + <span class="stats-sum-flat">${flatPct}%</span>`;
+    const line2 = `TOTAL: <span class="${statsPnlClassGe0(d.pnl_total)}">${fmtUsdInt(d.pnl_total)}</span>`
+        + ` = <span class="stats-sum-pos">${fmtUsdInt(d.pos_sum)}</span>`
+        + ` - <span class="stats-sum-neg">${fmtUsdInt(Math.abs(d.neg_sum))}</span>`;
+    const posMean = d.pos_mean == null ? "—" : `<span class="stats-sum-pos">${fmtUsdInt(d.pos_mean)}</span>`;
+    const negMean = d.neg_mean == null ? "—" : `<span class="stats-sum-neg">${fmtUsdInt(d.neg_mean)}</span>`;
+    const line3 = `MEAN: POS: ${posMean} , NEG: ${negMean}`;
+    return `${line1}<br>${line2}<br>${line3}`;
 }
 
 
 export function renderStatsBacktest(state) {
     const summary = state?.statsSummary ?? null;
     const sumEl = $("statsSummaryLabel");
+    const detailEl = $("statsSummaryDetail");
+    const detailDiv = $("statsSummaryDetailDivider");
+    const rounds = state?.statsRounds;
     if (summary) {
         const exec = formatStatsExecDisplay(summary.created_at_utc);
-        const head = exec ? `${escapeHtml(exec)} · ${escapeHtml(summary.name)}` : escapeHtml(summary.name);
-        const cum = computeStatsCumulative(state?.statsRounds, state?.statsTable);
-        let line3 = "";
-        if (cum) {
-            const pnlTot = `<span class="${statsPnlClass(cum.pnl_total)}">Total ${fmtPnlInt(cum.pnl_total)}</span>`;
-            const pnlDay = `<span class="${statsPnlClass(cum.pnl_day)}">Daily ${fmtPnlInt(cum.pnl_day)}</span>`;
-            line3 = `<span class="stats-sum-r">R</span> ${cum.rounds} · ${pnlTot} · ${pnlDay}`;
+        const detail = rounds?.length ? computeStatsSessionDetail(rounds) : null;
+        sumEl.innerHTML = (exec ? `RUN: <span class="stats-sum-white">${escapeHtml(exec)}</span><br>` : "")
+            + `${escapeHtml(summary.day_from)}→${escapeHtml(summary.day_to)}`
+            + (detail ? `<br>TOTAL DAYS: <span class="stats-sum-white">${detail.n_days}</span>` : "");
+        if (detail) {
+            detailEl.innerHTML = renderStatsSessionDetailHtml(detail);
+            detailDiv.classList.remove("d-none");
+        } else {
+            detailEl.innerHTML = "";
+            detailDiv.classList.add("d-none");
         }
-        sumEl.innerHTML = `${head}<br>`
-            + `${escapeHtml(summary.day_from)}→${escapeHtml(summary.day_to)}<br>`
-            + line3;
     } else {
         sumEl.innerHTML = "";
+        detailEl.innerHTML = "";
+        detailDiv.classList.add("d-none");
     }
 
     const body = $("statsBacktestTableBody");
-    const rounds = state?.statsRounds;
     const drill = state?.statsDrill || { level: "hours", hour: null, slot: null };
     renderStatsResultsBreadcrumb(rounds ? drill : null);
 
@@ -1327,7 +1542,8 @@ export function renderStatsBacktest(state) {
             rows: state.statsTable.hours.map((h, i) => ({
                 key: String(i), label: h.hour, market: h.market,
                 rounds: h.rounds, traded: h.traded, pos: h.pos, neg: h.neg, flat: h.flat,
-                pnl_sum: h.pnl_sum, pnl_avg: h.pnl_avg,
+                pnl_sum: h.pnl_sum, pos_sum: h.pos_sum, neg_sum: h.neg_sum,
+                pnl_avg_pos: h.pnl_avg_pos, pnl_avg_neg: h.pnl_avg_neg,
             })),
             total: state.statsTable.total,
         };

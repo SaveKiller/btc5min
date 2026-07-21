@@ -29,21 +29,34 @@ def _json_path(root: Path, simulation_id: str) -> Path:
     return root / f"simulation_{simulation_id}.json"
 
 
-def simulation_label(data: dict) -> str:
-    """Etichetta dropdown: strategy vN · YYYY-MM-DD HH:MM · day_from→to."""
-    dt = data["created_at_utc"][:16].replace("T", " ")
-    day_from = data["day_from"]
-    day_to = data["day_to"]
+def simulation_range_label(day_from: str, day_to: str) -> str:
     if day_from[:8] == day_to[:8]:
-        range_s = f"{day_from}→{day_to[8:]}"
-    elif day_from[:5] == day_to[:5]:
-        range_s = f"{day_from}→{day_to[5:]}"
-    else:
-        range_s = f"{day_from}→{day_to}"
-    return f"{data['strategy_name']} v{data['strategy_version']} · {dt} · {range_s}"
+        return f"{day_from}→{day_to[8:]}"
+    if day_from[:5] == day_to[:5]:
+        return f"{day_from}→{day_to[5:]}"
+    return f"{day_from}→{day_to}"
+
+
+def simulation_n_rounds(data: dict) -> int:
+    summary = data["summary"]
+    if "rounds" in summary:
+        return int(summary["rounds"])
+    return int(data["table"]["total"]["rounds"])
+
+
+def simulation_label(data: dict) -> str:
+    """Etichetta bottone: strategy vN · YYYY-MM-DD HH:MM · day_from→to · Rn."""
+    dt = data["created_at_utc"][:16].replace("T", " ")
+    name_ver = f"{data['strategy_name']} v{data['strategy_version']}"
+    range_s = simulation_range_label(data["day_from"], data["day_to"])
+    return f"{name_ver} · {dt} · {range_s} · R{simulation_n_rounds(data)}"
 
 
 def simulation_summary(data: dict) -> dict:
+    dt = data["created_at_utc"][:16].replace("T", " ")
+    name_ver = f"{data['strategy_name']} v{data['strategy_version']}"
+    range_s = simulation_range_label(data["day_from"], data["day_to"])
+    n_rounds = simulation_n_rounds(data)
     return {
         "id": data["id"], "strategy_id": data["strategy_id"],
         "strategy_name": data["strategy_name"],
@@ -51,7 +64,11 @@ def simulation_summary(data: dict) -> dict:
         "created_at_utc": data["created_at_utc"],
         "day_from": data["day_from"], "day_to": data["day_to"],
         "has_orders": bool(data.get("has_orders")),
-        "label": simulation_label(data),
+        "name_ver": name_ver,
+        "exec_at": dt,
+        "range_label": range_s,
+        "n_rounds": n_rounds,
+        "label": f"{name_ver} · {dt} · {range_s} · R{n_rounds}",
     }
 
 

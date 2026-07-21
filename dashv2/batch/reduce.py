@@ -9,13 +9,24 @@ def reduce_analyze_fallback(per_round: list[dict]) -> str:
     return f"# Stats\n\nrounds_ok: {n_ok}\nrounds_total: {len(per_round)}\n"
 
 
+def _empty_bucket(hour: str, market: str) -> dict:
+    return {
+        "hour": hour, "market": market,
+        "rounds": 0, "traded": 0, "pos": 0, "neg": 0, "flat": 0,
+        "pnl_sum": 0.0, "pos_sum": 0.0, "neg_sum": 0.0,
+        "pnl_avg_pos": None, "pnl_avg_neg": None,
+    }
+
+
+def _finalize(b: dict) -> dict:
+    b["pnl_avg_pos"] = (b["pos_sum"] / b["pos"]) if b["pos"] else None
+    b["pnl_avg_neg"] = (b["neg_sum"] / b["neg"]) if b["neg"] else None
+    return b
+
+
 def reduce_strategy_rows(rows: list[dict]) -> dict:
     """Riduce le row strategia in 24 bucket orari + totale."""
-    buckets = [
-        {"hour": f"{h:02d}:00", "market": UTC_HOUR_MARKETS[h], "rounds": 0, "traded": 0,
-         "pos": 0, "neg": 0, "flat": 0, "pnl_sum": 0.0, "pnl_avg": 0.0}
-        for h in range(24)
-    ]
+    buckets = [_empty_bucket(f"{h:02d}:00", UTC_HOUR_MARKETS[h]) for h in range(24)]
     for r in rows:
         if not r["ok"]:
             continue
@@ -27,18 +38,22 @@ def reduce_strategy_rows(rows: list[dict]) -> dict:
         b["pnl_sum"] += pnl
         if pnl > 0:
             b["pos"] += 1
+            b["pos_sum"] += pnl
         elif pnl < 0:
             b["neg"] += 1
+            b["neg_sum"] += pnl
         else:
             b["flat"] += 1
     for b in buckets:
-        if b["rounds"]:
-            b["pnl_avg"] = b["pnl_sum"] / b["rounds"]
-    total = {"rounds": 0, "traded": 0, "pos": 0, "neg": 0, "flat": 0, "pnl_sum": 0.0, "pnl_avg": 0.0}
+        _finalize(b)
+    total = _empty_bucket("", "")
+    del total["hour"]
+    del total["market"]
     for b in buckets:
         for k in ("rounds", "traded", "pos", "neg", "flat"):
             total[k] += b[k]
         total["pnl_sum"] += b["pnl_sum"]
-    if total["rounds"]:
-        total["pnl_avg"] = total["pnl_sum"] / total["rounds"]
+        total["pos_sum"] += b["pos_sum"]
+        total["neg_sum"] += b["neg_sum"]
+    _finalize(total)
     return {"hours": buckets, "total": total}
