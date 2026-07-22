@@ -166,12 +166,13 @@
               </div>
               <div class="p-3 d-flex flex-wrap align-items-center gap-2 strategy-toolbar">
                 <span class="bot-section-label text-muted-app mb-0">STRATEGIES</span>
-                <label class="tiny text-muted-app mb-0 ms-3" for="strategyTypeSelect">TYPE</label>
-                <select class="form-select form-select-sm" id="strategyTypeSelect" style="max-width:12rem" aria-label="Strategy type">
-                  <option value="deterministic">Deterministic</option>
-                  <option value="inferential">Inferential</option>
-                  <option value="agentic">Agentic</option>
-                </select>
+                <label class="tiny text-muted-app mb-0 ms-3" for="strategyTypeBtn">TYPE</label>
+                <div class="dropdown strategy-type-dropdown flex-shrink-0">
+                  <button class="form-select form-select-sm strategy-type-select text-start" type="button"
+                    id="strategyTypeBtn" data-bs-toggle="dropdown" aria-expanded="false"
+                    aria-label="Strategy type">Deterministic</button>
+                  <ul class="dropdown-menu stats-bs-select-menu stats-bs-select-menu-sm" id="strategyTypeMenu"></ul>
+                </div>
                 <div class="ms-auto d-flex gap-2">
                   <button class="btn btn-sm btn-primary" id="strategyNewBtn" type="button">NEW</button>
                   <button class="btn btn-sm btn-outline-secondary" id="strategyEditBtn" type="button" disabled>EDIT</button>
@@ -224,22 +225,39 @@
                         </div>
                         <button class="btn btn-sm btn-primary flex-shrink-0" id="statsBacktestRunBtn" type="button">Run</button>
                         <button class="btn btn-sm btn-outline-secondary flex-shrink-0" id="statsJobCancelBtn" type="button" disabled>Cancel</button>
+                        <button class="btn btn-sm btn-outline-secondary flex-shrink-0" id="statsStrategyShowBtn" type="button" disabled>SHOW</button>
+                        <button class="btn btn-sm btn-outline-secondary flex-shrink-0" id="statsStrategyEditBtn" type="button" disabled>EDIT</button>
                       </div>
                       <div class="d-flex align-items-center gap-2 stats-progress-row">
+                        <span class="tiny text-muted-app stats-progress-total" id="statsProgressTotal">—</span>
+                        <span class="stats-progress-sep" aria-hidden="true"></span>
+                        <span class="tiny text-muted-app stats-progress-days" id="statsProgressDays">—</span>
+                        <span class="stats-progress-sep" aria-hidden="true"></span>
                         <div class="progress stats-progress flex-grow-1 mb-0" role="progressbar" aria-valuemin="0" aria-valuemax="100">
                           <div class="progress-bar" id="statsProgressBar" style="width:0%"></div>
                         </div>
+                        <span class="stats-progress-sep" aria-hidden="true"></span>
                         <span class="tiny text-muted-app stats-progress-label" id="statsProgressLabel">—</span>
+                        <span class="stats-progress-sep" aria-hidden="true"></span>
+                        <span class="tiny text-muted-app stats-progress-elapsed" id="statsProgressElapsed">—</span>
+                        <span class="stats-progress-sep" aria-hidden="true"></span>
+                        <span class="tiny text-muted-app stats-progress-threads" id="statsProgressThreads">—</span>
                       </div>
                       <hr class="stats-header-sep">
-                      <div class="d-flex flex-nowrap align-items-center gap-3 stats-session-row">
+                      <div class="d-flex flex-nowrap align-items-start gap-3 stats-session-row">
                         <div class="stats-sim-block flex-shrink-0 min-w-0" id="statsSimBlock">
                           <div class="d-flex flex-nowrap align-items-center gap-2 stats-sim-filter-row">
                             <div class="dropdown stats-sim-period-dropdown flex-shrink-0">
                               <button class="form-select form-select-sm stats-sim-period-select text-start"
                                 type="button" id="statsSimPeriodBtn" data-bs-toggle="dropdown" aria-expanded="false"
-                                aria-label="Simulation period">—</button>
+                                aria-label="Simulation period">ALL TIME</button>
                               <ul class="dropdown-menu stats-bs-select-menu" id="statsSimPeriodMenu"></ul>
+                            </div>
+                            <div class="dropdown stats-sim-strategy-dropdown flex-shrink-0">
+                              <button class="form-select form-select-sm stats-sim-strategy-select text-start"
+                                type="button" id="statsSimStrategyBtn" data-bs-toggle="dropdown" aria-expanded="false"
+                                aria-label="Simulation strategy">ALL STRATEGIES</button>
+                              <ul class="dropdown-menu stats-bs-select-menu" id="statsSimStrategyMenu"></ul>
                             </div>
                             <input class="form-control form-control-sm stats-sim-search flex-grow-1 min-w-0" type="search"
                               id="statsSimSearch" placeholder="search" aria-label="Search simulations" autocomplete="off">
@@ -249,6 +267,25 @@
                               type="button" id="statsSimulationBtn" data-bs-toggle="dropdown" aria-expanded="false"
                               aria-label="Simulations">0 Simulations found</button>
                             <ul class="dropdown-menu stats-bs-select-menu" id="statsSimulationMenu"></ul>
+                          </div>
+                          <div class="stats-sim-meta tiny text-muted-app" id="statsSimMeta">
+                            <div class="stats-hour-filter-row d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+                              <div class="dropdown stats-hour-filter-dropdown min-w-0">
+                                <button class="form-select form-select-sm stats-hour-filter-select text-start disabled"
+                                  type="button" id="statsHourFilterBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                                  aria-expanded="false" aria-disabled="true" aria-label="UTC hour filter">24 hours</button>
+                                <ul class="dropdown-menu stats-bs-select-menu round-picker-hours" id="statsHourFilterMenu"></ul>
+                              </div>
+                              <div class="stats-hour-mode-switch d-flex align-items-center gap-1 flex-shrink-0">
+                                <span class="stats-hour-mode-label"></span>
+                                <div class="form-check form-switch mb-0">
+                                  <input class="form-check-input" type="checkbox" role="switch" id="statsHourFilter24hSwitch"
+                                    aria-label="24 hours" checked>
+                                </div>
+                                <span class="stats-hour-mode-label">24H</span>
+                              </div>
+                            </div>
+                            <span class="stats-sim-days" id="statsSimDaysLabel"></span>
                           </div>
                         </div>
                         <div class="stats-session-divider flex-shrink-0" aria-hidden="true"></div>
@@ -562,6 +599,33 @@
         </div>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" id="strategyModalCancelBtn">Cancel</button>
         <button type="button" class="btn btn-primary" id="strategyModalSaveBtn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="statsRulesModal" tabindex="-1" aria-labelledby="statsRulesModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header stats-rules-modal-header">
+        <h5 class="modal-title mb-0" id="statsRulesModalTitle">
+          <span id="statsRulesModalName">Rules</span> — Rules
+        </h5>
+        <div class="d-flex align-items-center gap-2 flex-shrink-0 ms-auto stats-rules-header-actions">
+          <div class="dropdown stats-rules-version-dropdown">
+            <button class="form-select form-select-sm stats-rules-version-select text-start"
+              type="button" id="statsRulesModalVersionBtn" data-bs-toggle="dropdown" data-bs-auto-close="true"
+              aria-expanded="false" aria-label="Strategy version">V —</button>
+            <ul class="dropdown-menu dropdown-menu-end stats-bs-select-menu stats-bs-select-menu-sm" id="statsRulesModalVersionMenu"></ul>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <textarea class="form-control stats-rules-view" id="statsRulesModalText" rows="16" readonly></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
   </div>

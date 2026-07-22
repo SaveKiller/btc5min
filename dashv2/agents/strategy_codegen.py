@@ -12,6 +12,14 @@ from dashv2.config import reload_coded_rules_prompt
 ProgressCb = Callable[[str, str], None]
 
 
+def strip_rules_comments(rules: str) -> str:
+    """Rimuove righe commento stile Python (# …); restano note utente, non vanno al codegen."""
+    return "\n".join(
+        line for line in rules.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+
 def _emit(on_progress: ProgressCb | None, phase: str, message: str) -> None:
     if on_progress is not None:
         on_progress(phase, message)
@@ -64,6 +72,7 @@ Se non c'è nulla da fare, ritorna [].
 
 
 def build_codegen_prompt(rules: str, system_prompt: str) -> str:
+    active = strip_rules_comments(rules).strip()
     return f"""Sei un generatore di codice Python per strategie di trading Polymarket BTC Up/Down 5m.
 
 CRITICO SULL'OUTPUT:
@@ -80,7 +89,7 @@ PRE-PROMPT / ACCORTEZZE DI SISTEMA (obbligatorie):
 
 Regole della strategia scritte dall'utente:
 ---
-{rules.strip()}
+{active}
 ---
 
 Genera il modulo completo che implementa queste regole usando on_tick (e se serve on_round_start / on_round_end).
@@ -116,11 +125,12 @@ def generate_strategy_module(
     l'errore intermedio (il popup UI arriva solo se falliscono tutti i tentativi).
     """
     label = model_label or model_id
+    active = strip_rules_comments(rules)
     _emit(on_progress, "prompt", f"Preparazione prompt rules → Python ({label})…")
     prompt = build_codegen_prompt(rules, system_prompt)
     _emit(
         on_progress, "prompt_ready",
-        f"Prompt pronto ({len(prompt)} caratteri, rules {len(rules.strip())} caratteri) — "
+        f"Prompt pronto ({len(prompt)} caratteri, rules {len(active.strip())} caratteri) — "
         f"chiamo {label}…",
     )
     last_err: BaseException | None = None

@@ -24,7 +24,7 @@ def _load_module(module_path: Path, strategy_id: str):
 
 
 def _apply(engine: OrderEngine, act: dict, sid: str, sec: int, tick, book, fee: float, action_errors: list) -> None:
-    """Applica un'azione order.*; errori loggati senza abortire il round."""
+    """Applica un'azione order.*; fallimenti in action_errors senza abortire il round."""
     cmd = act["cmd"]
     try:
         if cmd == "order.place":
@@ -39,9 +39,7 @@ def _apply(engine: OrderEngine, act: dict, sid: str, sec: int, tick, book, fee: 
         else:
             raise Exception(f"unknown cmd {cmd}")
     except Exception as e:
-        msg = str(e)
-        print(f"batch strategy action error: {msg}", flush=True)
-        action_errors.append(msg)
+        action_errors.append(str(e))
 
 
 def _dispatch(mod, hook: str, ctx: dict, engine: OrderEngine, sid: str, sec: int, tick, book, fee: float, action_errors: list) -> None:

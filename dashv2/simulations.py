@@ -29,12 +29,19 @@ def _json_path(root: Path, simulation_id: str) -> Path:
     return root / f"simulation_{simulation_id}.json"
 
 
+_MONTH_ABBR = (
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+)
+
+
+def _day_short(day: str) -> str:
+    """YYYY-MM-DD → '09 JUL'."""
+    return f"{day[8:10]} {_MONTH_ABBR[int(day[5:7]) - 1]}"
+
+
 def simulation_range_label(day_from: str, day_to: str) -> str:
-    if day_from[:8] == day_to[:8]:
-        return f"{day_from}→{day_to[8:]}"
-    if day_from[:5] == day_to[:5]:
-        return f"{day_from}→{day_to[5:]}"
-    return f"{day_from}→{day_to}"
+    return f"{_day_short(day_from)} -> {_day_short(day_to)}"
 
 
 def simulation_n_rounds(data: dict) -> int:
@@ -44,8 +51,12 @@ def simulation_n_rounds(data: dict) -> int:
     return int(data["table"]["total"]["rounds"])
 
 
+def simulation_pnl_total(data: dict) -> float:
+    return float(data["table"]["total"]["pnl_sum"])
+
+
 def simulation_label(data: dict) -> str:
-    """Etichetta bottone: strategy vN · YYYY-MM-DD HH:MM · day_from→to · Rn."""
+    """Etichetta bottone: strategy vN · YYYY-MM-DD HH:MM · DD MMM -> DD MMM · Rn."""
     dt = data["created_at_utc"][:16].replace("T", " ")
     name_ver = f"{data['strategy_name']} v{data['strategy_version']}"
     range_s = simulation_range_label(data["day_from"], data["day_to"])
@@ -57,6 +68,7 @@ def simulation_summary(data: dict) -> dict:
     name_ver = f"{data['strategy_name']} v{data['strategy_version']}"
     range_s = simulation_range_label(data["day_from"], data["day_to"])
     n_rounds = simulation_n_rounds(data)
+    pnl_total = simulation_pnl_total(data)
     return {
         "id": data["id"], "strategy_id": data["strategy_id"],
         "strategy_name": data["strategy_name"],
@@ -68,8 +80,60 @@ def simulation_summary(data: dict) -> dict:
         "exec_at": dt,
         "range_label": range_s,
         "n_rounds": n_rounds,
+        "pnl_total": pnl_total,
         "label": f"{name_ver} · {dt} · {range_s} · R{n_rounds}",
     }
+
+
+def session_capital_size_usd(bets: list[dict]) -> float:
+    """Capitale iniettato nel round: stessa logica di sessionCapitalSizeUsd (history UI)."""
+    events: list[tuple[str, int, float, float]] = []
+    for b in bets:
+        size = float(b["size_usd"])
+        events.append(("open", int(b["entry_sec"]), size, 0.0))
+        if b.get("exit_sec") is not None:
+            pnl = float(b["pnl_usd"] or 0.0)
+            events.append(("close", int(b["exit_sec"]), size, pnl))
+    # Cronologia: sec più alto = prima; a parità chiudi prima di aprire.
+    events.sort(key=lambda e: (-e[1], 0 if e[0] == "close" else 1))
+    wallet = 0.0
+    injected = 0.0
+    for kind, _sec, size, pnl in events:
+        if kind == "open":
+            if wallet >= size:
+                wallet -= size
+            else:
+                injected += size - wallet
+                wallet = 0.0
+        else:
+            wallet += size + min(0.0, pnl)
+    return injected
+
+
+def compute_balance_stats(rounds: list[dict]) -> dict:
+    """Delta max/min del PnL cumulato + capitale minimo (USED) su stake history-style."""
+    ok = [r for r in rounds if r.get("ok")]
+    ok.sort(key=lambda r: int(r["market_start_ts"]))
+    cum = 0.0
+    bal_max = 0.0
+    bal_min = 0.0
+    bal_used = 0.0
+    for r in ok:
+        orders = r.get("orders") or []
+        stake = session_capital_size_usd(orders) if orders else float(r.get("stake_usd") or 0.0)
+        need = stake - cum
+        if need > bal_used:
+            bal_used = need
+        cum += float(r.get("pnl_usd") or 0.0)
+        if cum > bal_max:
+            bal_max = cum
+        if cum < bal_min:
+            bal_min = cum
+    return {"bal_max": bal_max, "bal_min": bal_min, "bal_used": bal_used}
+
+
+def _summary_has_balance(summary: dict) -> bool:
+    return "bal_max" in summary and "bal_min" in summary and "bal_used" in summary
 
 
 def _connect(path: Path) -> sqlite3.Connection:
@@ -152,6 +216,22 @@ def _meta_dict(row: sqlite3.Row) -> dict:
         "table": json.loads(row["table_json"]),
         "has_orders": True,
     }
+
+
+def _rounds_with_stake(rounds: list[dict], orders_by_ts: dict[int, list]) -> list[dict]:
+    out = []
+    for r in rounds:
+        orders = orders_by_ts.get(r["market_start_ts"], [])
+        stake = session_capital_size_usd(orders) if orders else float(r.get("stake_usd") or 0.0)
+        out.append({**r, "stake_usd": stake})
+    return out
+
+
+def _orders_by_market_ts(conn: sqlite3.Connection) -> dict[int, list]:
+    by_ts: dict[int, list] = {}
+    for o in conn.execute("SELECT * FROM orders ORDER BY market_start_ts, seq").fetchall():
+        by_ts.setdefault(o["market_start_ts"], []).append(_order_from_row(o))
+    return by_ts
 
 
 def _round_from_row(row: sqlite3.Row) -> dict:
@@ -244,7 +324,7 @@ def create_simulation(
     root = simulations_dir(history_dir)
     sid = uuid.uuid4().hex[:12]
     now = _utc_now_iso()
-    summary_out = {**summary, "created_at_utc": now}
+    summary_out = {**summary, "created_at_utc": now, **compute_balance_stats(rounds)}
     path = _sqlite_path(root, sid)
     conn = _connect(path)
     try:
@@ -277,6 +357,8 @@ def create_simulation(
 
 def _slim_round(r: dict) -> dict:
     """Aggregati per UI/Socket: niente lista orders."""
+    orders = r.get("orders") or []
+    stake = session_capital_size_usd(orders) if orders else float(r.get("stake_usd") or 0.0)
     return {
         "market_start_ts": r["market_start_ts"],
         "hour_utc": r["hour_utc"],
@@ -288,6 +370,7 @@ def _slim_round(r: dict) -> dict:
         "n_losses": r.get("n_losses", 0),
         "traded": r.get("traded", False),
         "action_errors": r.get("action_errors") or [],
+        "stake_usd": stake,
     }
 
 
@@ -299,7 +382,14 @@ def _load_sqlite(path: Path) -> dict:
             raise Exception(f"simulation meta missing: {path}")
         data = _meta_dict(meta)
         rows = conn.execute("SELECT * FROM rounds ORDER BY market_start_ts").fetchall()
-        data["rounds"] = [_round_from_row(r) for r in rows]
+        rounds = [_round_from_row(r) for r in rows]
+        orders_by_ts = _orders_by_market_ts(conn)
+        data["rounds"] = _rounds_with_stake(rounds, orders_by_ts)
+        if not _summary_has_balance(data["summary"]):
+            enriched = [{**r, "orders": orders_by_ts.get(r["market_start_ts"], [])} for r in rounds]
+            data["summary"].update(compute_balance_stats(enriched))
+            conn.execute("UPDATE meta SET summary_json=?", (json.dumps(data["summary"]),))
+            conn.commit()
         return data
     finally:
         conn.close()
@@ -311,6 +401,9 @@ def _load_json_legacy(root: Path, path: Path) -> dict:
         data["strategy_version"] = 1
         path.write_text(json.dumps(data, indent=4), encoding="utf-8")
     data["has_orders"] = False
+    if not _summary_has_balance(data.get("summary") or {}):
+        data.setdefault("summary", {}).update(compute_balance_stats(data.get("rounds") or []))
+        path.write_text(json.dumps(data, indent=4), encoding="utf-8")
     return data
 
 

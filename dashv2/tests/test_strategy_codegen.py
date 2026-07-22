@@ -14,7 +14,8 @@ from dashv2.strategies import (
     load_strategy, module_path, strategies_dir, update_strategy, write_module,
 )
 from dashv2.agents.strategy_codegen import (
-    build_coded_rules_prompt, build_codegen_prompt, extract_python_source, validate_module_source,
+    build_coded_rules_prompt, build_codegen_prompt, extract_python_source,
+    strip_rules_comments, validate_module_source,
 )
 
 
@@ -59,6 +60,15 @@ class TestCodegenParse(unittest.TestCase):
         self.assertIn("mtm_usd", prompt)
         self.assertIn("buy Up", prompt)
         self.assertIn("PRE-PROMPT", prompt)
+
+    def test_strip_rules_comments(self):
+        raw = "# nota utente\nbuy Up\n  # indentata\nchiudi a TP\n"
+        self.assertEqual(strip_rules_comments(raw), "buy Up\nchiudi a TP")
+        prompt = build_codegen_prompt(raw, "sys")
+        self.assertIn("buy Up", prompt)
+        self.assertIn("chiudi a TP", prompt)
+        self.assertNotIn("nota utente", prompt)
+        self.assertNotIn("indentata", prompt)
 
     def test_contract_documents_per_order_size(self):
         prompt = build_codegen_prompt("size piccola poi grande", "SIZE: ogni order.place DEVE includere size_usd")

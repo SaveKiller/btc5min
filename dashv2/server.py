@@ -808,6 +808,7 @@ class ServerBridge:
                 def on_progress(done, total, errors):
                     self._emit_stats("stats.job.progress", {
                         "kind": kind, "done": done, "total": total, "errors": errors,
+                        "workers": int(self.cfg["stats_workers"]),
                     })
 
                 results = runner.run(tasks, on_progress)
@@ -858,7 +859,7 @@ class ServerBridge:
                 self._stats_cancel_requested = False
 
         threading.Thread(target=_run, daemon=True, name=f"stats-{kind}").start()
-        return {"ok": True, "accepted": True}
+        return {"ok": True, "accepted": True, "workers": int(self.cfg["stats_workers"])}
 
     def _codegen_progress(self, phase: str, message: str) -> None:
         self._emit_generate(phase, message)
