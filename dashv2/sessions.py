@@ -71,6 +71,18 @@ def delete_session(history_dir: Path, session_id: str) -> dict:
     return {"session_id": session_id, "account_id": account_id}
 
 
+def delete_sessions_for_account(history_dir: Path, account_id: str) -> list[str]:
+    """Cancella tutte le sessioni dell'account (chat, exec log, registro)."""
+    deleted: list[str] = []
+    for path in sessions_dir(history_dir).glob("session_*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data["account_id"] != account_id:
+            continue
+        delete_session(history_dir, data["session_id"])
+        deleted.append(data["session_id"])
+    return deleted
+
+
 def list_sessions_for_account(
     history_dir: Path,
     account_id: str,

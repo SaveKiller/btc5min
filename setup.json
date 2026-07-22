@@ -27,5 +27,14 @@
     "delta_win_model_path": "models/delta_win_v2.json",
     "delta_win_window_half_base": 2,
     "delta_win_window_min_samples": 30,
-    "delta_win_txt_columns": ["a","b"]
+    "delta_win_txt_columns": ["a", "b"],
+    "price_decimals": {
+        "btc": 0,
+        "eth": 2,
+        "bnb": 2,
+        "sol": 2,
+        "hype": 2,
+        "xrp": 4,
+        "doge": 4
+    }
 }

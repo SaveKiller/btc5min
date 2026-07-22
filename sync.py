@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 
 from src.binary_format import read_round, txt_path_for_bin
+from src.round_index import load_or_build_index, remove_bins, upsert_bins
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
@@ -83,12 +84,12 @@ def find_bin_at_ts(start_ts: int) -> Path | None:
     return matches[0]
 
 
-def trim_downloaded_nan_tail(downloaded: list[Path]) -> None:
+def trim_downloaded_nan_tail(downloaded: list[Path]) -> list[Path]:
     if not downloaded:
-        return
+        return []
     downloaded_ts = {start_ts_from_bin(p) for p in downloaded}
     ts = max(downloaded_ts)
-    deleted = 0
+    deleted: list[Path] = []
     print("Tail trim final_gamma nan sui bin appena scaricati ...", flush=True)
     while True:
         path = find_bin_at_ts(ts)
@@ -106,10 +107,11 @@ def trim_downloaded_nan_tail(downloaded: list[Path]) -> None:
         path.unlink()
         if txt.is_file():
             txt.unlink()
-        deleted += 1
+        deleted.append(path)
         print(f"tail trim: deleted {path.name}", flush=True)
         ts -= ROUND_SEC
-    print(f"tail trim: deleted {deleted} bin", flush=True)
+    print(f"tail trim: deleted {len(deleted)} bin", flush=True)
+    return deleted
 
 
 def main() -> None:
@@ -144,10 +146,16 @@ def main() -> None:
 
     if stdout_data:
         downloaded = extract_tar(stdout_data)
-        trim_downloaded_nan_tail(downloaded)
+        deleted = trim_downloaded_nan_tail(downloaded)
+        kept = [p for p in downloaded if p not in deleted]
+        if kept:
+            upsert_bins(DATA, kept)
+        if deleted:
+            remove_bins(DATA, deleted)
     else:
         print("Nessun file da scaricare.", flush=True)
 
+    load_or_build_index(DATA)
     print("Fatto.", flush=True)
 
 

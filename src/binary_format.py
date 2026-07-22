@@ -1,4 +1,5 @@
 import struct
+import re
 from datetime import datetime, timezone
 
 import numpy as np
@@ -16,6 +17,14 @@ RECORD_FMT = "<Q f 6f Q"
 RECORD_SIZE = struct.calcsize(RECORD_FMT)
 OUTCOME_NAMES = {0: "unknown", 1: "Up", 2: "Down"}
 OUTCOME_FROM_NAME = {"Up": 1, "Down": 2}
+_BASENAME_RE = re.compile(r"^([a-z]+)(\d+[mh])_(\d+)_\d{4}")
+
+
+def asset_from_bin_path(bin_path: str) -> str:
+    m = _BASENAME_RE.match(Path(bin_path).name)
+    if not m:
+        raise Exception(f"cannot parse asset from bin name: {bin_path}")
+    return m.group(1)
 
 
 def _pack_header(header: dict) -> bytes:

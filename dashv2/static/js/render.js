@@ -199,7 +199,7 @@ export function renderRoundPickerHours(dayUtc, hours, onBack, onHourSelect) {
 }
 
 
-export function renderRoundPickerRounds(dayUtc, hourUtc, rounds, onBack, onSelect) {
+export function renderRoundPickerRounds(dayUtc, hourUtc, rounds, onBack) {
     const menu = $("roundPickerMenu");
     menu.classList.remove("round-picker-hours");
     menu.classList.add("round-picker-rounds");
@@ -217,12 +217,6 @@ export function renderRoundPickerRounds(dayUtc, hourUtc, rounds, onBack, onSelec
         e.preventDefault();
         e.stopPropagation();
         onBack();
-    });
-    menu.querySelectorAll("button[data-ts]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-            if (btn.classList.contains("disabled")) return;
-            onSelect(Number(btn.dataset.ts));
-        });
     });
 }
 
@@ -584,18 +578,30 @@ export function renderAccounts(state) {
     const locked = !!state.session?.loaded || !!state.session?.account_switch_locked;
     const count = accounts.length;
     $("accountCountLabel").textContent = `${count} account${count === 1 ? "" : "s"}`;
-    const select = $("accountSelect");
+    const btn = $("accountSelectBtn");
+    const menu = $("accountSelectMenu");
+    const valueEl = $("accountSelectValue");
     if (!count) {
-        select.innerHTML = `<option value="">Create your first account</option>`;
-        select.disabled = true;
+        btn.textContent = "Create your first account";
+        btn.disabled = true;
+        btn.classList.add("is-placeholder");
+        menu.innerHTML = "";
+        valueEl.value = "";
     } else {
-        select.disabled = locked;
-        select.innerHTML = accounts.map((a) => `<option value="${a.id}"${a.id === activeId ? " selected" : ""}>${a.name}</option>`).join("");
+        btn.disabled = locked;
+        const active = accounts.find((a) => a.id === activeId) || accounts[0];
+        btn.textContent = active.name;
+        btn.classList.remove("is-placeholder");
+        valueEl.value = active.id;
+        menu.innerHTML = accounts.map((a) => {
+            const act = a.id === activeId ? " active" : "";
+            return `<li><button type="button" class="dropdown-item stats-bs-select-item${act}" data-value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</button></li>`;
+        }).join("");
     }
     const hasActive = activeId != null;
     $("newAccountBtn").disabled = locked;
-    $("renameAccountBtn").disabled = !hasActive;
     $("editAccountBtn").disabled = !hasActive;
+    $("deleteAccountBtn").disabled = !hasActive || locked;
     $("unloadRoundBtn").disabled = !state.session?.loaded;
     $("exportCsvBtn").disabled = !hasActive;
     renderAccountSummary(state.activeAccount);
@@ -2019,4 +2025,12 @@ export function renderOutcome(roundEnd) {
 
 export function setDisconnectBanner(show) {
     $("disconnectBanner").classList.toggle("show", show);
+}
+
+
+export function setStartupLoading(show) {
+    const el = $("startupLoading");
+    el.classList.toggle("show", show);
+    el.setAttribute("aria-busy", show ? "true" : "false");
+    document.querySelector(".app-shell")?.toggleAttribute("inert", show);
 }

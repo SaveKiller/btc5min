@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent
@@ -11,8 +12,76 @@ _CODED_RULES_PROMPT_PATH = _AGENTS / "coded_rules_prompt.md"
 _REQUIRED = (
     "data_dir", "history_dir", "host", "port",
     "default_order_size_usd", "stats_workers", "stall_reconnect_sec", "engine_plugin",
-    "cursor_label", "cursor_models", "agent_cursor_label",
+    "cursor_label", "cursor_models", "agent_cursor_label", "all_tabs", "hide_tabs",
 )
+
+UI_TAB_KEYS = (
+    "candles", "accounts", "strategy", "backtest", "backtest_analysis", "round_chat",
+)
+
+_CMD_UI_TAB: dict[str, str] = {}
+for _cmd in (
+    "bot.list", "bot.set_active",
+    "strategy.list", "strategy.create", "strategy.update", "strategy.clone",
+    "strategy.delete", "strategy.load", "strategy.unload",
+):
+    _CMD_UI_TAB[_cmd] = "strategy"
+for _cmd in (
+    "stats.backtest.start", "stats.job.cancel",
+    "stats.simulation.list", "stats.simulation.load", "stats.simulation.delete",
+):
+    _CMD_UI_TAB[_cmd] = "backtest"
+for _cmd in (
+    "stats.analyze.start", "stats.analyze.list", "stats.analyze.delete",
+    "stats.chat.send", "stats.chat.history", "stats.chat.clear", "stats.rules.apply",
+):
+    _CMD_UI_TAB[_cmd] = "backtest_analysis"
+for _cmd in (
+    "agent.chat.send", "agent.chat.history", "agent.rules.apply",
+    "agent.executions.list", "agent.session.select", "agent.session.delete",
+):
+    _CMD_UI_TAB[_cmd] = "round_chat"
+
+
+def parse_all_tabs(raw) -> list[str]:
+    if not isinstance(raw, list) or not raw:
+        raise Exception("all_tabs must be a non-empty list")
+    out = [str(entry) for entry in raw]
+    if out != list(UI_TAB_KEYS):
+        raise Exception(f"all_tabs must match {list(UI_TAB_KEYS)!r}")
+    return out
+
+
+def parse_hide_tabs(raw) -> list[str]:
+    if not isinstance(raw, list):
+        raise Exception("hide_tabs must be a list")
+    out: list[str] = []
+    for entry in raw:
+        key = str(entry)
+        if key not in UI_TAB_KEYS:
+            raise Exception(f"invalid hide_tabs entry: {key!r}")
+        if key in out:
+            raise Exception(f"duplicate hide_tabs entry: {key!r}")
+        out.append(key)
+    if len(out) >= len(UI_TAB_KEYS):
+        raise Exception("hide_tabs cannot hide every tab")
+    return out
+
+
+def visible_ui_tabs(hidden: list[str]) -> list[str]:
+    hidden_set = set(hidden)
+    return [key for key in UI_TAB_KEYS if key not in hidden_set]
+
+
+def cmd_ui_tab(cmd: str) -> str | None:
+    return _CMD_UI_TAB.get(cmd)
+
+
+def ui_tab_allows(cmd: str, enabled_tabs: set[str]) -> bool:
+    need = cmd_ui_tab(cmd)
+    if need is None:
+        return True
+    return need in enabled_tabs
 
 
 def resolve_cursor_model(cursor_label: str, cursor_models: list[dict]) -> dict:
@@ -86,13 +155,21 @@ def load_config() -> dict:
     history_dir = (_ROOT / raw["history_dir"]).resolve()
     if not data_dir.is_dir(): raise Exception(f"data_dir not found: {data_dir}")
     history_dir.mkdir(parents=True, exist_ok=True)
+    hide_tabs = parse_hide_tabs(raw["hide_tabs"])
+    parse_all_tabs(raw["all_tabs"])
+    ui_tabs = visible_ui_tabs(hide_tabs)
+    port = int(raw["port"])
+    if "DASHV2_PORT" in os.environ:
+        port = int(os.environ["DASHV2_PORT"])
     return {
         "root": _ROOT, "data_dir": data_dir, "history_dir": history_dir,
-        "host": str(raw["host"]), "port": int(raw["port"]),
+        "host": str(raw["host"]), "port": port,
         "default_order_size_usd": float(raw["default_order_size_usd"]),
         "stats_workers": int(raw["stats_workers"]),
         "stall_reconnect_sec": float(raw["stall_reconnect_sec"]),
         "engine_plugin": engine_plugin,
+        "hide_tabs": hide_tabs,
+        "ui_tabs": ui_tabs,
         "cursor_label": cursor_label,
         "cursor_models": cursor_models,
         "cursor_model": cursor_model,

@@ -28,13 +28,6 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
   color: var(--dropdown-select-fg);
 }
 
-/* Native <select>: highlight option (best-effort; OS può ignorarlo) */
-select.form-select option:checked,
-select.form-select option:hover,
-select.form-select option:focus {
-  background-color: var(--dropdown-select-bg-strong);
-  color: var(--dropdown-select-fg);
-}
 .app-shell { width:100%; margin:0; padding:1rem; height:100%; display:flex; flex-direction:column; box-sizing:border-box; }
 .app-panel { background:var(--panel); border:1px solid var(--border); border-radius:.65rem; box-shadow:0 .4rem 1.25rem rgba(0,0,0,.18); }
 .panel-head { padding:.65rem .85rem; border-bottom:1px solid var(--border); background:rgba(255,255,255,.018); }
@@ -63,9 +56,11 @@ select.form-select option:focus {
 .toolbar .replay-start-sec::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
 .toolbar .btn-group[aria-label="Round navigation"] > .toolbar-tip { display:flex; margin-left:calc(-1 * var(--bs-border-width)); }
 .toolbar .btn-group[aria-label="Round navigation"] > .toolbar-tip:first-child { margin-left:0; }
-.toolbar .btn-group[aria-label="Round navigation"] > .toolbar-tip > .btn { border-radius:0; margin-left:0; z-index:2; }
+.toolbar .btn-group[aria-label="Round navigation"] > .toolbar-tip > .btn,
+.toolbar .btn-group[aria-label="Round navigation"] > .toolbar-tip > .dropdown > .btn { border-radius:0; margin-left:0; z-index:2; }
 .toolbar .btn-group[aria-label="Round navigation"] > .toolbar-tip:first-child > .btn { border-top-left-radius:var(--bs-border-radius); border-bottom-left-radius:var(--bs-border-radius); }
 .toolbar .btn-group[aria-label="Round navigation"] > .toolbar-tip:last-child > .btn { border-top-right-radius:var(--bs-border-radius); border-bottom-right-radius:var(--bs-border-radius); }
+.toolbar .btn-group[aria-label="Round navigation"] > .toolbar-tip > .dropdown { display:flex; }
 .toolbar .tooltip .tooltip-inner {
   font-size:.92rem; font-weight:600; padding:.5rem .85rem; letter-spacing:.01em;
   box-shadow:0 6px 20px rgba(0,0,0,.38);
@@ -230,8 +225,17 @@ select.form-select option:focus {
   opacity:.28; cursor:default; border-color:rgba(46, 154, 98, .35);
 }
 .strategy-empty { padding:.35rem .5rem; color:var(--muted); font-size:.75rem; }
-.account-manage-panel, .account-summary-panel { flex-shrink:0; }
-.account-select { min-width:180px; max-width:280px; }
+.account-overview-panel { flex-shrink:0; }
+.account-toolbar { row-gap:.5rem; }
+.account-select-dropdown { min-width:180px; max-width:280px; }
+.account-select-dropdown .account-select { width:100%; }
+.account-select-dropdown .dropdown-menu {
+  --bs-dropdown-min-width: 100%;
+  min-width: 100%;
+  width: 100%;
+}
+.strategy-modal-version-dropdown { width:100%; }
+.strategy-modal-version-dropdown .strategy-modal-version-select { width:100%; }
 .account-summary-grid { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:.65rem; }
 .account-stat-label { font-size:.68rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
 .account-stat-value { font-size:1.05rem; font-weight:700; color:#dbe4f5; }
@@ -479,6 +483,21 @@ select.form-select option:focus {
 .reference-track .ticks span:last-child { transform:translateX(-100%); }
 #disconnectBanner { display:none; position:fixed; top:0; left:0; right:0; z-index:2000; background:#7f1d1d; color:#fff; text-align:center; padding:.45rem; font-weight:600; }
 #disconnectBanner.show { display:block; }
+.startup-loading {
+  display:none; position:fixed; inset:0; z-index:3000;
+  align-items:center; justify-content:center; text-align:center;
+  background:var(--bg, #0d1117); color:var(--text, #e6edf3);
+}
+.startup-loading.show { display:flex; }
+.startup-loading-inner { max-width:22rem; padding:1.5rem; }
+.startup-loading-spinner {
+  width:2rem; height:2rem; margin:0 auto 1rem;
+  border:2px solid rgba(255,255,255,.12); border-top-color:var(--accent, #58a6ff);
+  border-radius:50%; animation:startup-spin .8s linear infinite;
+}
+.startup-loading-title { font-size:1.125rem; font-weight:600; }
+.startup-loading-text { font-size:.9rem; color:var(--muted, #8b949e); }
+@keyframes startup-spin { to { transform:rotate(360deg); } }
 .round-picker-menu {
   --round-picker-item-py:.02rem;
   --round-picker-row:1.45rem;

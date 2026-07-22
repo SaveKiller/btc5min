@@ -9,6 +9,13 @@
   <link href="/css/dashboard.css" rel="stylesheet">
 </head>
 <body>
+<div id="startupLoading" class="startup-loading show" role="status" aria-live="polite" aria-busy="true">
+  <div class="startup-loading-inner">
+    <div class="startup-loading-spinner" aria-hidden="true"></div>
+    <p class="startup-loading-title mb-1">Studio Replay</p>
+    <p class="startup-loading-text mb-0">Attendere qualche secondo: il server sta caricando i round.</p>
+  </div>
+</div>
 <div id="disconnectBanner">Disconnesso dal server — riconnessione in corso…</div>
 <main class="app-shell">
   <header class="app-panel toolbar mb-3 px-3 d-flex align-items-center gap-3 flex-wrap">
@@ -18,27 +25,29 @@
     </div>
     <span class="divider d-none d-md-block"></span>
     <div class="btn-group" role="group" aria-label="Round navigation">
-      <span class="toolbar-tip" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Round precedente">
-        <button class="btn btn-outline-secondary" id="prevRoundBtn" type="button" aria-label="Round precedente" disabled><i class="bi bi-caret-left-fill"></i></button>
+      <span class="toolbar-tip" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Previous round">
+        <button class="btn btn-outline-secondary" id="prevRoundBtn" type="button" aria-label="Previous round" disabled><i class="bi bi-caret-left-fill"></i></button>
       </span>
-      <span class="toolbar-tip" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Carica round">
-        <button class="btn btn-outline-secondary" id="loadRoundBtn" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Carica round"><i class="bi bi-folder2-open"></i></button>
+      <span class="toolbar-tip">
+        <div class="dropdown">
+          <button class="btn btn-outline-secondary" id="loadRoundBtn" type="button" data-bs-toggle="dropdown" data-bs-auto-close="true" aria-expanded="false" aria-label="Load round"><i class="bi bi-folder2-open"></i></button>
+          <ul class="dropdown-menu round-picker-menu" id="roundPickerMenu"></ul>
+        </div>
       </span>
-      <span class="toolbar-tip" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Round successivo">
-        <button class="btn btn-outline-secondary" id="nextRoundBtn" type="button" aria-label="Round successivo" disabled><i class="bi bi-caret-right-fill"></i></button>
+      <span class="toolbar-tip" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Next round">
+        <button class="btn btn-outline-secondary" id="nextRoundBtn" type="button" aria-label="Next round" disabled><i class="bi bi-caret-right-fill"></i></button>
       </span>
-      <ul class="dropdown-menu round-picker-menu" id="roundPickerMenu" data-bs-auto-close="true"></ul>
     </div>
     <div class="btn-group" role="group" aria-label="Playback">
-      <button class="btn btn-outline-secondary" id="playBtn" type="button" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Avvia replay" aria-label="Avvia replay"><i class="bi bi-play-fill"></i></button>
-      <button class="btn btn-primary" id="pauseBtn" type="button" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Pausa replay" aria-label="Pausa replay"><i class="bi bi-pause-fill"></i></button>
+      <button class="btn btn-outline-secondary" id="playBtn" type="button" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Start replay" aria-label="Start replay"><i class="bi bi-play-fill"></i></button>
+      <button class="btn btn-primary" id="pauseBtn" type="button" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Pause replay" aria-label="Pause replay"><i class="bi bi-pause-fill"></i></button>
     </div>
     <div class="btn-group" role="group" aria-label="Playback speed">
-      <button class="btn btn-primary replay-speed-btn active" type="button" data-speed="1" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Velocità ×1">x1</button>
-      <button class="btn btn-outline-secondary replay-speed-btn" type="button" data-speed="2" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Velocità ×2">x2</button>
-      <button class="btn btn-outline-secondary replay-speed-btn" type="button" data-speed="5" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Velocità ×5">x5</button>
+      <button class="btn btn-primary replay-speed-btn active" type="button" data-speed="1" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Speed ×1">x1</button>
+      <button class="btn btn-outline-secondary replay-speed-btn" type="button" data-speed="2" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Speed ×2">x2</button>
+      <button class="btn btn-outline-secondary replay-speed-btn" type="button" data-speed="5" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Speed ×5">x5</button>
     </div>
-    <input type="number" class="form-control replay-start-sec" id="replayStartSec" min="5" max="300" step="1" value="300" aria-label="Secondo iniziale del round" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Secondo iniziale del round (5–300)">
+    <input type="number" class="form-control replay-start-sec" id="replayStartSec" min="5" max="300" step="1" value="300" aria-label="Round start second" data-bs-toggle="tooltip" data-bs-placement="bottom" data-bs-title="Round start second (5–300)">
     <span class="divider d-none d-md-block" aria-hidden="true"></span>
     <div class="toolbar-timeline flex-grow-1 d-flex align-items-center gap-0 min-w-0">
       <div class="timeline-block flex-grow-1 min-w-0">
@@ -113,24 +122,26 @@
         </div>
         <div class="tab-pane fade show active h-100" id="accountsPane" role="tabpanel" aria-labelledby="accounts-tab" tabindex="0">
           <div class="accounts-stack h-100 d-flex flex-column">
-            <article class="app-panel account-manage-panel mb-2">
-              <div class="panel-head d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <span class="panel-title">Account management</span>
-                <span class="tiny text-muted-app" id="accountCountLabel">0 accounts</span>
-              </div>
-              <div class="p-3 d-flex flex-wrap align-items-center gap-2">
-                <label class="tiny text-muted-app mb-0" for="accountSelect">Account</label>
-                <select class="form-select form-select-sm account-select" id="accountSelect" aria-label="Select account"></select>
-                <button class="btn btn-sm btn-primary" id="newAccountBtn" type="button">NEW</button>
-                <button class="btn btn-sm btn-outline-secondary" id="renameAccountBtn" type="button" disabled>RENAME</button>
-                <button class="btn btn-sm btn-outline-secondary" id="editAccountBtn" type="button" disabled>EDIT</button>
-                <button class="btn btn-sm btn-outline-secondary" id="unloadRoundBtn" type="button" disabled>UNLOAD ROUND</button>
-              </div>
-            </article>
-            <article class="app-panel account-summary-panel mb-2" id="accountSummaryPanel">
-              <div class="panel-head"><span class="panel-title">Account summary</span></div>
-              <div class="p-3" id="accountSummaryBody">
-                <p class="text-muted-app mb-0 tiny">Crea o seleziona un account per vedere i dati.</p>
+            <article class="app-panel account-overview-panel mb-2">
+              <div class="p-3 account-overview-body">
+                <div class="account-toolbar d-flex flex-wrap align-items-center gap-2 mb-3">
+                  <label class="tiny text-muted-app mb-0" for="accountSelectBtn">Account</label>
+                  <div class="dropdown account-select-dropdown">
+                    <button class="form-select form-select-sm account-select text-start" type="button"
+                      id="accountSelectBtn" data-bs-toggle="dropdown" data-bs-auto-close="true"
+                      aria-expanded="false" aria-label="Select account">—</button>
+                    <ul class="dropdown-menu stats-bs-select-menu stats-bs-select-menu-sm" id="accountSelectMenu"></ul>
+                  </div>
+                  <input type="hidden" id="accountSelectValue" value="">
+                  <button class="btn btn-sm btn-primary" id="newAccountBtn" type="button">NEW</button>
+                  <button class="btn btn-sm btn-outline-secondary" id="editAccountBtn" type="button" disabled>EDIT</button>
+                  <button class="btn btn-sm btn-outline-danger" id="deleteAccountBtn" type="button" disabled>DELETE</button>
+                  <button class="btn btn-sm btn-outline-secondary" id="unloadRoundBtn" type="button" disabled>UNLOAD ROUND</button>
+                  <span class="tiny text-muted-app ms-auto" id="accountCountLabel">0 accounts</span>
+                </div>
+                <div id="accountSummaryBody">
+                  <p class="text-muted-app mb-0 tiny">Crea o seleziona un account per vedere i dati.</p>
+                </div>
               </div>
             </article>
             <article class="app-panel account-history-panel flex-grow-1 min-h-0 d-flex flex-column">
@@ -516,6 +527,22 @@
   </div>
 </div>
 
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="confirmModalTitle">Conferma</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="confirmModalBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button>
+        <button type="button" class="btn btn-danger" id="confirmModalOkBtn">Elimina</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="accountModal" tabindex="-1" aria-labelledby="accountModalTitle" aria-hidden="true">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -563,8 +590,14 @@
             <input class="form-control" id="strategyModalName" placeholder="Name of strategy" type="text">
           </div>
           <div class="col-md-2">
-            <label class="form-label" for="strategyModalVersion">Version</label>
-            <select class="form-select" id="strategyModalVersion" aria-label="Strategy version"></select>
+            <label class="form-label" for="strategyModalVersionBtn">Version</label>
+            <div class="dropdown strategy-modal-version-dropdown">
+              <button class="form-select form-select-sm strategy-modal-version-select text-start" type="button"
+                id="strategyModalVersionBtn" data-bs-toggle="dropdown" data-bs-auto-close="true"
+                aria-expanded="false" aria-label="Strategy version">1</button>
+              <ul class="dropdown-menu stats-bs-select-menu stats-bs-select-menu-sm" id="strategyModalVersionMenu"></ul>
+            </div>
+            <input type="hidden" id="strategyModalVersion" value="1">
           </div>
           <div class="col-md-6">
             <label class="form-label" for="strategyModalDescription">Description</label>

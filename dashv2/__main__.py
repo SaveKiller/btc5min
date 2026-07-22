@@ -7,6 +7,8 @@ import os
 import signal
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -15,6 +17,17 @@ from dashv2.bots.bot_process import run_bot_process
 from dashv2.config import load_config
 from dashv2.engine import run_engine_process
 from dashv2.server import run_server_process
+
+
+def _wait_http(url: str, timeout_sec: float) -> None:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        try:
+            urllib.request.urlopen(url, timeout=1.0)
+            return
+        except (urllib.error.URLError, TimeoutError, OSError):
+            time.sleep(0.25)
+    raise Exception(f"server not ready after {timeout_sec}s: {url}")
 
 
 def main() -> None:
@@ -34,6 +47,7 @@ def main() -> None:
     bot_proc = mp.Process(target=run_bot_process, args=(cfg,), name="dashv2-bot")
     engine_proc.start()
     server_proc.start()
+    _wait_http(f"http://{cfg['host']}:{cfg['port']}/", timeout_sec=30.0)
     bot_proc.start()
     url = f"http://{cfg['host']}:{cfg['port']}/"
     print(f"Dashboard V2: {url}")

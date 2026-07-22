@@ -27,7 +27,7 @@ le normali vincite/perdite che si annullano a vicenda.
 
 ### Dashboard
 
-E' inclusa una webapp dashboard che permetta di eseguire i replay dei round in una ui personalizzata e completa di tutte le info possibili, sia quelle fornite dall'api di polymarket sia info statistiche calcolate successivamente.
+Webapp **dashV2** per lavorare sui round salvati in `data/`: replay interattivo, simulazione ordini e account, strategie/bot, backtest su molti round, analisi con chat AI e sessioni agent — oltre alle metriche già nel `.txt` (vol, Rq/Rs, DWin, ecc.).
 
 
 ### Note round persi (obbligo agente)
@@ -42,9 +42,18 @@ Ogni volta che, per qualsiasi motivo (deploy, restart, bug, gap su disco, proced
 
 
 
-## Dashboard (replay round)
+## Dashboard (dashV2)
 
-Interfaccia web per **replay** dei round salvati in `data/`: timeline 1 Hz (anche x2/x5), chart candele BTC, ladder delta, quote Up/Down, indicatori dal `.txt` (vol, Rq/Rs, DWinA/B), simulazione ordini sul book `.bin` con fee CLOB, ledger account in `dashv2/history/accounts/`, processi **Engine** + **bot** sempre spawnati (`dashv2/engine/` con plugin `replay`|`live`, `dashv2/bots/`).
+Webapp locale sui round Polymarket **BTC 5m** in `data/` (coppia `.bin` + `.txt`). Parte dal **replay** del singolo round (timeline 1 Hz / x2 / x5, seek, chart candele, ladder delta, quote Up/Down, vol/Rq/Rs/DWin, anti-spoiler fino a sec 0) ma oggi copre anche:
+
+- **Trading simulato** sul book del tick (walk CLOB + `fee_rate` del `.bin`, non il `gain%` del `.txt`); ordini user/bot; open/close/cancel; settlement; history ed export CSV per **account** (`dashv2/history/accounts/`)
+- **Strategy** — catalogo versionato, rules + codegen Python (Cursor), attach al processo **bot** (sempre spawnato, inerte senza strategy caricata)
+- **Backtest** — batch headless su intervalli di giorni/round (`stats.backtest.*`, worker pool sul server)
+- **Backtest Analysis** — reduce dei risultati, moduli analyze, chat stats (`stats.analyze.*`, `stats.chat.*`)
+- **Round Chat** — agente su sessioni di esecuzione / round (`agent.*`, Cursor); contesto replay + ledger
+- **UI** — tab sinistre (Candles, Accounts, Strategy, Backtest, …); visibilità con `hide_tabs` / `all_tabs` in `dashv2/setup.json`
+
+Tre processi: **server** (Flask-SocketIO bridge) + **engine** (plugin `replay` | `live` stub) + **bot**; codice round condiviso in `src/`.
 
 **Avvio:** `dashv2.bat` oppure `python -m dashv2` dalla root repo → apre `http://127.0.0.1:8780/` (host/porta in `dashv2/setup.json`).
 
@@ -126,7 +135,26 @@ Fino al settlement del round in replay: il picker espone solo timestamp/label (`
 | `dashv2.bat`                                  | Smoke manuale: load round → play → seek → BUY → close/cancel o settlement → history/CSV |
 
 
+### Porta server di test (obbligo agente)
+
+Sulla macchina locale dell'utente la dashboard è spesso **già in esecuzione** in permanenza (`dashv2.bat` → porta da `dashv2/setup.json`, default **8780**). Se l'agente avvia un secondo `python -m dashv2` in terminale per smoke test o debug, **non usare quella porta**: va in conflitto con l'istanza dell'utente.
+
+- Test automatici senza UI: `python -m unittest discover -s dashv2/tests` (non serve aprire il server).
+- Verifiche sullo stack completo: preferire l'istanza già attiva dell'utente; per modifiche backend usare la sentinella `data/restart` (vedi sopra).
+- Se serve un'istanza **separata** avviata dall'agente: usare una **porta libera diversa** dalla default (es. **8781**), senza modificare `dashv2/setup.json` — variabile d'ambiente `DASHV2_PORT` letta da `dashv2/config.py` (es. PowerShell: `$env:DASHV2_PORT='8781'; python -m dashv2`).
+- Se l'agente apre una **tab browser in Cursor** per verificare l'UI, deve puntare all'URL dell'istanza di test (`http://127.0.0.1:<DASHV2_PORT>/`), **non** alla porta default **8780** dell'istanza permanente dell'utente.
+- **Non** lanciare `dashv2.bat` in background per test se non strettamente necessario.
+- In chat, indicare sempre l'URL con la porta usata (es. `http://127.0.0.1:8781/`).
+
 Per modifiche alla dashboard: partire da questa sezione e da [`docs/dashv2-architecture.md`](docs/dashv2-architecture.md); non cercare altre cartelle `dash*` nel repo.
+
+---
+
+
+
+## Pacchetto offline dashV2 (PC esterno)
+
+Se il task riguarda creare o aggiornare lo zip per installare la dashboard replay su un altro PC locale (senza collector, senza sync LAN da poly), **leggi e applica** [`docs/dashv2-offline-bundle.md`](docs/dashv2-offline-bundle.md) (packaging applicativo senza round in `data/`, `hide_tabs`, istruzioni destinatario).
 
 ---
 

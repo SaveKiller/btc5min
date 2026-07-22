@@ -30,5 +30,14 @@
             "label": "Grok 4.5 Medium",
             "params": { "effort": "medium", "fast": "false" }
         }
-    ]
+    ],
+    "all_tabs": [
+        "candles",
+        "accounts",
+        "strategy",
+        "backtest",
+        "backtest_analysis",
+        "round_chat"
+    ],
+    "hide_tabs": []
 }

@@ -148,7 +148,8 @@ class RoundRunner(threading.Thread):
             state.chainlink_done.set()
             enrich_gains(state.buffer, state.book_snapshots, state.fee_rate)
             ticks = state.buffer.to_numpy()
-            header = build_round_header(state.market_start_ts, state.market_end_ts, state.fee_rate, ticks, state)
+            header = build_round_header(
+                state.market_start_ts, state.market_end_ts, state.fee_rate, ticks, state, self.asset)
             bin_path = round_bin_path(self.out_dir, self.asset, self.interval, self.start_ts)
             write_round(str(bin_path), header, ticks, state.book_snapshots)
             write_round_txt(str(bin_path), warnings_from_header(header))

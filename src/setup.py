@@ -89,3 +89,19 @@ DELTA_WIN_TXT_COLUMNS = tuple(str(x) for x in _raw_dw_txt_cols)
 for _col in DELTA_WIN_TXT_COLUMNS:
     if _col not in ("a", "b"):
         raise Exception(f"delta_win_txt_columns invalid entry: {_col!r}")
+
+_raw_price_decimals = _req("price_decimals")
+if not isinstance(_raw_price_decimals, dict) or len(_raw_price_decimals) == 0:
+    raise Exception("price_decimals must be a non-empty object")
+PRICE_DECIMALS = {str(k): int(v) for k, v in _raw_price_decimals.items()}
+for _asset, _nd in PRICE_DECIMALS.items():
+    if _nd < 0:
+        raise Exception(f"price_decimals[{_asset}] must be >= 0")
+
+
+def price_decimals(asset: str) -> int:
+    return PRICE_DECIMALS[asset]
+
+
+def round_price(value: float, asset: str) -> float:
+    return round(float(value), price_decimals(asset))

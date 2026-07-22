@@ -1,0 +1,9 @@
+# dashV2 replay offline (no collector)
+flask>=3.0
+flask-socketio>=5.3
+python-socketio>=5.11
+websocket-client>=1.7
+eventlet>=0.35
+numpy>=1.26
+python-dotenv>=1.0
+cursor-sdk>=0.1.8

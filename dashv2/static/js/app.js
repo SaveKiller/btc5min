@@ -8,7 +8,7 @@ import {
     renderStatsMode, renderStatsDays, renderStatsDayCalendar, renderStatsStrategySelect, renderStatsStrategyVersionSelect,
     renderStatsSimPeriodSelect, renderStatsSimStrategySelect, renderStatsSimulationSelect, renderStatsAnalyzeSimSelect, renderStatsJobUi,
     renderStatsBacktest, renderStatsAnalyze, renderStatsChat, renderStatsHourFilter, statsSimMonthList, statsSimStrategyList,
-    ALL_STATS_HOURS,
+    ALL_STATS_HOURS, setStartupLoading,
 } from "./render.js";
 
 const REPLAY_SPEED_KEY = "dashv2_replay_speed";
@@ -19,10 +19,14 @@ const REPLAY_START_SEC_MAX = 300;
 const LEFT_TAB_KEY = "dashv2_left_tab";
 const STATS_HOUR_FILTER_KEY = "dashv2_stats_hour_filter";
 const STATS_HOUR_FILTER_24H_KEY = "dashv2_stats_hour_filter_24h";
-const LEFT_TAB_IDS = [
-    "candles-tab", "accounts-tab", "bot-tab",
-    "agent-backtest-tab", "agent-analyze-tab", "agent-session-chat-tab",
-];
+const UI_TAB_MAP = {
+    candles: { tabId: "candles-tab", paneId: "candlesPane" },
+    accounts: { tabId: "accounts-tab", paneId: "accountsPane" },
+    strategy: { tabId: "bot-tab", paneId: "botPane" },
+    backtest: { tabId: "agent-backtest-tab", paneId: "agentBacktestPane" },
+    backtest_analysis: { tabId: "agent-analyze-tab", paneId: "agentAnalyzePane" },
+    round_chat: { tabId: "agent-session-chat-tab", paneId: "agentSessionChatPane" },
+};
 const DEFAULT_LEFT_TAB = "accounts-tab";
 const AGENT_HISTORY_POLL_MS = 5000;
 
@@ -53,12 +57,15 @@ const state = {
     statsHourFilter24h: loadStoredStatsHourFilter24h(),
     statsDrill: { level: "hours", hour: null, slot: null },
     statsChatMessages: [], statsChatBusy: false,
+    uiTabs: Object.keys(UI_TAB_MAP),
 };
 
 const socket = io({ transports: ["websocket", "polling"] });
 let accountModal = null;
 let strategyModal = null;
 let noticeModal = null;
+let confirmModal = null;
+let confirmPending = null;
 let statsRulesModal = null;
 let statsJobTimerId = null;
 let agentHistoryPollTimer = null;
@@ -106,14 +113,36 @@ function showNotice(title, body) {
     noticeModal.show();
 }
 
+function showConfirm(title, body, { okLabel = "Ok", okClass = "btn-danger" } = {}) {
+    return new Promise((resolve) => {
+        confirmPending = { resolve };
+        document.getElementById("confirmModalTitle").textContent = title;
+        document.getElementById("confirmModalBody").textContent = body;
+        const okBtn = document.getElementById("confirmModalOkBtn");
+        okBtn.textContent = okLabel;
+        okBtn.className = `btn ${okClass}`;
+        confirmModal.show();
+    });
+}
+
+function formatUiMessage(err) {
+    if (err == null) return "";
+    if (typeof err === "string") return err;
+    return err.message || String(err);
+}
+
+function showAlert(body, title = "Avviso") {
+    showNotice(title, formatUiMessage(body));
+}
+
 
 function handleUiError(err) {
-    const msg = err?.message || String(err);
+    const msg = formatUiMessage(err);
     if (msg === "no round loaded") {
         showNotice("Round non caricato", "Carica prima un round dal picker, poi potrai avviare il replay.");
         return;
     }
-    alert(msg);
+    showAlert(msg, "Errore");
 }
 
 
@@ -208,26 +237,68 @@ function syncStartSecForRound() {
 }
 
 
+function enabledLeftTabIds() {
+    return state.uiTabs.map((key) => UI_TAB_MAP[key].tabId);
+}
+
+
+function resolveLeftTab(tabId) {
+    const ids = enabledLeftTabIds();
+    if (ids.includes(tabId)) return tabId;
+    if (ids.includes(DEFAULT_LEFT_TAB)) return DEFAULT_LEFT_TAB;
+    return ids[0];
+}
+
+
+function applyUiTabs(tabKeys) {
+    state.uiTabs = tabKeys;
+    const enabled = new Set(tabKeys);
+    for (const [key, { tabId, paneId }] of Object.entries(UI_TAB_MAP)) {
+        const show = enabled.has(key);
+        document.getElementById(tabId)?.closest(".nav-item")?.classList.toggle("d-none", !show);
+        document.getElementById(paneId)?.classList.toggle("d-none", !show);
+    }
+}
+
+
 function loadStoredLeftTab() {
     const tabId = localStorage.getItem(LEFT_TAB_KEY);
-    if (tabId === "stats-tab" || tabId === "agent-tab") return "agent-backtest-tab";
-    return LEFT_TAB_IDS.includes(tabId) ? tabId : DEFAULT_LEFT_TAB;
+    if (tabId === "stats-tab" || tabId === "agent-tab") return resolveLeftTab("agent-backtest-tab");
+    return resolveLeftTab(tabId || DEFAULT_LEFT_TAB);
 }
 
 
 function persistLeftTab(tabId) {
-    if (!LEFT_TAB_IDS.includes(tabId)) return;
+    if (!enabledLeftTabIds().includes(tabId)) return;
     localStorage.setItem(LEFT_TAB_KEY, tabId);
 }
 
 
 function initToolbarTooltips() {
-    document.querySelectorAll(".toolbar [data-bs-toggle='tooltip']").forEach((el) => {
-        bootstrap.Tooltip.getOrCreateInstance(el, {
-            container: "body",
-            delay: { show: 350, hide: 80 },
+    const opts = {
+        container: "body",
+        delay: { show: 1000, hide: 80 },
+        trigger: "hover",
+    };
+    const instances = [];
+
+    function wire(el, extra = {}) {
+        const tip = bootstrap.Tooltip.getOrCreateInstance(el, { ...opts, ...extra });
+        instances.push(tip);
+        el.addEventListener("show.bs.tooltip", () => {
+            instances.forEach((t) => { if (t !== tip) t.hide(); });
         });
-    });
+        el.addEventListener("mouseleave", () => tip.hide());
+        return tip;
+    }
+
+    document.querySelectorAll(".toolbar [data-bs-toggle='tooltip']").forEach((el) => wire(el));
+
+    const loadBtn = document.getElementById("loadRoundBtn");
+    if (loadBtn) {
+        const loadTip = wire(loadBtn, { placement: "left", title: "Load round" });
+        loadBtn.addEventListener("show.bs.dropdown", () => loadTip.hide());
+    }
 }
 
 
@@ -270,9 +341,13 @@ function applyReplaySpeed(speed, { persist = true, notify = true } = {}) {
 
 socket.on("connect", () => {
     setDisconnectBanner(false);
+    if (!state.roundIndexReady) setStartupLoading(true);
     renderReplaySpeedButtons(state.replaySpeed);
     requestSessionSync()
-        .then(() => applyReplaySpeed(state.replaySpeed, { persist: false }))
+        .then(() => {
+            if (state.roundIndexReady) setStartupLoading(false);
+            return applyReplaySpeed(state.replaySpeed, { persist: false });
+        })
         .catch(console.error);
     // Riallinea chat/busy dal server (risposta può essere su disco anche se l'evento era perso).
     if (state.activeAccountId) {
@@ -283,11 +358,29 @@ socket.on("connect", () => {
     loadStatsAnalyzes();
 });
 
-socket.on("disconnect", () => setDisconnectBanner(true));
-socket.on("connect_error", () => setDisconnectBanner(true));
+socket.on("disconnect", () => {
+    setDisconnectBanner(true);
+    setStartupLoading(false);
+    state.roundIndexReady = false;
+});
+socket.on("connect_error", () => {
+    setDisconnectBanner(true);
+    setStartupLoading(false);
+});
 
 function loadRound(market_start_ts) {
+    hideRoundPicker();
     socket.emit("round.load", { market_start_ts, start_sec: syncStartSecForRound() });
+}
+
+function hideRoundPicker() {
+    const btn = document.getElementById("loadRoundBtn");
+    const menu = document.getElementById("roundPickerMenu");
+    if (!btn || !menu) return;
+    bootstrap.Dropdown.getOrCreateInstance(btn).hide();
+    menu.classList.remove("show");
+    btn.classList.remove("show");
+    btn.setAttribute("aria-expanded", "false");
 }
 
 function updateRoundNavButtons() {
@@ -365,7 +458,7 @@ function openRoundHour(dayUtc, hourUtc, rounds) {
     const filtered = rounds
         .filter((r) => roundHourUtc(r.market_start_ts) === hourUtc)
         .sort((a, b) => a.market_start_ts - b.market_start_ts);
-    renderRoundPickerRounds(dayUtc, hourUtc, filtered, () => showRoundHours(dayUtc, rounds), loadRound);
+    renderRoundPickerRounds(dayUtc, hourUtc, filtered, () => showRoundHours(dayUtc, rounds));
 }
 
 function openRoundDay(dayUtc) {
@@ -387,7 +480,7 @@ function openRoundDay(dayUtc) {
     emitAck("rounds.list", { day_utc: dayUtc }).then((res) => {
         state.loadedRoundDays[dayUtc] = res.rounds;
         showRoundHours(dayUtc, res.rounds);
-    }).catch((e) => alert(e.message));
+    }).catch(handleUiError);
 }
 
 function applyAccountsPayload(payload) {
@@ -520,8 +613,8 @@ function sendAgentMessage() {
     const input = document.getElementById("agentChatInput");
     const text = input.value.trim();
     if (!text) return;
-    if (!state.activeAccountId) return alert("Seleziona un account");
-    if (!state.agentSessionId) return alert("Seleziona una sessione");
+    if (!state.activeAccountId) return showAlert("Seleziona un account");
+    if (!state.agentSessionId) return showAlert("Seleziona una sessione");
     input.value = "";
     state.agentMessages = [...state.agentMessages, { role: "user", content: text }];
     setAgentBusyUi(true);
@@ -532,7 +625,7 @@ function sendAgentMessage() {
         session_id: state.agentSessionId,
         agent_session_id: state.agentSessionId,
     }).catch((err) => {
-        alert(err);
+        showAlert(err, "Errore");
         loadAgentHistory().finally(() => finishAgentTurn());
     });
 }
@@ -571,11 +664,16 @@ function ensureStatsDayDefaults() {
 }
 
 
-function requestSessionSync() {
+function requestSessionSync(attempt = 0) {
     return emitAck("session.sync").then(() => {
         if (state.roundIndexReady) return;
         return new Promise((resolve) => setTimeout(resolve, 1500))
-            .then(() => emitAck("session.sync"));
+            .then(() => requestSessionSync(attempt + 1));
+    }).catch((err) => {
+        if (attempt >= 4) throw err;
+        const delay = 250 * (attempt + 1);
+        return new Promise((resolve) => setTimeout(resolve, delay))
+            .then(() => requestSessionSync(attempt + 1));
     });
 }
 
@@ -763,7 +861,7 @@ function setStatsChatBusy(busy) {
 function sendStatsMessage() {
     if (state.statsChatBusy) return;
     const simulation_ids = state.statsAnalyzeSimulationIds;
-    if (!simulation_ids.length) return alert("Seleziona almeno una Simulation");
+    if (!simulation_ids.length) return showAlert("Seleziona almeno una Simulation");
     const input = document.getElementById("statsChatInput");
     const text = input.value.trim();
     if (!text) return;
@@ -771,14 +869,14 @@ function sendStatsMessage() {
     state.statsChatMessages = [...state.statsChatMessages, { role: "user", content: text }];
     setStatsChatBusy(true);
     emitAck("stats.chat.send", { text, simulation_ids }).catch((err) => {
-        alert(err);
+        showAlert(err, "Errore");
         loadStatsChatHistory().finally(() => setStatsChatBusy(false));
     });
 }
 
 
 function clearStatsChat() {
-    if (state.statsChatBusy) return alert("Chat busy");
+    if (state.statsChatBusy) return showAlert("Chat occupata");
     emitAck("stats.chat.clear").then(() => {
         state.statsChatMessages = [];
         renderStatsChat([], { thinking: false });
@@ -835,9 +933,9 @@ function startStatsBacktest() {
     const strategy_id = state.statsStrategyId;
     const s = state.strategies.find((x) => x.id === strategy_id);
     const strategy_version = state.statsStrategyVersion ?? s?.version ?? null;
-    if (!strategy_id) return alert("Seleziona una strategy");
-    if (!strategy_version) return alert("Seleziona una versione");
-    if (!day_from || !day_to) return alert("Imposta il range giorni");
+    if (!strategy_id) return showAlert("Seleziona una strategy");
+    if (!strategy_version) return showAlert("Seleziona una versione");
+    if (!day_from || !day_to) return showAlert("Imposta il range giorni");
     state.statsStrategyId = strategy_id;
     state.statsStrategyVersion = strategy_version;
     state.statsJobRunning = true;
@@ -855,7 +953,7 @@ function startStatsBacktest() {
         state.statsJobRunning = false;
         resetStatsJobRunMeta();
         renderStatsJobUi(state);
-        alert(err);
+        showAlert(err, "Errore");
     });
 }
 
@@ -868,7 +966,7 @@ function cancelStatsJob() {
 function applyStatsRules(rules) {
     if (!rules) return;
     const simulation_ids = state.statsAnalyzeSimulationIds;
-    if (!simulation_ids.length) return alert("Seleziona almeno una Simulation");
+    if (!simulation_ids.length) return showAlert("Seleziona almeno una Simulation");
     const payload = { rules, simulation_ids };
     if (state.statsAnalyzeId) payload.analyze_id = state.statsAnalyzeId;
     else payload.name = `auto-${Date.now().toString(36).slice(-6)}`;
@@ -877,7 +975,7 @@ function applyStatsRules(rules) {
     document.getElementById("statsChatStatusLabel").classList.remove("d-none");
     emitAck("stats.rules.apply", payload).catch((err) => {
         setStatsChatBusy(false);
-        alert(err);
+        showAlert(err, "Errore");
     });
 }
 
@@ -888,10 +986,8 @@ function openAccountModal(mode, account = null) {
     document.getElementById("accountModalName").value = account?.name || "";
     document.getElementById("accountModalBalance").value = account ? String(account.initial_balance_usd) : "10000";
     document.getElementById("accountModalNote").value = account?.note || "";
-    const title = mode === "create" ? "New account" : (mode === "rename" ? "Rename account" : "Edit account");
+    const title = mode === "create" ? "New account" : "Edit account";
     document.getElementById("accountModalTitle").textContent = title;
-    document.getElementById("accountModalBalance").closest(".mb-3").style.display = mode === "rename" ? "none" : "";
-    document.getElementById("accountModalNote").closest(".mb-0").style.display = mode === "rename" ? "none" : "";
     accountModal.show();
 }
 
@@ -901,12 +997,10 @@ function saveAccountModal() {
     const balance = Number(document.getElementById("accountModalBalance").value);
     const note = document.getElementById("accountModalNote").value;
     const accountId = document.getElementById("accountModalId").value;
-    if (!name) return alert("Nome obbligatorio");
+    if (!name) return showAlert("Nome obbligatorio");
     let req;
     if (mode === "create") {
         req = emitAck("account.create", { name, initial_balance_usd: balance, note });
-    } else if (mode === "rename") {
-        req = emitAck("account.rename", { account_id: accountId, name });
     } else {
         req = emitAck("account.update", { account_id: accountId, name, initial_balance_usd: balance, note });
     }
@@ -919,20 +1013,26 @@ function showStrategyModalTab(tabId) {
 }
 
 function fillStrategyModalVersions(strategy, selectedVersion) {
-    const sel = document.getElementById("strategyModalVersion");
+    const btn = document.getElementById("strategyModalVersionBtn");
+    const menu = document.getElementById("strategyModalVersionMenu");
+    const hidden = document.getElementById("strategyModalVersion");
     if (!strategy) {
-        sel.innerHTML = `<option value="1">1</option>`;
-        sel.value = "1";
-        sel.disabled = true;
+        btn.textContent = "1";
+        hidden.value = "1";
+        btn.disabled = true;
+        menu.innerHTML = "";
         return;
     }
     const versions = strategy.versions || [{ version: strategy.version || 1 }];
-    sel.innerHTML = versions.map((v) =>
-        `<option value="${v.version}">${v.version}</option>`).join("");
     const tip = strategy.version || 1;
     const pick = selectedVersion != null ? selectedVersion : tip;
-    sel.value = String(pick);
-    sel.disabled = false;
+    btn.textContent = String(pick);
+    hidden.value = String(pick);
+    btn.disabled = false;
+    menu.innerHTML = versions.map((v) => {
+        const act = v.version === pick ? " active" : "";
+        return `<li><button type="button" class="dropdown-item stats-bs-select-item${act}" data-value="${v.version}">${v.version}</button></li>`;
+    }).join("");
 }
 
 function applyStrategyVersionBase(strategy, version) {
@@ -1024,11 +1124,11 @@ function saveStrategyModal() {
     const rules = document.getElementById("strategyModalRules").value;
     const strategyId = document.getElementById("strategyModalId").value;
     const baseVersion = Number(document.getElementById("strategyModalVersion").value) || 1;
-    if (!name) return alert("Name required");
+    if (!name) return showAlert("Name required");
     const isDet = state.strategyType === "deterministic" || (
         mode === "edit" && state.strategies.find((s) => s.id === strategyId)?.type === "deterministic"
     );
-    if (isDet && !rules.trim()) return alert("Rules required for deterministic strategy");
+    if (isDet && !rules.trim()) return showAlert("Rules required for deterministic strategy");
     const original = document.getElementById("strategyModalRules").dataset.original || "";
     const rulesChanged = isDet && (mode === "create" || rules !== original);
     let req;
@@ -1064,12 +1164,12 @@ function saveStrategyModal() {
         strategyModal.hide();
     }).catch((err) => {
         setStrategyModalBusy(false);
-        alert(err);
+        showAlert(err, "Errore");
     });
 }
 
 function selectLeftTab(tabId) {
-    const el = document.getElementById(tabId);
+    const el = document.getElementById(resolveLeftTab(tabId));
     if (el) bootstrap.Tab.getOrCreateInstance(el).show();
 }
 
@@ -1078,23 +1178,30 @@ socket.on("bootstrap", (payload) => {
     state.roundDays = payload.round_days || [];
     state.roundNav = payload.round_nav || [];
     state.roundIndexReady = true;
-    state.accounts = payload.accounts || [];
-    state.activeAccountId = payload.active_account_id ?? null;
-    state.activeAccount = state.accounts.find((a) => a.id === state.activeAccountId) || null;
-    state.strategies = payload.strategies || [];
-    applyActiveStrategies(payload);
-    state.botAttachAllowed = payload.bot_attach_allowed !== false;
-    state.botActive = payload.bot_active === true;
-    renderEnginePlugin(payload.engine_plugin);
-    showRoundDays();
-    updateRoundNavButtons();
-    applyOrderSizes({ size_up_usd: payload.default_order_size_usd, size_down_usd: payload.default_order_size_usd });
-    renderAccounts(state);
-    renderAgentContext(state);
-    loadAgentExecutions();
-    ensureStatsDayDefaults();
-    renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsStrategyVersion, state.statsJobRunning);
-    refreshStatsPanels();
+    setStartupLoading(false);
+    try {
+        if (payload.ui_tabs) applyUiTabs(payload.ui_tabs);
+        state.accounts = payload.accounts || [];
+        state.activeAccountId = payload.active_account_id ?? null;
+        state.activeAccount = state.accounts.find((a) => a.id === state.activeAccountId) || null;
+        state.strategies = payload.strategies || [];
+        applyActiveStrategies(payload);
+        state.botAttachAllowed = payload.bot_attach_allowed !== false;
+        state.botActive = payload.bot_active === true;
+        renderEnginePlugin(payload.engine_plugin);
+        showRoundDays();
+        updateRoundNavButtons();
+        applyOrderSizes({ size_up_usd: payload.default_order_size_usd, size_down_usd: payload.default_order_size_usd });
+        renderAccounts(state);
+        renderAgentContext(state);
+        loadAgentExecutions();
+        ensureStatsDayDefaults();
+        renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsStrategyVersion, state.statsJobRunning);
+        refreshStatsPanels();
+        selectLeftTab(loadStoredLeftTab());
+    } catch (err) {
+        console.error("bootstrap render failed", err);
+    }
 });
 
 socket.on("session", (payload) => {
@@ -1257,7 +1364,7 @@ socket.on("stats.job.error", (payload) => {
         resetStatsJobRunMeta();
         renderStatsJobUi(state);
     }
-    alert(payload.message || "stats error");
+    showAlert(payload.message || "stats error", "Errore");
 });
 
 socket.on("stats.job.cancelled", () => {
@@ -1360,7 +1467,7 @@ socket.on("agent.chat.status", (payload) => {
 });
 
 socket.on("agent.chat.error", (payload) => {
-    alert(payload.message || "agent error");
+    showAlert(payload.message || "agent error", "Errore");
     loadAgentHistory().finally(() => finishAgentTurn());
 });
 
@@ -1369,6 +1476,11 @@ socket.on("agent.session", (payload) => {
 });
 
 
+document.getElementById("roundPickerMenu").addEventListener("click", (e) => {
+    const roundBtn = e.target.closest("button[data-ts]");
+    if (!roundBtn || roundBtn.classList.contains("disabled")) return;
+    loadRound(Number(roundBtn.dataset.ts));
+});
 document.getElementById("playBtn").addEventListener("click", () => {
     emitAck("replay.play", { start_sec: syncStartSecForRound() }).catch(handleUiError);
 });
@@ -1470,8 +1582,10 @@ document.getElementById("historyTableBody").addEventListener("click", (e) => {
     refreshHistoryViews();
 });
 
-document.getElementById("accountSelect").addEventListener("change", (e) => {
-    const accountId = e.target.value || null;
+document.getElementById("accountSelectMenu").addEventListener("click", (e) => {
+    const item = e.target.closest("[data-value]");
+    if (!item) return;
+    const accountId = item.dataset.value || null;
     emitAck("account.select", { account_id: accountId }).catch(handleUiError);
 });
 
@@ -1482,7 +1596,7 @@ document.getElementById("botActiveSwitch").addEventListener("change", (e) => {
         renderBotPanel(state);
     }).catch((err) => {
         e.target.checked = state.botActive;
-        alert(err);
+        handleUiError(err);
     });
 });
 
@@ -1585,13 +1699,20 @@ function deactivateStrategy(id) {
 }
 
 document.getElementById("newAccountBtn").addEventListener("click", () => openAccountModal("create"));
-document.getElementById("renameAccountBtn").addEventListener("click", () => {
-    if (!state.activeAccount) return;
-    openAccountModal("rename", state.activeAccount);
-});
 document.getElementById("editAccountBtn").addEventListener("click", () => {
     if (!state.activeAccount) return;
     openAccountModal("edit", state.activeAccount);
+});
+document.getElementById("deleteAccountBtn").addEventListener("click", async () => {
+    if (!state.activeAccount) return;
+    const name = state.activeAccount.name;
+    const ok = await showConfirm(
+        "Elimina account",
+        `Eliminare definitivamente l'account "${name}" (history e sessioni)?`,
+        { okLabel: "Elimina", okClass: "btn-danger" },
+    );
+    if (!ok) return;
+    emitAck("account.delete", { account_id: state.activeAccount.id }).catch(handleUiError);
 });
 document.getElementById("unloadRoundBtn").addEventListener("click", () => {
     emitAck("round.unload", {}).catch(handleUiError);
@@ -1638,12 +1759,17 @@ document.getElementById("agentContextBody").addEventListener("click", (e) => {
             .then(applyAgentFocus).catch(handleUiError);
     }
 });
-document.getElementById("agentContextBody").addEventListener("click", (e) => {
+document.getElementById("agentContextBody").addEventListener("click", async (e) => {
     const btn = e.target.closest("#agentDeleteSessionBtn");
     if (!btn || btn.disabled) return;
-    if (!state.agentSessionId) return alert("Seleziona una sessione");
+    if (!state.agentSessionId) return showAlert("Seleziona una sessione");
     const sid = state.agentSessionId;
-    if (!confirm(`Delete session ${sid} permanently (chat, orders, exec log)?`)) return;
+    const ok = await showConfirm(
+        "Elimina sessione",
+        `Eliminare definitivamente la sessione ${sid} (chat, ordini, exec log)?`,
+        { okLabel: "Elimina", okClass: "btn-danger" },
+    );
+    if (!ok) return;
     emitAck("agent.session.delete", { session_id: sid }).then((res) => {
         applyAgentFocus(res);
         state.agentMessages = [];
@@ -1664,7 +1790,7 @@ document.getElementById("agentApplyRulesBtn").addEventListener("click", () => {
         renderAgentProposed(null, null);
     }).catch((err) => {
         setAgentStatus("");
-        alert(err);
+        showAlert(err, "Errore");
     });
 });
 
@@ -1748,11 +1874,15 @@ document.getElementById("statsStrategyVersionMenu").addEventListener("click", (e
     renderStatsStrategyVersionSelect(
         state.strategies, state.statsStrategyId, state.statsStrategyVersion, state.statsJobRunning);
 });
-document.getElementById("strategyModalVersion").addEventListener("change", (e) => {
+document.getElementById("strategyModalVersionMenu").addEventListener("click", (e) => {
+    const item = e.target.closest("[data-value]");
+    if (!item) return;
+    const ver = Number(item.dataset.value);
     const sid = document.getElementById("strategyModalId").value;
     const strategy = state.strategies.find((s) => s.id === sid);
     if (!strategy) return;
-    applyStrategyVersionBase(strategy, Number(e.target.value));
+    fillStrategyModalVersions(strategy, ver);
+    applyStrategyVersionBase(strategy, ver);
     showStrategyModalTab("strategyRulesTab");
 });
 document.getElementById("statsHourFilterBtn").addEventListener("show.bs.dropdown", (e) => {
@@ -1896,6 +2026,19 @@ initChart(document.getElementById("chartContainer"));
 layoutReplayScale();
 window.addEventListener("resize", () => { layoutReplayScale(); relayoutChart(); });
 noticeModal = new bootstrap.Modal(document.getElementById("noticeModal"));
+confirmModal = new bootstrap.Modal(document.getElementById("confirmModal"));
+document.getElementById("confirmModalOkBtn").addEventListener("click", () => {
+    const pending = confirmPending;
+    confirmPending = null;
+    confirmModal.hide();
+    if (pending) pending.resolve(true);
+});
+document.getElementById("confirmModal").addEventListener("hidden.bs.modal", () => {
+    if (!confirmPending) return;
+    const pending = confirmPending;
+    confirmPending = null;
+    pending.resolve(false);
+});
 accountModal = new bootstrap.Modal(document.getElementById("accountModal"));
 statsRulesModal = new bootstrap.Modal(document.getElementById("statsRulesModal"));
 strategyModal = new bootstrap.Modal(document.getElementById("strategyModal"), {
@@ -1904,7 +2047,6 @@ strategyModal = new bootstrap.Modal(document.getElementById("strategyModal"), {
 });
 renderOrders({ open: [] });
 refreshStatsPanels();
-selectLeftTab(loadStoredLeftTab());
 
 document.getElementById("openOrdersList").addEventListener("click", (e) => {
     const cancelBtn = e.target.closest(".cancel-order-btn");

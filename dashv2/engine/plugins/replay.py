@@ -11,11 +11,11 @@ from pathlib import Path
 from dashv2 import ipc
 from dashv2.execution_log import append_execution
 from dashv2.history import (
-    account_summary, accounts_dir, append_settled_orders, compute_stats, create_account,
+    account_summary, accounts_dir, append_settled_orders, compute_stats, create_account, delete_account,
     list_accounts, load_account, load_active_account_id, order_rows_for_run, order_rows_from_ledger,
     rename_account, save_active_account_id, update_account,
 )
-from dashv2.sessions import create_session
+from dashv2.sessions import create_session, delete_sessions_for_account
 from dashv2.orders import OrderEngine
 from dashv2.rounds import LoadedRound, RoundRepository
 from dashv2.strategies import (
@@ -153,6 +153,7 @@ class ReplayEngine:
             "active_strategy_ids": list(self.active_strategy_ids),
             "active_strategies": self._active_entries(),
             "bot_attach_allowed": self._bot_attach_allowed(), "bot_active": self.bot_active,
+            "ui_tabs": list(self.cfg["ui_tabs"]),
         }
 
     def _handle_cmd(self, msg: dict) -> None:
@@ -182,6 +183,7 @@ class ReplayEngine:
             elif cmd == "account.create": result = self._cmd_account_create(payload)
             elif cmd == "account.rename": result = self._cmd_account_rename(payload)
             elif cmd == "account.update": result = self._cmd_account_update(payload)
+            elif cmd == "account.delete": result = self._cmd_account_delete(payload)
             elif cmd == "bot.list": result = self._cmd_bot_list()
             elif cmd == "bot.set_active": result = self._cmd_bot_set_active(payload)
             elif cmd == "strategy.list": result = self._cmd_strategy_list(payload)
@@ -201,7 +203,7 @@ class ReplayEngine:
 
     def _cmd_round_load(self, payload: dict) -> tuple[dict, callable]:
         if self.active_account_id is None:
-            raise Exception("no active account")
+            raise Exception("No active account, select or create an account.")
         mts = int(payload["market_start_ts"])
         start_sec = self._clamp_start_sec(int(payload["start_sec"]))
         self.loaded = self.repo.load(mts)
@@ -261,7 +263,7 @@ class ReplayEngine:
         if not self.loaded:
             raise Exception("no round loaded")
         if self.active_account_id is None:
-            raise Exception("no active account")
+            raise Exception("No active account, select or create an account.")
         self.sec = sec
         self.playing = playing
         self.round_ended = False
@@ -490,7 +492,7 @@ class ReplayEngine:
         if not self.session_id or not self.loaded:
             return
         if self.active_account_id is None:
-            raise Exception("no active account")
+            raise Exception("No active account, select or create an account.")
         create_session(
             Path(self.cfg["history_dir"]),
             self.session_id,
@@ -561,6 +563,26 @@ class ReplayEngine:
         self._emit_accounts()
         self._emit_history()
         return {"ok": True, "account": account_summary(data)}
+
+    def _cmd_account_delete(self, payload: dict) -> dict:
+        if self.loaded:
+            raise Exception("cannot delete account while a session is loaded")
+        if self.orders.open_orders:
+            raise Exception("cannot delete account with open orders")
+        account_id = payload["account_id"]
+        load_account(self.accounts_root, account_id)
+        delete_sessions_for_account(Path(self.cfg["history_dir"]), account_id)
+        delete_account(self.accounts_root, account_id)
+        next_active = self.active_account_id
+        if self.active_account_id == account_id:
+            remaining = list_accounts(self.accounts_root)
+            next_active = remaining[0]["id"] if remaining else None
+            self.active_account_id = next_active
+            save_active_account_id(self.accounts_root, next_active)
+        self._emit_accounts()
+        self._emit_history()
+        self._emit_session()
+        return {"ok": True, "deleted_account_id": account_id, "active_account_id": next_active}
 
     def _bot_attach_allowed(self) -> bool:
         return not self.playing

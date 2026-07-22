@@ -134,6 +134,12 @@ def update_account(accounts_root: Path, account_id: str, name: str, initial_bala
     return data
 
 
+def delete_account(accounts_root: Path, account_id: str) -> dict:
+    data = load_account(accounts_root, account_id)
+    _account_path(accounts_root, account_id).unlink()
+    return data
+
+
 def remove_session_orders(accounts_root: Path, account_id: str, session_id: str) -> dict:
     """Rimuove dal ledger tutti gli ordini della session_id."""
     data = load_account(accounts_root, account_id)

@@ -6,10 +6,11 @@ import unittest
 from pathlib import Path
 
 from dashv2.history import (
-    account_summary, append_settled_orders, compute_stats, create_account, list_accounts,
+    account_summary, append_settled_orders, compute_stats, create_account, delete_account, list_accounts,
     load_account, order_rows_for_run, order_rows_from_ledger, rename_account, update_account,
     visible_orders,
 )
+from dashv2.sessions import create_session, delete_sessions_for_account
 from dashv2.orders import OrderEngine
 from src.book import BookSnapshot
 
@@ -134,6 +135,23 @@ class TestSeekAndHistory(unittest.TestCase):
             self.assertEqual(updated["note"], "new")
             summaries = list_accounts(root)
             self.assertEqual(summaries[0]["name"], "B2")
+
+    def test_delete_account(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            history = root / "history"
+            history.mkdir()
+            accounts = history / "accounts"
+            accounts.mkdir(parents=True)
+            a1 = create_account(accounts, "Keep", 100.0, "")
+            a2 = create_account(accounts, "Gone", 200.0, "")
+            create_session(history, "sess1", a2["id"], 12345, "2026-07-15T13:35:00Z", [])
+            delete_sessions_for_account(history, a2["id"])
+            delete_account(accounts, a2["id"])
+            self.assertEqual(len(list_accounts(accounts)), 1)
+            self.assertEqual(list_accounts(accounts)[0]["name"], "Keep")
+            with self.assertRaises(Exception):
+                load_account(accounts, a2["id"])
 
     def test_order_rows_quotes_and_payout(self):
         orders = [

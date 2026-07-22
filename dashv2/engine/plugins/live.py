@@ -44,6 +44,7 @@ class LiveEngine:
             "engine_plugin": self.engine_plugin, "account_backend": self.account_backend,
             "bots": [], "selected_bot_id": None, "bot_attach_allowed": False, "bot_active": False,
             "strategies": [], "active_strategy_ids": [], "active_strategies": [],
+            "ui_tabs": list(self.cfg["ui_tabs"]),
         }
 
     def _handle_cmd(self, msg: dict) -> None:

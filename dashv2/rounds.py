@@ -9,6 +9,7 @@ from pathlib import Path
 
 from dashv2.txt_rows import parse_txt_data_rows, txt_path_for_bin_path
 from src.binary_format import OUTCOME_NAMES, read_round
+from src.round_index import load_or_build_index
 from src.book import BookSnapshot
 from src.clob_api import majority_side
 from src.risk import compute_side_risks
@@ -83,21 +84,16 @@ class RoundRepository:
     def _scan(self) -> None:
         self._bins.clear()
         self._ohlc_cache.clear()
+        raw = load_or_build_index(self.data_dir)
         entries: list[RoundIndexEntry] = []
-        for bin_path in sorted(self.data_dir.glob("**/bin/btc5m_*.bin"), key=lambda p: p.stat().st_mtime, reverse=True):
-            parts = bin_path.stem.split("_")
-            if len(parts) < 3:
-                continue
-            market_start_ts = int(parts[1])
-            if market_start_ts in self._bins:
-                continue
+        for market_start_ts in sorted(raw):
+            entry = raw[market_start_ts]
+            bin_path = self.data_dir / entry["bin"]
             self._bins[market_start_ts] = bin_path
-            txt_path = txt_path_for_bin_path(bin_path)
-            valid = txt_path.is_file()
-            reason = None if valid else "missing txt pair"
             entries.append(RoundIndexEntry(
                 market_start_ts=market_start_ts, label=_utc_label(market_start_ts),
-                day_utc=_day_key(market_start_ts), valid=valid, reason=reason))
+                day_utc=_day_key(market_start_ts), valid=bool(entry["valid"]),
+                reason=entry.get("reason")))
         self._index = entries
 
     def list_days(self) -> list[dict]:

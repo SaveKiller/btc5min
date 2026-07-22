@@ -128,12 +128,12 @@ def render_lighter_round_txt(header: dict, ticks: np.ndarray, warnings: list[str
         f"  market_start_ts: {header['market_start_ts']} ({format_utc_ts(header['market_start_ts'])})",
         f"  market_end_ts: {header['market_end_ts']} ({format_utc_ts(header['market_end_ts'])})",
         f"  intraday: H{header['intraday_h']}",
-        f"  ptb_price: {_fmt_price(header['ptb_price'])}",
-        f"  ptb_chainlink: {_fmt_price(header['ptb_chainlink'])}",
-        f"  ptb_gamma: {_fmt_price(header['ptb_gamma'])}",
-        f"  final_price: {_fmt_price(header['final_price'])}",
-        f"  final_chainlink: {_fmt_price(header['final_chainlink'])}",
-        f"  final_gamma: {_fmt_price(header['final_gamma'])}",
+        f"  ptb_price: {_fmt_price(header['ptb_price'], 0)}",
+        f"  ptb_chainlink: {_fmt_price(header['ptb_chainlink'], 0)}",
+        f"  ptb_gamma: {_fmt_price(header['ptb_gamma'], 0)}",
+        f"  final_price: {_fmt_price(header['final_price'], 0)}",
+        f"  final_chainlink: {_fmt_price(header['final_chainlink'], 0)}",
+        f"  final_gamma: {_fmt_price(header['final_gamma'], 0)}",
         f"  outcome_lighter: {header['outcome_lighter']}",
         f"  outcome: {OUTCOME_NAMES[header['outcome']]}",
         f"  outcome_agreement: {agreement_s}",
@@ -173,6 +173,6 @@ def render_lighter_round_txt(header: dict, ticks: np.ndarray, warnings: list[str
         dw_part = _delta_win_row_live(sec, tick_idx, ticks, vols, ptb, header["intraday_h"], indexed, artifact)
         lines.append(_format_lighter_table_row(
             str(sec), format_mmss(sec), format_quote_side(side),
-            format_delta_cell(chainlink, ptb, stale), dw_part, format_btc_cell(chainlink),
+            format_delta_cell(chainlink, ptb, stale, 0), dw_part, format_btc_cell(chainlink, 0),
             vol_tokens, format_rs_token(rs_vals[tick_idx])))
     return "\n".join(lines) + "\n"

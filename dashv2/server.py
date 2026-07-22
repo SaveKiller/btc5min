@@ -18,7 +18,7 @@ from dashv2.batch.analyze_job import load_reduce_results
 from dashv2.batch.listing import list_batch_rounds
 from dashv2.batch.reduce import reduce_analyze_fallback, reduce_strategy_rows
 from dashv2.batch.runner import BatchCancelled, RoundBatchRunner
-from dashv2.config import reload_strategy_codegen_system_prompt
+from dashv2.config import reload_strategy_codegen_system_prompt, ui_tab_allows
 from dashv2.execution_log import execution_session_meta
 from dashv2.rounds import RoundRepository
 from dashv2.sessions import delete_session, list_sessions_for_account
@@ -48,7 +48,7 @@ _HUMAN_CMDS = frozenset({
     "round.load", "round.unload", "rounds.list", "replay.play", "replay.pause", "replay.speed",
     "replay.seek", "replay.preview", "order.size", "order.preview", "order.place",
     "order.close", "order.cancel", "account.list", "account.select", "account.create",
-    "account.rename", "account.update", "bot.list", "bot.set_active",
+    "account.rename", "account.update", "account.delete", "bot.list", "bot.set_active",
     "strategy.list", "strategy.create", "strategy.update", "strategy.clone", "strategy.delete",
     "strategy.load", "strategy.unload", "session.sync", "consult.send",
     "agent.chat.send", "agent.chat.history", "agent.rules.apply",
@@ -109,12 +109,17 @@ class ServerBridge:
         self._stats_runner: RoundBatchRunner | None = None
         self._stats_day_from: str | None = None
         self._stats_day_to: str | None = None
+        self._ui_tabs = set(cfg["ui_tabs"])
+        self._bootstrap_cache: dict | None = None
         self._register_routes()
         self._register_socketio()
         threading.Thread(target=self._evt_reader_loop, daemon=True).start()
 
     def run(self) -> None:
         self.socketio.run(self.app, host=self.cfg["host"], port=self.cfg["port"], allow_unsafe_werkzeug=True)
+
+    def _ui_cmd_allowed(self, cmd: str) -> bool:
+        return ui_tab_allows(cmd, self._ui_tabs)
 
     def _register_routes(self) -> None:
         @self.app.route("/")
@@ -155,6 +160,15 @@ class ServerBridge:
         self._bot_active = bool(st.get("bot_active"))
         self._forward_strategy_sync(st.get("active_strategies") or [])
 
+    def _resync_human_session(self) -> None:
+        """Al (ri)connect UI: bootstrap + session (evita race session.sync prima di on_connect)."""
+        try:
+            if self._bootstrap_cache is not None and self._human_sid is not None:
+                self.socketio.emit("bootstrap", self._bootstrap_cache, to=self._human_sid)
+            self._request_to_data("session.sync", {}, actor="user")
+        except Exception as e:
+            print(f"human resync failed: {e}", flush=True)
+
     def _register_socketio(self) -> None:
         @self.socketio.on("connect")
         def on_connect(auth=None):
@@ -167,6 +181,7 @@ class ServerBridge:
                 if old is not None and old != request.sid:
                     self._sid_role.pop(old, None)
                 self._human_sid = request.sid
+                threading.Thread(target=self._resync_human_session, daemon=True).start()
             else:
                 if self._bot_sid is not None:
                     return False
@@ -230,6 +245,8 @@ class ServerBridge:
                 return {"error": "bot inactive"}
             if role == "human" and _cmd not in _HUMAN_CMDS:
                 return {"error": "not allowed"}
+            if role == "human" and not self._ui_cmd_allowed(_cmd):
+                return {"error": "tab disabled"}
             actor = "bot" if role == "bot" else "user"
             if _cmd == "round.load":
                 self._round_load_async(payload or {}, actor=actor)
@@ -250,6 +267,8 @@ class ServerBridge:
             from flask import request
             if self._role_for_sid(request.sid) != "human":
                 return {"error": "not allowed"}
+            if not self._ui_cmd_allowed("strategy.create"):
+                return {"error": "tab disabled"}
             try:
                 return self._strategy_create_with_codegen(payload or {})
             except Exception as e:
@@ -262,6 +281,8 @@ class ServerBridge:
             from flask import request
             if self._role_for_sid(request.sid) != "human":
                 return {"error": "not allowed"}
+            if not self._ui_cmd_allowed("strategy.update"):
+                return {"error": "tab disabled"}
             try:
                 return self._strategy_update_with_codegen(payload or {})
             except Exception as e:
@@ -439,7 +460,7 @@ class ServerBridge:
             body = payload or {}
             account_id = body.get("account_id") or self._active_account_id
             if not account_id:
-                return {"error": "no active account"}
+                return {"error": "No active account, select or create an account."}
             try:
                 session_id = self._resolve_agent_session_id(body)
             except Exception as e:
@@ -988,6 +1009,8 @@ class ServerBridge:
             if not ipc.is_event(msg):
                 continue
             name, payload = msg["name"], msg.get("payload") or {}
+            if name == "bootstrap":
+                self._bootstrap_cache = payload
             if name == "session":
                 prev_live = self._live_ctx.get("session_id")
                 new_live = payload.get("session_id")

@@ -4,10 +4,9 @@ import re
 import sys
 from pathlib import Path
 
-from src.binary_format import OUTCOME_NAMES, read_round, txt_path_for_bin
+from src.binary_format import OUTCOME_NAMES, asset_from_bin_path, read_round, txt_path_for_bin
 from src.settlement import outcome_from_prices
 from src.txt_format import render_round_txt
-
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 _DATE_DIR = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -45,7 +44,7 @@ def warnings_from_header(header: dict) -> list[str]:
 
 def convert_round(bin_path: str, warnings: list[str]) -> str:
     header, ticks, _ = read_round(bin_path)
-    return render_round_txt(header, ticks, warnings)
+    return render_round_txt(header, ticks, warnings, asset=asset_from_bin_path(bin_path))
 
 
 def align_txt_mtime_to_bin(bin_path: Path, txt_path: Path) -> None:

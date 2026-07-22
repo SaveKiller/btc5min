@@ -17,6 +17,7 @@ from src.setup import (
     RISK_LABEL_SOURCE, RISK_MIN_VOL_COVERAGE_RATIO, RISK_MODEL_VERSION,
     RISK_PRIMARY_VOL_WINDOW_SEC, RISK_PROBABILITY_BUCKETS, RISK_PTB_SOURCE, RISK_TARGET,
     STALL_RECONNECT_SEC, VOLATILITY_MIN_CHANGES, VOLATILITY_WINDOWS_SEC, delta_win_sec_active,
+    price_decimals,
 )
 from src.vol_stats import chainlink_stale, compute_vol_stats_by_window, tick_sec as _tick_sec
 
@@ -29,10 +30,12 @@ def risk_column_width() -> int:
     return RQ_COL_W + RS_GAP + RS_COL_W
 
 
-def _fmt_price(v: float) -> str:
+def _fmt_price(v: float, decimals: int) -> str:
     if math.isnan(v):
         return "nan"
-    return f"{v:.2f}"
+    if decimals == 0:
+        return f"{int(round(v))}"
+    return f"{round(v, decimals):.{decimals}f}"
 
 
 def format_utc_ts(ts: int) -> str:
@@ -84,19 +87,32 @@ def format_vol_header() -> str:
     return "  ".join(f"V{w}".ljust(_vol_token_width(w)) for w in VOLATILITY_WINDOWS_SEC)
 
 
-def format_delta(chainlink: float, ptb_chainlink: float) -> str:
-    d = round(chainlink - ptb_chainlink)
-    if d > 0:
-        return f"+{d}$"
-    if d < 0:
-        return f"{d}$"
-    return "0$"
+def price_col_width(decimals: int) -> int:
+    if decimals == 0:
+        return 8
+    return max(10, decimals + 6)
 
 
-def format_delta_cell(chainlink: float, ptb_chainlink: float, stale: bool) -> str:
+def delta_col_width(decimals: int) -> int:
+    if decimals == 0:
+        return 5
+    return max(8, decimals + 6)
+
+
+def format_delta(chainlink: float, ptb_chainlink: float, decimals: int = 0) -> str:
+    d = round(chainlink - ptb_chainlink, decimals)
+    if d == 0:
+        return "0$" if decimals == 0 else f"{0:.{decimals}f}$"
+    if decimals == 0:
+        di = int(d)
+        return f"+{di}$" if di > 0 else f"{di}$"
+    return f"{d:+.{decimals}f}$"
+
+
+def format_delta_cell(chainlink: float, ptb_chainlink: float, stale: bool, decimals: int = 0) -> str:
     if stale:
-        return "  ---"
-    return format_delta(chainlink, ptb_chainlink)
+        return "---".rjust(delta_col_width(decimals))
+    return format_delta(chainlink, ptb_chainlink, decimals)
 
 
 def format_quote_partial(side: str) -> str:
@@ -113,8 +129,13 @@ def format_quote(up_prob: int, down_prob: int) -> str:
     return f"DOWN {down_prob:>3}c"
 
 
-def format_btc_cell(chainlink: float) -> str:
-    return f"{round(chainlink)}$"
+def format_price_cell(chainlink: float, decimals: int) -> str:
+    return f"{_fmt_price(chainlink, decimals)}$"
+
+
+def format_btc_cell(chainlink: float, decimals: int = 0) -> str:
+    """Alias storico; preferire format_price_cell."""
+    return format_price_cell(chainlink, decimals)
 
 
 def format_gain_pct(gain: float) -> str:
@@ -135,31 +156,35 @@ def format_risk_tokens(risk: TickRisk) -> str:
 
 
 def format_table_row(sec: str, time: str, quote: str, delta: str, gain_val: str, dw_part: str,
-        btc_val: str, vol_tokens: str, risk_tokens: str) -> str:
+        price_val: str, vol_tokens: str, risk_tokens: str, decimals: int) -> str:
     vol_w = vol_column_width()
     risk_w = risk_column_width()
     dw_w = delta_win_block_width()
+    px_w = price_col_width(decimals)
+    d_w = delta_col_width(decimals)
     if dw_w:
         dw_part = f"{dw_part:<{dw_w}}"
     return (
         f"{sec:>3}  {time:>5}  {quote:<9}  "
-        f"{delta:>5}  {gain_val:>7}  {dw_part}  "
-        f"{btc_val:>8}  {vol_tokens:<{vol_w}}  {risk_tokens:<{risk_w}}"
+        f"{delta:>{d_w}}  {gain_val:>7}  {dw_part}  "
+        f"{price_val:>{px_w}}  {vol_tokens:<{vol_w}}  {risk_tokens:<{risk_w}}"
     )
 
 
-def format_column_header() -> str:
+def format_column_header(decimals: int = 0) -> str:
     vol_hdr = format_vol_header()
     risk_hdr = f"{'Rq':>{RQ_COL_W}}{' ' * RS_GAP}{'Rs':>{RS_COL_W}}"
+    px_w = price_col_width(decimals)
+    d_w = delta_col_width(decimals)
     return (
         f"{'sec':>3}  {'time':>5}  {'quote':<9}  "
-        f"{'delta':>5}  {'gain%':>7}  {delta_win_data_header()}  "
-        f"{'btc':>8}  {vol_hdr}  {risk_hdr}"
+        f"{'delta':>{d_w}}  {'gain%':>7}  {delta_win_data_header()}  "
+        f"{'px':>{px_w}}  {vol_hdr}  {risk_hdr}"
     )
 
 
-def format_separator() -> str:
-    return "-" * len(format_column_header())
+def format_separator(decimals: int = 0) -> str:
+    return "-" * len(format_column_header(decimals))
 
 
 def _checkpoint_stale_in_vol_window(indexed: dict[int, int], ticks: np.ndarray, sec: int,
@@ -199,25 +224,26 @@ def _delta_win_eligible(sec: int, tick_idx: int, ticks: np.ndarray, vols: dict[i
 
 
 def format_data_row_partial(sec: int, side: str, chainlink: float, ptb: float, stale: bool,
-        vol_tokens: str, risk_tokens: str, dw_part: str) -> str:
+        vol_tokens: str, risk_tokens: str, dw_part: str, decimals: int) -> str:
     return format_table_row(
         str(sec), format_mmss(sec), format_quote_partial(side),
-        format_delta_cell(chainlink, ptb, stale), "  ---", dw_part, format_btc_cell(chainlink),
-        vol_tokens, risk_tokens,
-    )
+        format_delta_cell(chainlink, ptb, stale, decimals), "  ---", dw_part,
+        format_price_cell(chainlink, decimals), vol_tokens, risk_tokens, decimals)
 
 
 def format_data_row(sec: int, up_prob: int, down_prob: int, chainlink: float, ptb: float, gain: float,
-        stale: bool, vol_tokens: str, risk_tokens: str, dw_part: str) -> str:
+        stale: bool, vol_tokens: str, risk_tokens: str, dw_part: str, decimals: int) -> str:
     return format_table_row(
         str(sec), format_mmss(sec), format_quote(up_prob, down_prob),
-        format_delta_cell(chainlink, ptb, stale), format_gain_pct(gain), dw_part, format_btc_cell(chainlink),
-        vol_tokens, risk_tokens,
-    )
+        format_delta_cell(chainlink, ptb, stale, decimals), format_gain_pct(gain), dw_part,
+        format_price_cell(chainlink, decimals), vol_tokens, risk_tokens, decimals)
 
 
 def render_round_txt(header: dict, ticks: np.ndarray, warnings: list[str],
-        delta_win_artifact: dict | None = None) -> str:
+        delta_win_artifact: dict | None = None, asset: str | None = None) -> str:
+    if asset is None:
+        raise Exception("render_round_txt requires asset")
+    decimals = price_decimals(asset)
     artifact = delta_win_artifact if delta_win_artifact is not None else load_delta_win_artifact()
     ptb = header["ptb_chainlink"]
     sec_max = header["market_end_ts"] - header["market_start_ts"]
@@ -229,12 +255,14 @@ def render_round_txt(header: dict, ticks: np.ndarray, warnings: list[str],
         f"  market_start_ts: {header['market_start_ts']} ({format_utc_ts(header['market_start_ts'])})",
         f"  market_end_ts: {header['market_end_ts']} ({format_utc_ts(header['market_end_ts'])})",
         f"  intraday: H{intraday_h}",
-        f"  ptb_price: {_fmt_price(header['ptb_price'])}",
-        f"  ptb_chainlink: {_fmt_price(header['ptb_chainlink'])}",
-        f"  ptb_gamma: {_fmt_price(header['ptb_gamma'])}",
-        f"  final_price: {_fmt_price(header['final_price'])}",
-        f"  final_chainlink: {_fmt_price(header['final_chainlink'])}",
-        f"  final_gamma: {_fmt_price(header['final_gamma'])}",
+        f"  asset: {asset}",
+        f"  price_decimals: {decimals}",
+        f"  ptb_price: {_fmt_price(header['ptb_price'], decimals)}",
+        f"  ptb_chainlink: {_fmt_price(header['ptb_chainlink'], decimals)}",
+        f"  ptb_gamma: {_fmt_price(header['ptb_gamma'], decimals)}",
+        f"  final_price: {_fmt_price(header['final_price'], decimals)}",
+        f"  final_chainlink: {_fmt_price(header['final_chainlink'], decimals)}",
+        f"  final_gamma: {_fmt_price(header['final_gamma'], decimals)}",
         f"  outcome: {OUTCOME_NAMES[header['outcome']]}",
         f"  tick_count: {header['tick_count']}",
         f"  fee_rate: {header['fee_rate']}",
@@ -260,8 +288,8 @@ def render_round_txt(header: dict, ticks: np.ndarray, warnings: list[str],
     lines.extend([
         "",
         "data:",
-        format_column_header(),
-        format_separator(),
+        format_column_header(decimals),
+        format_separator(decimals),
     ])
     last_side: str | None = None
     tick_risk_by_idx = {i: risk_states[i] for i in range(len(risk_states))}
@@ -279,12 +307,14 @@ def render_round_txt(header: dict, ticks: np.ndarray, warnings: list[str],
             sec, tick_idx, ticks, vols_by_window, ptb, intraday_h, sec_index, artifact, sec_max)
         if tick_quotes_missing(row):
             side = last_side or side_from_chainlink(chainlink, ptb)
-            lines.append(format_data_row_partial(sec, side, chainlink, ptb, stale, vol_tokens, risk_tokens, dw_part))
+            lines.append(format_data_row_partial(
+                sec, side, chainlink, ptb, stale, vol_tokens, risk_tokens, dw_part, decimals))
             continue
         up_prob = round((row[2] + row[3]) / 2 * 100)
         down_prob = round((row[4] + row[5]) / 2 * 100)
         if not (0 <= up_prob <= 100 and 0 <= down_prob <= 100):
             raise Exception(f"C3: prob out of range sec {sec}: {up_prob}/{down_prob}")
         last_side = majority_side(row[2], row[3], row[4], row[5])
-        lines.append(format_data_row(sec, up_prob, down_prob, chainlink, ptb, gain, stale, vol_tokens, risk_tokens, dw_part))
+        lines.append(format_data_row(
+            sec, up_prob, down_prob, chainlink, ptb, gain, stale, vol_tokens, risk_tokens, dw_part, decimals))
     return "\n".join(lines) + "\n"
