@@ -1150,10 +1150,9 @@ export function renderStatsHourFilter(selectedHours, enabled, rebuildMenu = true
     const sw = $("statsHourFilter24hSwitch");
     const on24h = mode24h !== false;
     if (sw) sw.checked = on24h;
-    const display = on24h ? new Set(ALL_STATS_HOURS) : selected;
     const on = !!enabled;
     const dropdownOn = on && !on24h;
-    btn.textContent = statsHourFilterLabel(display);
+    btn.textContent = statsHourFilterLabel(selected);
     btn.classList.toggle("disabled", !dropdownOn);
     btn.setAttribute("aria-disabled", dropdownOn ? "false" : "true");
     if (on && (rebuildMenu || !menu.querySelector("input[data-hour]"))) {
@@ -1208,6 +1207,24 @@ const STATS_MONTHS_EN = [
     "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER",
 ];
 
+const STATS_DAY_MONTHS_EN = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+];
+
+
+function statsSimExecDayKey(sim) {
+    return (sim.exec_at || sim.created_at_utc || "").slice(0, 10);
+}
+
+
+function statsSimExecDayLabel(dayKey) {
+    if (dayKey.length < 10) return "—";
+    const day = Number(dayKey.slice(8, 10));
+    const month = STATS_DAY_MONTHS_EN[Number(dayKey.slice(5, 7)) - 1];
+    return `${day} ${month}`;
+}
+
 
 function statsSimMonthYm(sim) {
     return (sim.exec_at || sim.created_at_utc || "").slice(0, 7);
@@ -1240,6 +1257,11 @@ export function statsSimStrategyList(simulations) {
 }
 
 
+function statsSimExecSortKey(sim) {
+    return (sim.exec_at || sim.created_at_utc || "").replace("T", " ").replace("Z", "");
+}
+
+
 function filterStatsSimulations(simulations, monthYm, strategyName, search) {
     const q = search.trim().toLowerCase();
     return simulations.filter((s) => {
@@ -1251,7 +1273,7 @@ function filterStatsSimulations(simulations, monthYm, strategyName, search) {
             s.strategy_name, String(s.strategy_version ?? ""),
         ].join(" ").toLowerCase();
         return hay.includes(q);
-    });
+    }).sort((a, b) => statsSimExecSortKey(b).localeCompare(statsSimExecSortKey(a)));
 }
 
 
@@ -1322,17 +1344,28 @@ export function renderStatsSimulationSelect(simulations, selectedId, monthYm, st
     menu.style.setProperty("--sim-c4", `${Math.ceil(w[3])}px`);
     menu.style.setProperty("--sim-c5", `${Math.ceil(w[4])}px`);
     menu.innerHTML = `<li><button type="button" class="dropdown-item stats-bs-select-item${!selected ? " active" : ""}" data-value="">${emptyLabel}</button></li>`
-        + list.map((s) => {
+        + list.map((s, i) => {
+            const dayKey = statsSimExecDayKey(s);
+            const prevDay = i > 0 ? statsSimExecDayKey(list[i - 1]) : null;
+            const dayHdr = dayKey !== prevDay
+                ? `<li class="stats-sim-day-hdr" aria-hidden="true"><span>${escapeHtml(statsSimExecDayLabel(dayKey))}</span></li>`
+                : "";
             const act = s.id === selectedId ? " active" : "";
             const pnl = fmtUsdInt(s.pnl_total);
             const pnlCls = statsPnlClassGe0(s.pnl_total);
-            return `<li><button type="button" class="dropdown-item stats-bs-select-item stats-sim-row${act}" data-value="${escapeHtml(s.id)}">`
+            return dayHdr
+                + `<li class="stats-sim-item">`
+                + `<button type="button" class="dropdown-item stats-bs-select-item stats-sim-row${act}" data-value="${escapeHtml(s.id)}">`
                 + `<span class="stats-sim-col-name">${escapeHtml(s.name_ver)}</span>`
                 + `<span class="stats-sim-col-exec">${escapeHtml(s.exec_at)}</span>`
                 + `<span class="stats-sim-col-range">${escapeHtml(s.range_label)}</span>`
                 + `<span class="stats-sim-col-rounds">${Number(s.n_rounds)}</span>`
                 + `<span class="stats-sim-col-pnl ${pnlCls}">${escapeHtml(pnl)}</span>`
-                + `</button></li>`;
+                + `</button>`
+                + `<button type="button" class="btn btn-sm btn-link stats-session-trash stats-sim-del-btn p-0 flex-shrink-0"`
+                + ` data-delete-id="${escapeHtml(s.id)}" aria-label="Delete simulation">`
+                + `<i class="bi bi-trash" aria-hidden="true"></i></button>`
+                + `</li>`;
         }).join("");
 }
 
@@ -1641,6 +1674,90 @@ function fmtUsd2(n) {
 }
 
 
+function fmtDeltaStat(v) {
+    if (v == null || Number.isNaN(v)) return "—";
+    return String(Math.round(Math.abs(v)));
+}
+
+
+function fmtSecStat(v) {
+    if (v == null || Number.isNaN(v)) return "—";
+    return `${Math.round(v)}s`;
+}
+
+
+/** Media entry_sec e durata ordini (entry_sec - exit_sec) da round slim. */
+function computeOrderTimingStats(rounds) {
+    const entrySecs = [];
+    const durs = [];
+    for (const r of rounds) {
+        if (!r.ok) continue;
+        for (const s of r.entry_secs || []) entrySecs.push(Number(s));
+        for (const d of r.order_durs || []) durs.push(Number(d));
+    }
+    return {
+        osec_mean: entrySecs.length ? entrySecs.reduce((a, b) => a + b, 0) / entrySecs.length : null,
+        dur_mean: durs.length ? durs.reduce((a, b) => a + b, 0) / durs.length : null,
+    };
+}
+
+
+/** Media P5-95: esclude il 5% inferiore e il 5% superiore. */
+function entryDeltaP5_95(deltas) {
+    if (!deltas.length) return null;
+    const s = [...deltas].sort((a, b) => a - b);
+    const n = s.length;
+    const lo = Math.floor(0.05 * n);
+    const hi = Math.ceil(0.95 * n);
+    if (hi <= lo) {
+        let sum = 0;
+        for (const v of s) sum += v;
+        return sum / n;
+    }
+    let sum = 0;
+    for (let i = lo; i < hi; i += 1) sum += s[i];
+    return sum / (hi - lo);
+}
+
+
+/** Aggregati entry_delta da round slim (rispetta filtro ore sui round). */
+function computeEntryDeltaStats(rounds) {
+    const deltas = [];
+    let n = 0, sum = 0, min = null, max = null;
+    for (const r of rounds) {
+        if (!r.ok) continue;
+        if (r.entry_deltas_abs?.length) {
+            for (const d of r.entry_deltas_abs) deltas.push(Number(d));
+            continue;
+        }
+        const cn = Number(r.entry_delta_n) || 0;
+        if (!cn) continue;
+        n += cn;
+        sum += Number(r.entry_delta_sum) || 0;
+        const rmin = r.entry_delta_min;
+        const rmax = r.entry_delta_max;
+        if (rmin != null) min = min == null ? rmin : Math.min(min, rmin);
+        if (rmax != null) max = max == null ? rmax : Math.max(max, rmax);
+    }
+    if (deltas.length) {
+        const sorted = [...deltas].sort((a, b) => a - b);
+        return {
+            entry_delta_mean: deltas.reduce((a, b) => a + b, 0) / deltas.length,
+            entry_delta_min: sorted[0],
+            entry_delta_max: sorted[sorted.length - 1],
+            entry_delta_p5_95: entryDeltaP5_95(deltas),
+        };
+    }
+    if (!n) return { entry_delta_mean: null, entry_delta_min: null, entry_delta_max: null, entry_delta_p5_95: null };
+    return {
+        entry_delta_mean: sum / n,
+        entry_delta_min: min,
+        entry_delta_max: max,
+        entry_delta_p5_95: null,
+    };
+}
+
+
 function fmtPctShare(part, total) {
     if (!total) return "0";
     const raw = (100 * part) / total;
@@ -1683,6 +1800,8 @@ function computeStatsSessionDetail(rounds) {
         pnl_total: pnl, pos_sum: posSum, neg_sum: negSum,
         pos_mean: pos ? posSum / pos : null,
         neg_mean: neg ? negSum / neg : null,
+        ...computeEntryDeltaStats(rounds),
+        ...computeOrderTimingStats(rounds),
     };
 }
 
@@ -1698,7 +1817,9 @@ function renderStatsSessionMidHtml(d) {
     const negMean = d.neg_mean == null ? "—" : `<span class="stats-sum-neg">${fmtUsd2(d.neg_mean)}</span>`;
     const lineMeanPos = `MEAN POS: ${posMean}`;
     const lineMeanNeg = `MEAN NEG: ${negMean}`;
-    return `${lineTotal}<br>${lineMeanPos}<br>${lineMeanNeg}<br>${lineNoLiq}`;
+    const lineTiming = `O-SEC: <span class="stats-sum-white">${fmtSecStat(d.osec_mean)}</span>`
+        + ` &nbsp; DUR: <span class="stats-sum-white">${fmtSecStat(d.dur_mean)}</span>`;
+    return `${lineTotal}<br>${lineMeanPos}<br>${lineMeanNeg}<br>${lineNoLiq}<br>${lineTiming}`;
 }
 
 
@@ -1737,7 +1858,11 @@ function renderStatsSessionDetailHtml(d, summary) {
         + ` &nbsp; GAIN: <span class="${gainCls}">${gainLabel}</span>`;
     const lineGain = `GAIN/DAY: <span class="${gainDayCls}">${gainDayLabel}</span>`
         + ` &nbsp; GAIN/M: <span class="${gainMonthCls}">${gainMonthLabel}</span>`;
-    return `${line1}<br>${lineBal}<br>${line3}<br>${lineGain}`;
+    const lineODelta = `O-DELTA: MEAN: <span class="stats-sum-white">${fmtDeltaStat(d.entry_delta_mean)}</span>`
+        + ` &nbsp; P5-95: <span class="stats-sum-white">${fmtDeltaStat(d.entry_delta_p5_95)}</span>`
+        + ` &nbsp; MAX: <span class="stats-sum-white">${fmtDeltaStat(d.entry_delta_max)}</span>`
+        + ` &nbsp; MIN: <span class="stats-sum-white">${fmtDeltaStat(d.entry_delta_min)}</span>`;
+    return `${line1}<br>${lineBal}<br>${line3}<br>${lineGain}<br>${lineODelta}`;
 }
 
 

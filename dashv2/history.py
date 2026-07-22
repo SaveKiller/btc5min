@@ -221,6 +221,8 @@ def order_rows_for_run(market_start_ts: int, orders: list[dict], session_id: str
 
 
 def _entry_quote_c(o: dict) -> int | None:
+    if o.get("entry_quote") is not None:
+        return int(round(float(o["entry_quote"]) * 100))
     if o.get("best_ask_c") is not None:
         return int(o["best_ask_c"])
     if o.get("avg_entry_price") is not None:
@@ -231,6 +233,8 @@ def _entry_quote_c(o: dict) -> int | None:
 
 
 def _exit_quote_c(o: dict) -> int | None:
+    if o.get("exit_quote") is not None:
+        return int(round(float(o["exit_quote"]) * 100))
     if o.get("close_type") == "settlement":
         if o.get("result") == "won":
             return 100

@@ -96,7 +96,10 @@ def run_strategy_round(
                 ctx = build_strategy_ctx(public, session, engine.open_orders, bot_active=True)
             _dispatch(mod, "on_tick", ctx, engine, strategy_id, sec, tick, book, loaded.fee_rate, action_errors)
 
-        settled = engine.settle_open(loaded.outcome_name, 0, loaded.final_chainlink)
+        settled = engine.settle_open(
+            loaded.outcome_name, 0, loaded.final_chainlink,
+            loaded.ticks_by_sec.get(0), loaded.ptb_chainlink,
+        )
         end_ctx = build_strategy_ctx(
             last_public if last_public is not None else _public_tick(None, 0, seq + 1, True, None),
             session,

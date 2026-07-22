@@ -1849,7 +1849,26 @@ document.getElementById("statsSimSearch").addEventListener("input", (e) => {
     state.statsSimSearch = e.target.value;
     refreshStatsSimulationUi();
 });
+function deleteStatsSimulation(id) {
+    if (!id) return Promise.resolve();
+    return emitAck("stats.simulation.delete", { simulation_id: id }).then(() => {
+        if (state.statsSimulationId === id) {
+            state.statsSimulationId = null;
+            setStatsBacktestResults({});
+        }
+        return loadStatsSimulations();
+    }).catch(handleUiError);
+}
+
+
 document.getElementById("statsSimulationMenu").addEventListener("click", (e) => {
+    const del = e.target.closest("[data-delete-id]");
+    if (del) {
+        e.preventDefault();
+        e.stopPropagation();
+        deleteStatsSimulation(del.dataset.deleteId);
+        return;
+    }
     const item = e.target.closest("[data-value]");
     if (!item) return;
     const id = item.dataset.value || null;
@@ -1858,15 +1877,7 @@ document.getElementById("statsSimulationMenu").addEventListener("click", (e) => 
     if (id) loadStatsSimulation(id);
 });
 document.getElementById("statsSimulationDeleteBtn").addEventListener("click", () => {
-    const id = state.statsSimulationId;
-    if (!id) return;
-    emitAck("stats.simulation.delete", { simulation_id: id }).then(() => {
-        if (state.statsSimulationId === id) {
-            state.statsSimulationId = null;
-            setStatsBacktestResults({});
-        }
-        loadStatsSimulations();
-    }).catch(handleUiError);
+    deleteStatsSimulation(state.statsSimulationId);
 });
 document.getElementById("statsSendBtn").addEventListener("click", sendStatsMessage);
 document.getElementById("statsChatClearBtn").addEventListener("click", clearStatsChat);

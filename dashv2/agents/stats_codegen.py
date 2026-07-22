@@ -40,8 +40,10 @@ Chiavi tipiche di ogni tick:
 
 Chiavi tipiche di ogni order (se presente):
   id, side, entry_sec, exit_sec, size_usd, shares, avg_entry_price,
+  entry_delta_usd, exit_delta_usd, entry_quote, exit_quote,
   pnl_usd, result (won|lost|closed), close_type (settlement|manual),
   reason, close_reason, entry_fee_usd, exit_fee_usd, entry_btc, exit_btc
+  (entry_sec / exit_sec = secondi mancanti a scadenza al momento open/close)
 
 analyze_round deve ritornare un dict JSON-serializzabile (metriche per-round).
 Il runner mergea ok/error/market_start_ts/hour_utc sopra quel dict.

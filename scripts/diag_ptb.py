@@ -60,6 +60,7 @@ def test_feed_capture() -> None:
     state = RoundState(start_ts, start_ts, start_ts + step, "up", "down", 0.072)
     from src.feed_chainlink import ChainlinkFeed
     feed = ChainlinkFeed.get()
+    feed.configure("btc")
     feed.start()
     feed.register(state)
     start_ms = start_ts * 1000

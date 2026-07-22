@@ -162,9 +162,10 @@ def format_separator() -> str:
     return "-" * len(format_column_header())
 
 
-def _checkpoint_stale_in_vol_window(indexed: dict[int, int], ticks: np.ndarray, sec: int, window: int) -> bool:
+def _checkpoint_stale_in_vol_window(indexed: dict[int, int], ticks: np.ndarray, sec: int,
+        window: int, sec_max: int) -> bool:
     from src.vol_stats import vol_window_countdown_secs
-    for s in vol_window_countdown_secs(sec, window):
+    for s in vol_window_countdown_secs(sec, window, sec_max=sec_max):
         if s not in indexed:
             return True  # gap: finestra vol non affidabile
         ti = indexed[s]
@@ -174,16 +175,16 @@ def _checkpoint_stale_in_vol_window(indexed: dict[int, int], ticks: np.ndarray, 
 
 
 def _delta_win_row(sec: int, tick_idx: int, ticks: np.ndarray, vols: dict[int, np.ndarray],
-        ptb: float, intraday_h: int, indexed: dict[int, int], artifact: dict) -> str:
-    eligible, abs_delta, vol_dict = _delta_win_eligible(sec, tick_idx, ticks, vols, ptb, indexed)
+        ptb: float, intraday_h: int, indexed: dict[int, int], artifact: dict, sec_max: int) -> str:
+    eligible, abs_delta, vol_dict = _delta_win_eligible(sec, tick_idx, ticks, vols, ptb, indexed, sec_max)
     return delta_win_row_part(sec, abs_delta, vol_dict, intraday_h, eligible, artifact)
 
 
 def _delta_win_eligible(sec: int, tick_idx: int, ticks: np.ndarray, vols: dict[int, np.ndarray],
-        ptb: float, indexed: dict[int, int]) -> tuple[bool, int, dict[int, int]]:
+        ptb: float, indexed: dict[int, int], sec_max: int) -> tuple[bool, int, dict[int, int]]:
     if not delta_win_sec_active(sec):
         return False, 0, {}
-    if _checkpoint_stale_in_vol_window(indexed, ticks, sec, max(VOLATILITY_WINDOWS_SEC)):
+    if _checkpoint_stale_in_vol_window(indexed, ticks, sec, max(VOLATILITY_WINDOWS_SEC), sec_max):
         return False, 0, {}
     if chainlink_stale_row(ticks[tick_idx, 0], ticks[tick_idx, 8]):
         return False, 0, {}
@@ -219,6 +220,7 @@ def render_round_txt(header: dict, ticks: np.ndarray, warnings: list[str],
         delta_win_artifact: dict | None = None) -> str:
     artifact = delta_win_artifact if delta_win_artifact is not None else load_delta_win_artifact()
     ptb = header["ptb_chainlink"]
+    sec_max = header["market_end_ts"] - header["market_start_ts"]
     intraday_h = hour_band(header["market_start_ts"])
     vols_by_window = compute_trailing_vols(ticks)
     risk_states = compute_risk_state(ticks, ptb)
@@ -273,7 +275,8 @@ def render_round_txt(header: dict, ticks: np.ndarray, warnings: list[str],
         stale = chainlink_stale_row(row[0], row[8])
         vol_tokens = format_vol_tokens(vols_by_window, tick_idx)
         risk_tokens = format_risk_tokens(tick_risk_by_idx[tick_idx])
-        dw_part = _delta_win_row(sec, tick_idx, ticks, vols_by_window, ptb, intraday_h, sec_index, artifact)
+        dw_part = _delta_win_row(
+            sec, tick_idx, ticks, vols_by_window, ptb, intraday_h, sec_index, artifact, sec_max)
         if tick_quotes_missing(row):
             side = last_side or side_from_chainlink(chainlink, ptb)
             lines.append(format_data_row_partial(sec, side, chainlink, ptb, stale, vol_tokens, risk_tokens, dw_part))

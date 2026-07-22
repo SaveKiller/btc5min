@@ -933,6 +933,22 @@ select.form-select option:focus {
   column-gap:1.25rem; align-items:baseline; width:max-content;
   white-space:nowrap; font-variant-numeric:tabular-nums;
 }
+.stats-sim-item {
+  display:flex; align-items:center; gap:.35rem; padding-right:.35rem;
+}
+.stats-sim-item .stats-sim-row { flex:0 0 auto; }
+.stats-sim-del-btn { line-height:1; }
+.stats-sim-day-hdr {
+  padding:.4rem .75rem .1rem; pointer-events:none; user-select:none;
+}
+.stats-sim-day-hdr span {
+  color:#92a2bb; font-size:calc(.72rem + 3pt); font-weight:600; letter-spacing:.03em;
+}
+.stats-sim-day-hdr + .stats-sim-item .stats-sim-row,
+.stats-sim-day-hdr + .stats-sim-item { margin-top:0; }
+.stats-sim-item + .stats-sim-day-hdr {
+  margin-top:.35rem; padding-top:.55rem; border-top:1px solid #2a3548;
+}
 .stats-sim-col-rounds,
 .stats-sim-col-pnl { text-align:right; }
 .stats-header-sep {

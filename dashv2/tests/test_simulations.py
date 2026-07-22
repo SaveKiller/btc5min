@@ -7,9 +7,9 @@ import unittest
 from pathlib import Path
 
 from dashv2.simulations import (
-    compute_balance_stats, create_simulation, delete_simulation, list_simulations,
-    load_round_orders, load_simulation, session_capital_size_usd,
-    simulation_has_orders, simulation_label,
+    compute_balance_stats, create_simulation, delete_simulation, entry_delta_p5_95, entry_delta_stats_from_orders,
+    list_simulations, load_round_orders, load_simulation, order_timing_stats_from_orders,
+    session_capital_size_usd, simulation_has_orders, simulation_label,
 )
 
 
@@ -28,6 +28,8 @@ class TestSimulations(unittest.TestCase):
                 "action_errors": [],
                 "orders": [{
                     "id": "ord1", "side": "Up", "entry_sec": 200, "exit_sec": 0,
+                    "entry_delta_usd": 12.0, "exit_delta_usd": 110.0,
+                    "entry_quote": 0.55, "exit_quote": 1.0,
                     "size_usd": 10.0, "shares": 18.0, "avg_entry_price": 0.55,
                     "best_ask": 0.55, "best_ask_c": 55, "entry_fee_usd": 0.1,
                     "exit_fee_usd": 0.0, "entry_btc": 90000.0, "exit_btc": 90100.0,
@@ -59,6 +61,12 @@ class TestSimulations(unittest.TestCase):
             loaded = load_simulation(hist, sim["id"])
             self.assertEqual(loaded["rounds"][0]["pnl_usd"], 1.0)
             self.assertEqual(loaded["rounds"][0]["stake_usd"], 10.0)
+            self.assertEqual(loaded["rounds"][0]["entry_delta_n"], 1)
+            self.assertEqual(loaded["rounds"][0]["entry_delta_sum"], 12.0)
+            self.assertEqual(loaded["rounds"][0]["entry_delta_min"], 12.0)
+            self.assertEqual(loaded["rounds"][0]["entry_delta_max"], 12.0)
+            self.assertEqual(loaded["rounds"][0]["entry_secs"], [200])
+            self.assertEqual(loaded["rounds"][0]["order_durs"], [200])
             self.assertEqual(loaded["table"]["total"]["rounds"], 1)
             self.assertEqual(loaded["strategy_version"], 3)
             self.assertTrue(simulation_has_orders(hist, sim["id"]))
@@ -72,9 +80,36 @@ class TestSimulations(unittest.TestCase):
             self.assertEqual(len(orders), 1)
             self.assertEqual(orders[0]["side"], "Up")
             self.assertEqual(orders[0]["entry_sec"], 200)
+            self.assertEqual(orders[0]["entry_delta_usd"], 12.0)
+            self.assertEqual(orders[0]["exit_delta_usd"], 110.0)
+            self.assertEqual(orders[0]["entry_quote"], 0.55)
+            self.assertEqual(orders[0]["exit_quote"], 1.0)
             self.assertEqual(orders[0]["result"], "won")
             delete_simulation(hist, sim["id"])
             self.assertEqual(list_simulations(hist), [])
+
+    def test_entry_delta_stats_from_orders(self):
+        stats = entry_delta_stats_from_orders([
+            {"entry_delta_usd": 10.0},
+            {"entry_delta_usd": -30.0},
+            {"entry_delta_usd": None},
+        ])
+        self.assertEqual(stats["entry_delta_n"], 2)
+        self.assertEqual(stats["entry_delta_sum"], 40.0)
+        self.assertEqual(stats["entry_delta_min"], 10.0)
+        self.assertEqual(stats["entry_delta_max"], 30.0)
+        self.assertEqual(stats["entry_deltas_abs"], [10.0, 30.0])
+        p5_95 = entry_delta_p5_95(list(range(1, 21)))
+        self.assertEqual(p5_95, 10.5)
+        timing = order_timing_stats_from_orders([
+            {"entry_sec": 200, "exit_sec": 100},
+            {"entry_sec": 150, "exit_sec": 0},
+        ])
+        self.assertEqual(timing["entry_secs"], [200, 150])
+        self.assertEqual(timing["order_durs"], [100, 150])
+        empty = entry_delta_stats_from_orders([{"entry_delta_usd": None}])
+        self.assertEqual(empty["entry_delta_n"], 0)
+        self.assertIsNone(empty["entry_delta_min"])
 
     def test_json_legacy_list_load_no_orders(self):
         with tempfile.TemporaryDirectory() as td:
@@ -146,6 +181,8 @@ class TestSimulations(unittest.TestCase):
                 "action_errors": [],
                 "orders": [{
                     "id": "ord1", "side": "Up", "entry_sec": 200, "exit_sec": 0,
+                    "entry_delta_usd": 12.0, "exit_delta_usd": 110.0,
+                    "entry_quote": 0.55, "exit_quote": 1.0,
                     "size_usd": 10.0, "shares": 18.0, "avg_entry_price": 0.55,
                     "best_ask": 0.55, "best_ask_c": 55, "entry_fee_usd": 0.1,
                     "exit_fee_usd": 0.0, "entry_btc": 90000.0, "exit_btc": 90100.0,

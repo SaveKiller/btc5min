@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _utc_now_iso() -> str:
@@ -110,6 +111,50 @@ def session_capital_size_usd(bets: list[dict]) -> float:
     return injected
 
 
+def order_timing_stats_from_orders(orders: list[dict]) -> dict:
+    entry_secs: list[int] = []
+    order_durs: list[int] = []
+    for o in orders:
+        if o.get("entry_sec") is None:
+            continue
+        entry = int(o["entry_sec"])
+        entry_secs.append(entry)
+        if o.get("exit_sec") is not None:
+            order_durs.append(entry - int(o["exit_sec"]))
+    return {"entry_secs": entry_secs, "order_durs": order_durs}
+
+
+def entry_delta_p5_95(deltas: list[float]) -> float | None:
+    """Media tra 5° e 95° percentile (esclude il 5% inferiore e superiore)."""
+    if not deltas:
+        return None
+    s = sorted(deltas)
+    n = len(s)
+    lo = int(math.floor(0.05 * n))
+    hi = int(math.ceil(0.95 * n))
+    if hi <= lo:
+        return sum(s) / n
+    subset = s[lo:hi]
+    return sum(subset) / len(subset)
+
+
+def entry_delta_stats_from_orders(orders: list[dict]) -> dict:
+    deltas = [abs(float(o["entry_delta_usd"])) for o in orders if o.get("entry_delta_usd") is not None]
+    if not deltas:
+        return {
+            "entry_delta_n": 0, "entry_delta_sum": 0.0,
+            "entry_delta_min": None, "entry_delta_max": None,
+            "entry_deltas_abs": [],
+        }
+    return {
+        "entry_delta_n": len(deltas),
+        "entry_delta_sum": sum(deltas),
+        "entry_delta_min": min(deltas),
+        "entry_delta_max": max(deltas),
+        "entry_deltas_abs": deltas,
+    }
+
+
 def compute_balance_stats(rounds: list[dict]) -> dict:
     """Delta max/min del PnL cumulato + capitale minimo (USED) su stake history-style."""
     ok = [r for r in rounds if r.get("ok")]
@@ -139,7 +184,23 @@ def _summary_has_balance(summary: dict) -> bool:
 def _connect(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
+    _migrate_schema(conn)
     return conn
+
+
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='orders'"
+    ).fetchone():
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(orders)")}
+    for name, typ in (
+        ("entry_delta_usd", "REAL"), ("exit_delta_usd", "REAL"),
+        ("entry_quote", "REAL"), ("exit_quote", "REAL"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE orders ADD COLUMN {name} {typ}")
+    conn.commit()
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
@@ -193,6 +254,10 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             close_reason TEXT,
             payout_if_win_usd REAL,
             profit_if_win_usd REAL,
+            entry_delta_usd REAL,
+            exit_delta_usd REAL,
+            entry_quote REAL,
+            exit_quote REAL,
             account_id TEXT,
             source TEXT,
             strategy_id TEXT,
@@ -223,7 +288,11 @@ def _rounds_with_stake(rounds: list[dict], orders_by_ts: dict[int, list]) -> lis
     for r in rounds:
         orders = orders_by_ts.get(r["market_start_ts"], [])
         stake = session_capital_size_usd(orders) if orders else float(r.get("stake_usd") or 0.0)
-        out.append({**r, "stake_usd": stake})
+        out.append({
+            **r, "stake_usd": stake,
+            **entry_delta_stats_from_orders(orders),
+            **order_timing_stats_from_orders(orders),
+        })
     return out
 
 
@@ -273,6 +342,10 @@ def _order_from_row(row: sqlite3.Row) -> dict:
         "close_reason": row["close_reason"],
         "payout_if_win_usd": row["payout_if_win_usd"],
         "profit_if_win_usd": row["profit_if_win_usd"],
+        "entry_delta_usd": row["entry_delta_usd"],
+        "exit_delta_usd": row["exit_delta_usd"],
+        "entry_quote": row["entry_quote"],
+        "exit_quote": row["exit_quote"],
         "account_id": row["account_id"],
         "source": row["source"],
         "strategy_id": row["strategy_id"],
@@ -300,8 +373,10 @@ def _insert_round(conn: sqlite3.Connection, r: dict) -> None:
                 avg_entry_price, best_ask, best_ask_c, entry_fee_usd, exit_fee_usd,
                 entry_btc, exit_btc, exit_price, proceeds_usd, pnl_usd,
                 result, close_type, reason, close_reason,
-                payout_if_win_usd, profit_if_win_usd, account_id, source, strategy_id
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                payout_if_win_usd, profit_if_win_usd,
+                entry_delta_usd, exit_delta_usd, entry_quote, exit_quote,
+                account_id, source, strategy_id
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 o["id"], r["market_start_ts"], seq, o.get("side"), o.get("entry_sec"),
                 o.get("exit_sec"), o.get("size_usd"), o.get("shares"),
@@ -311,6 +386,8 @@ def _insert_round(conn: sqlite3.Connection, r: dict) -> None:
                 o.get("proceeds_usd"), o.get("pnl_usd"),
                 o.get("result"), o.get("close_type"), o.get("reason"), o.get("close_reason"),
                 o.get("payout_if_win_usd"), o.get("profit_if_win_usd"),
+                o.get("entry_delta_usd"), o.get("exit_delta_usd"),
+                o.get("entry_quote"), o.get("exit_quote"),
                 o.get("account_id"), o.get("source"), o.get("strategy_id"),
             ),
         )
@@ -371,6 +448,8 @@ def _slim_round(r: dict) -> dict:
         "traded": r.get("traded", False),
         "action_errors": r.get("action_errors") or [],
         "stake_usd": stake,
+        **entry_delta_stats_from_orders(orders),
+        **order_timing_stats_from_orders(orders),
     }
 
 
@@ -441,7 +520,7 @@ def simulation_has_orders(history_dir: Path, simulation_id: str) -> bool:
 
 def list_simulations(history_dir: Path) -> list[dict]:
     root = simulations_dir(history_dir)
-    items: list[tuple[float, dict]] = []
+    items: list[dict] = []
     for path in root.glob("simulation_*.sqlite"):
         conn = _connect(path)
         try:
@@ -449,15 +528,15 @@ def list_simulations(history_dir: Path) -> list[dict]:
             data = _meta_dict(meta)
         finally:
             conn.close()
-        items.append((path.stat().st_mtime, simulation_summary(data)))
+        items.append(simulation_summary(data))
     for path in root.glob("simulation_*.json"):
         sid = path.stem.removeprefix("simulation_")
         if _sqlite_path(root, sid).is_file():
             continue
         data = _load_json_legacy(root, path)
-        items.append((path.stat().st_mtime, simulation_summary(data)))
-    items.sort(key=lambda x: x[0], reverse=True)
-    return [x[1] for x in items]
+        items.append(simulation_summary(data))
+    items.sort(key=lambda s: s.get("created_at_utc") or "", reverse=True)
+    return items
 
 
 def delete_simulation(history_dir: Path, simulation_id: str) -> None:

@@ -6,6 +6,7 @@ from pathlib import Path
 from src.binary_format import MAGIC, VERSION, read_round
 from src.book import tick_quotes_missing
 from src.clob_api import BET_USD, majority_side, market_buy_gain
+from src.market import INTERVAL_SECS
 
 
 def _levels_sorted(levels, descending: bool) -> bool:
@@ -45,8 +46,9 @@ def verify_round(path: str) -> tuple[list[str], list[str]]:
         errors.append(f"V4: cannot parse start_ts from filename {p.name}")
     elif int(m.group(1)) != header["market_start_ts"]:
         errors.append(f"V4: filename ts {m.group(1)} != header {header['market_start_ts']}")
-    if header["market_end_ts"] - header["market_start_ts"] != 300:
-        errors.append(f"V5: round duration != 300s")
+    duration = header["market_end_ts"] - header["market_start_ts"]
+    if duration not in INTERVAL_SECS.values():
+        errors.append(f"V5: round duration {duration}s not in {sorted(INTERVAL_SECS.values())}")
     if tick_count > 1:
         secs = ticks[:, 1]
         for i in range(len(secs) - 1):
@@ -75,9 +77,10 @@ def verify_round(path: str) -> tuple[list[str], list[str]]:
         errors.append("V11c: final_price missing")
     if header["ptb_price"] <= 0:
         errors.append("V11d: ptb_price missing")
-    if tick_count > 0:
-        if ticks[0, 1] < 295:
-            errors.append(f"V12: first tick secs_to_expiry {ticks[0, 1]} < 295")
+    if tick_count > 0 and duration in INTERVAL_SECS.values():
+        first_min = duration - 5
+        if ticks[0, 1] < first_min:
+            errors.append(f"V12: first tick secs_to_expiry {ticks[0, 1]} < {first_min}")
         if ticks[-1, 1] > 10:
             errors.append(f"V12: last tick secs_to_expiry {ticks[-1, 1]} > 10")
     has_final_gamma = not math.isnan(header["final_gamma"])

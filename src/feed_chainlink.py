@@ -15,6 +15,10 @@ from src.setup import (
 
 log = logging.getLogger("chainlink")
 RTDS_URL = "wss://ws-live-data.polymarket.com"
+CHAINLINK_SYMBOLS = {
+    "btc": "btc/usd", "eth": "eth/usd", "sol": "sol/usd", "xrp": "xrp/usd",
+    "doge": "doge/usd", "bnb": "bnb/usd", "hype": "hype/usd",
+}
 
 
 def ts_to_ms(ts: int) -> int:
@@ -51,9 +55,14 @@ class ChainlinkFeed:
         self._last_ts_ms: int | None = None
         self._last_recv_ms: int | None = None
         self._conn_id = 0
-        self.symbol = "btc/usd"
+        self.symbol: str | None = None
+
+    def configure(self, asset: str) -> None:
+        self.symbol = CHAINLINK_SYMBOLS[asset]
 
     def start(self) -> None:
+        if self.symbol is None:
+            raise Exception("ChainlinkFeed.configure(asset) required before start")
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return

@@ -60,9 +60,13 @@ def main() -> None:
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
+    if args.interval not in INTERVAL_SECS:
+        raise Exception(f"unsupported interval: {args.interval}")
     feed = ChainlinkFeed.get()
+    feed.configure(args.asset)
     feed.start()
     GammaPatchWorker.get()
+    log.info("collector start asset=%s interval=%s out=%s", args.asset, args.interval, out_dir)
 
     try:
         if args.once:

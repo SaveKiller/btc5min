@@ -30,7 +30,28 @@ Causa della seconda perdita: la finestra [90, 210] ignora che il **round precede
 
 Alternative future (non usate in quel cutover): graceful drain in `main.py` (niente nuovi spawn, `join` dei runner fino a write, poi exit) → 0 round persi, a costo di un restart più lungo.
 
+## Servizi collector (multi-token)
+
+Su poly girano **14** unit systemd (7 asset × 5m+15m), stessi `data/`, prefissi file `{asset}{interval}_*`.
+
+| Asset | 5m | 15m | Log |
+|-------|----|-----|-----|
+| btc | `btc5min` | `btc15min` | `collector.log` / `collector-btc15m.log` |
+| eth | `eth5m` | `eth15m` | `collector-eth5m.log` / `collector-eth15m.log` |
+| sol | `sol5m` | `sol15m` | idem pattern |
+| xrp | `xrp5m` | `xrp15m` | |
+| doge | `doge5m` | `doge15m` | |
+| bnb | `bnb5m` | `bnb15m` | |
+| hype | `hype5m` | `hype15m` | |
+
+Template in [`deploy/`](../deploy/). Generatore: `python scripts/gen_collector_units.py --write deploy`.
+
+Il 5m BTC resta il servizio “storico” primario; gli altri sono affiancati. Restart di un token non tocca gli altri processi.
+
 ## Riferimenti
 
 - Piano: `.cursor/plans/orderbook_depth_8_543aca92.plan.md`
 - Deploy base poly: `meetings/bug-poly-collector/context/deploy-ct-lan-poly.md`
+- Inventario/capacità: [`inventory-capacity-updown-22-07-26.md`](inventory-capacity-updown-22-07-26.md)
+- Risorse BTC 15m: [`nota-risorse-btc15m-22-07-26.md`](nota-risorse-btc15m-22-07-26.md)
+- **Report sintetico multi-token:** [`report-collector-multitoken-poly-22-07-26.md`](report-collector-multitoken-poly-22-07-26.md)

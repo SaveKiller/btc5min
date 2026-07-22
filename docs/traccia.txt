@@ -17,7 +17,7 @@ si può associare una size diversa a secondo del delta.
 6) Impostare l'analisi del backtest mediante eventi 
 che prima vanno mappati separatamente con l'IA.
 
-7) Quando si hanno a disposizione tutti gli eventi capitabili 
+7) Quando si hanno a disposizione tutti gli eventi che possono capitare 
 in un round, si può andare allo step 2 di questo studio in cui 
 si uniscono questi eventi con le azioni fatte dalla strategia 
 come l'apertura o la chiusura di un movimento.

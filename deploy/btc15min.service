@@ -1,0 +1,17 @@
+[Unit]
+Description=BTC5MIN Polymarket collector (BTC Up/Down 15m)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/btc5min
+ExecStart=/opt/btc5min/venv/bin/python3 -m src.main --asset btc --interval 15m
+Restart=always
+RestartSec=5
+StandardOutput=append:/opt/btc5min/data/collector-btc15m.log
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

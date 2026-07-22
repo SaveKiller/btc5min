@@ -724,7 +724,10 @@ class ReplayEngine:
         self.sec = 0
         outcome = self.loaded.outcome_name
         final_btc = self.loaded.final_chainlink
-        settled = self.orders.settle_open(outcome, 0, final_btc)
+        settled = self.orders.settle_open(
+            outcome, 0, final_btc,
+            self.loaded.ticks_by_sec.get(0), self.loaded.ptb_chainlink,
+        )
         by_account: dict[str, list[dict]] = {}
         for o in self.orders.closed_orders:
             aid = o.get("account_id")

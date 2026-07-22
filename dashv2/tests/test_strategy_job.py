@@ -100,6 +100,11 @@ class TestStrategyJob(unittest.TestCase):
         self.assertEqual(len(out["orders"]), 1)
         self.assertEqual(out["orders"][0]["side"], "Up")
         self.assertEqual(out["orders"][0]["entry_sec"], 200)
+        self.assertEqual(out["orders"][0]["entry_delta_usd"], 10.0)
+        self.assertEqual(out["orders"][0]["entry_quote"], 0.55)
+        self.assertEqual(out["orders"][0]["exit_sec"], 0)
+        self.assertEqual(out["orders"][0]["exit_delta_usd"], 110.0)
+        self.assertEqual(out["orders"][0]["exit_quote"], 1.0)
         self.assertEqual(out["orders"][0]["result"], "won")
         self.assertEqual(out["action_errors"], [])
 

@@ -11,7 +11,7 @@ from src.convert import warnings_from_header, write_round_txt
 from src.feed_chainlink import ChainlinkFeed
 from src.feed_clob import ClobThread, snapshot_books, snapshot_chainlink
 from src.gamma_patch import GammaPatchWorker
-from src.market import fetch_market_by_slug, poll_gamma_outcome, wait_for_market
+from src.market import INTERVAL_SECS, fetch_market_by_slug, poll_gamma_outcome, wait_for_market
 from src.round_state import RoundState
 from src.sample_log import log_sample, log_sample_partial
 from src.settlement import build_round_header
@@ -21,11 +21,11 @@ from src.verify import verify_round
 log = logging.getLogger("round")
 
 
-def countdown_sec(market_end_ts: int) -> int | None:
+def countdown_sec(market_end_ts: int, max_cd: int) -> int | None:
     secs = market_end_ts - time.time()
     if secs <= 0: return None
     cd = int(math.floor(secs + 0.5))
-    if cd < 1 or cd > 300: return None
+    if cd < 1 or cd > max_cd: return None
     return cd
 
 
@@ -41,14 +41,15 @@ def _try_gamma_ptb(asset: str, interval: str, start_ts: int, state: RoundState) 
 
 
 class SamplerThread(threading.Thread):
-    def __init__(self, state: RoundState):
+    def __init__(self, state: RoundState, max_cd: int):
         super().__init__(daemon=True, name=f"sampler-{state.start_ts}")
         self.state = state
+        self.max_cd = max_cd
         self._last_side: str | None = None
 
     def run(self) -> None:
         while not self.state.stop.is_set() and time.time() < self.state.market_end_ts:
-            cd = countdown_sec(self.state.market_end_ts)
+            cd = countdown_sec(self.state.market_end_ts, self.max_cd)
             if cd is None or cd == self.state.last_countdown_sec:
                 time.sleep(0.05)
                 continue
@@ -122,7 +123,7 @@ class RoundRunner(threading.Thread):
                 time.sleep(0.05)
             lag = time.time() - state.market_start_ts
             log.info("round %s sampling started (lag=%.2fs)", self.start_ts, lag)
-            sampler = SamplerThread(state)
+            sampler = SamplerThread(state, INTERVAL_SECS[self.interval])
             sampler.start()
             while time.time() < state.market_end_ts:
                 now = time.time()
