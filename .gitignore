@@ -220,6 +220,9 @@ __marimo__/
 # Collected round data
 data/
 
+# Indice round (solo in data/; evita commit accidentale da data_dir sbagliato)
+/rounds_index.json
+
 # Dashboard frontend
 dash/node_modules/
 dash/dist/

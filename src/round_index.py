@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from src.binary_format import txt_path_for_bin
 
 INDEX_VERSION = 1
 INDEX_NAME = "rounds_index.json"
+_DATE_DIR = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def index_path(data_dir: Path) -> Path:
@@ -33,12 +35,24 @@ def _ts_from_bin(bin_path: Path) -> int:
     return int(parts[1])
 
 
+def _iter_bin_paths(data_dir: Path):
+    """Solo layout canonico data/YYYY-MM-DD/bin/btc5m_*.bin (no glob ricorsivo)."""
+    data_dir = Path(data_dir)
+    for day_dir in sorted(data_dir.iterdir()):
+        if not day_dir.is_dir() or not _DATE_DIR.match(day_dir.name):
+            continue
+        bin_dir = day_dir / "bin"
+        if not bin_dir.is_dir():
+            continue
+        yield from bin_dir.glob("btc5m_*.bin")
+
+
 def scan_bins(data_dir: Path) -> dict[int, dict]:
     """Scan completo data_dir; in caso di duplicati per ts tiene il .bin più recente."""
     data_dir = Path(data_dir)
     entries: dict[int, dict] = {}
     mtimes: dict[int, float] = {}
-    for bin_path in data_dir.glob("**/bin/btc5m_*.bin"):
+    for bin_path in _iter_bin_paths(data_dir):
         ts = _ts_from_bin(bin_path)
         mtime = bin_path.stat().st_mtime
         if ts in entries and mtime <= mtimes[ts]:
@@ -72,7 +86,7 @@ def reconcile_index(data_dir: Path, entries: dict[int, dict]) -> bool:
     data_dir = Path(data_dir)
     changed = False
     on_disk: dict[int, tuple[Path, float]] = {}
-    for bin_path in data_dir.glob("**/bin/btc5m_*.bin"):
+    for bin_path in _iter_bin_paths(data_dir):
         ts = _ts_from_bin(bin_path)
         mtime = bin_path.stat().st_mtime
         if ts not in on_disk or mtime > on_disk[ts][1]:
