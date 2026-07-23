@@ -1286,7 +1286,7 @@ function filterStatsSimulations(simulations, monthYm, strategyName, search) {
 export function renderStatsSimPeriodSelect(months, selectedYm) {
     const btn = $("statsSimPeriodBtn");
     const menu = $("statsSimPeriodMenu");
-    const selected = selectedYm && months.includes(selectedYm) ? selectedYm : "";
+    const selected = selectedYm && (!months.length || months.includes(selectedYm)) ? selectedYm : "";
     btn.textContent = selected ? statsSimMonthLabel(selected) : "ALL TIME";
     btn.classList.toggle("is-placeholder", !selected);
     fitSelectToLabels(btn, ["ALL TIME", ...months.map(statsSimMonthLabel)]);
@@ -1303,7 +1303,7 @@ export function renderStatsSimPeriodSelect(months, selectedYm) {
 export function renderStatsSimStrategySelect(names, selectedName) {
     const btn = $("statsSimStrategyBtn");
     const menu = $("statsSimStrategyMenu");
-    const selected = selectedName && names.includes(selectedName) ? selectedName : "";
+    const selected = selectedName && (!names.length || names.includes(selectedName)) ? selectedName : "";
     const labels = ["ALL STRATEGIES", ...names.map((n) => n.toUpperCase())];
     btn.textContent = selected ? selected.toUpperCase() : "ALL STRATEGIES";
     btn.classList.toggle("is-placeholder", !selected);
@@ -1593,6 +1593,54 @@ function aggStatsDays(rounds, hour, slot) {
 }
 
 
+function aggStatsCalendarDays(rounds) {
+    const byDay = new Map();
+    for (const r of rounds) {
+        if (!r.ok) continue;
+        const day = utcRoundParts(r.market_start_ts).day;
+        if (!byDay.has(day)) {
+            byDay.set(day, { key: day, label: day, market: "", ...emptyStatsAgg() });
+        }
+        accumulateStatsAgg(byDay.get(day), r);
+    }
+    const rows = [...byDay.values()].sort((a, b) => a.key.localeCompare(b.key)).map(finalizeStatsAgg);
+    return { rows, total: totalStatsAgg(rows) };
+}
+
+
+function aggStatsDayHours(rounds, day) {
+    const buckets = Array.from({ length: 24 }, (_, h) => ({
+        key: String(h), label: `${pad2(h)}:00`, market: UTC_HOUR_MARKETS[h], ...emptyStatsAgg(),
+    }));
+    for (const r of rounds) {
+        if (!r.ok) continue;
+        const p = utcRoundParts(r.market_start_ts);
+        if (p.day !== day) continue;
+        accumulateStatsAgg(buckets[p.hour], r);
+    }
+    const rows = buckets.map(finalizeStatsAgg);
+    return { rows, total: totalStatsAgg(rows) };
+}
+
+
+function aggStatsDaySlots(rounds, day, hour) {
+    const buckets = Array.from({ length: 12 }, (_, s) => ({
+        key: String(s), label: slotRangeLabel(hour, s), market: UTC_HOUR_MARKETS[hour],
+        market_start_ts: null, ...emptyStatsAgg(),
+    }));
+    for (const r of rounds) {
+        if (!r.ok) continue;
+        const p = utcRoundParts(r.market_start_ts);
+        if (p.day !== day || p.hour !== hour) continue;
+        const b = buckets[p.slot];
+        if (b.market_start_ts == null) b.market_start_ts = r.market_start_ts;
+        accumulateStatsAgg(b, r);
+    }
+    const rows = buckets.map(finalizeStatsAgg);
+    return { rows, total: totalStatsAgg(rows) };
+}
+
+
 function statsPnlTd(n) {
     if (n == null) return `<td class="text-end"></td>`;
     const v = Number(n);
@@ -1601,15 +1649,16 @@ function statsPnlTd(n) {
 }
 
 
-function statsAggRowHtml(row, { drill = false, roundTs = null } = {}) {
+function statsAggRowHtml(row, { drill = false, roundTs = null, dailyLayout = false } = {}) {
     const clickable = drill || roundTs != null;
     const cls = clickable ? "stats-row-drill" : "";
     let data = "";
     if (roundTs != null) data = ` data-round-ts="${Number(roundTs)}"`;
     else if (drill) data = ` data-drill-key="${escapeHtml(row.key)}"`;
+    const marketTd = dailyLayout ? "" : `<td>${escapeHtml(row.market)}</td>`;
     return `<tr class="${cls}"${data}>
         <td>${escapeHtml(row.label)}</td>
-        <td>${escapeHtml(row.market)}</td>
+        ${marketTd}
         <td class="text-end">${row.rounds}</td>
         <td class="text-end stats-sum-pos">${row.pos}</td>
         <td class="text-end stats-sum-neg">${row.neg}</td>
@@ -1623,9 +1672,10 @@ function statsAggRowHtml(row, { drill = false, roundTs = null } = {}) {
 }
 
 
-function statsTotalRowHtml(total) {
+function statsTotalRowHtml(total, { dailyLayout = false } = {}) {
+    const labelSpan = dailyLayout ? 1 : 2;
     return `<tr class="stats-backtest-table-total">
-        <td colspan="2">TOTAL</td>
+        <td colspan="${labelSpan}">TOTAL</td>
         <td class="text-end">${total.rounds}</td>
         <td class="text-end stats-sum-pos">${total.pos}</td>
         <td class="text-end stats-sum-neg">${total.neg}</td>
@@ -1639,12 +1689,36 @@ function statsTotalRowHtml(total) {
 }
 
 
-function renderStatsResultsBreadcrumb(drill) {
+function renderStatsResultsViewToggle(view) {
+    const v = view === "daily" ? "daily" : "24h";
+    document.getElementById("statsResultsView24h")?.classList.toggle("active", v === "24h");
+    document.getElementById("statsResultsViewDaily")?.classList.toggle("active", v === "daily");
+}
+
+
+function renderStatsResultsBreadcrumb(viewMode, drill, dailyDrill) {
     const el = $("statsResultsBreadcrumb");
     if (!el) return;
-    const root = `<button type="button" data-crumb="hours">Risultati 24 ore UTC</button>`;
+    if (viewMode === "daily") {
+        const root = `<button type="button" data-crumb="days">Daily Results</button>`;
+        const d = dailyDrill || { level: "days", day: null, hour: null };
+        if (!d || d.level === "days") {
+            el.innerHTML = `<span class="crumb-current">Daily Results</span>`;
+            return;
+        }
+        if (d.level === "hours") {
+            el.innerHTML = `${root}<span class="crumb-sep">›</span><span class="crumb-current">${d.day}</span>`;
+            return;
+        }
+        const hourLab = `${pad2(d.hour)}:00`;
+        el.innerHTML = `${root}<span class="crumb-sep">›</span>`
+            + `<button type="button" data-crumb="hours">${d.day}</button>`
+            + `<span class="crumb-sep">›</span><span class="crumb-current">${hourLab}</span>`;
+        return;
+    }
+    const root = `<button type="button" data-crumb="hours">24 Hour UTC Results</button>`;
     if (!drill || drill.level === "hours") {
-        el.innerHTML = `<span class="crumb-current">Risultati 24 ore UTC</span>`;
+        el.innerHTML = `<span class="crumb-current">24 Hour UTC Results</span>`;
         return;
     }
     const hourLab = `${pad2(drill.hour)}:00`;
@@ -1874,6 +1948,8 @@ function renderStatsSessionDetailHtml(d, summary) {
 
 export function renderStatsBacktest(state) {
     const summary = state?.statsSummary ?? null;
+    const viewMode = state?.statsResultsView === "daily" ? "daily" : "24h";
+    renderStatsResultsViewToggle(viewMode);
     const mode24h = state?.statsHourFilter24h !== false;
     const hourFilter = mode24h
         ? new Set(ALL_STATS_HOURS)
@@ -1913,19 +1989,37 @@ export function renderStatsBacktest(state) {
 
     const body = $("statsBacktestTableBody");
     const drill = state?.statsDrill || { level: "hours", hour: null, slot: null };
-    renderStatsResultsBreadcrumb(hasRounds ? drill : null);
+    const dailyDrill = state?.statsDailyDrill || { level: "days", day: null, hour: null };
+    const dailyLayout = viewMode === "daily" && dailyDrill.level === "days";
+    const marketCol = $("statsColMarket");
+    marketCol.classList.toggle("d-none", dailyLayout);
+    renderStatsResultsBreadcrumb(viewMode, hasRounds ? drill : null, hasRounds ? dailyDrill : null);
 
     if (!hasRounds && !state?.statsTable?.hours) {
         body.innerHTML = "";
-        $("statsColLabel").textContent = "Hour";
+        $("statsColLabel").textContent = dailyLayout ? "Day" : "Hour";
         return;
     }
 
     let view;
-    let colLabel = "Hour";
+    let colLabel = dailyLayout ? "Day" : "Hour";
     let rowMode = "plain"; // plain | drill | round
     if (hasRounds) {
-        if (drill.level === "slots") {
+        if (viewMode === "daily") {
+            if (dailyDrill.level === "hours") {
+                view = aggStatsDayHours(rounds, dailyDrill.day);
+                colLabel = "Hour";
+                rowMode = "drill";
+            } else if (dailyDrill.level === "slots") {
+                view = aggStatsDaySlots(rounds, dailyDrill.day, dailyDrill.hour);
+                colLabel = "Slot";
+                rowMode = "round";
+            } else {
+                view = aggStatsCalendarDays(rounds);
+                colLabel = "Day";
+                rowMode = "drill";
+            }
+        } else if (drill.level === "slots") {
             view = aggStatsSlots(rounds, drill.hour);
             colLabel = "Slot";
             rowMode = "drill";
@@ -1938,6 +2032,10 @@ export function renderStatsBacktest(state) {
             colLabel = "Hour";
             rowMode = "drill";
         }
+    } else if (dailyLayout) {
+        body.innerHTML = "";
+        $("statsColLabel").textContent = "Day";
+        return;
     } else {
         view = filterStatsTableByHours(state.statsTable, hourFilter);
         rowMode = "plain";
@@ -1945,11 +2043,13 @@ export function renderStatsBacktest(state) {
 
     $("statsColLabel").textContent = colLabel;
     const rows = view.rows.map((r) => {
-        if (rowMode === "round") return statsAggRowHtml(r, { roundTs: r.market_start_ts });
-        if (rowMode === "drill") return statsAggRowHtml(r, { drill: true });
-        return statsAggRowHtml(r);
+        if (rowMode === "round" && r.market_start_ts != null) {
+            return statsAggRowHtml(r, { roundTs: r.market_start_ts, dailyLayout });
+        }
+        if (rowMode === "drill") return statsAggRowHtml(r, { drill: true, dailyLayout });
+        return statsAggRowHtml(r, { dailyLayout });
     });
-    rows.push(statsTotalRowHtml(view.total));
+    rows.push(statsTotalRowHtml(view.total, { dailyLayout }));
     body.innerHTML = rows.join("");
 }
 

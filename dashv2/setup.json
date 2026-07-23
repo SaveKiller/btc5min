@@ -4,7 +4,7 @@
     "host": "127.0.0.1",
     "port": 8780,
     "default_order_size_usd": 100,
-    "stats_workers": 10,
+    "stats_workers": 14,
     "stall_reconnect_sec": 15,
     "engine_plugin": "replay",
     "cursor_label": "Composer 2.5",

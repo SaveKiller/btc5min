@@ -1105,6 +1105,21 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 #statsBacktestTable tbody tr.stats-row-drill:hover {
   background:rgba(59,110,220,.18);
 }
+.stats-results-view-toggle {
+  display:flex; flex-shrink:0; gap:0;
+  border:1px solid #4a5d7a; border-radius:var(--bs-border-radius); overflow:hidden;
+}
+.stats-results-view-btn {
+  border:0; border-right:1px solid #4a5d7a; background:#1a2333; color:#8b9bb5;
+  font-size:calc(.68rem + 6pt); letter-spacing:.08em; text-transform:uppercase;
+  font-weight:700; padding:.28rem .75rem; line-height:1.2; cursor:pointer;
+}
+.stats-results-view-btn:last-child { border-right:0; }
+.stats-results-view-btn:hover { color:#c5d0e4; background:#243044; }
+.stats-results-view-btn.active {
+  color:#e8edf5; background:#2d4a7a;
+  box-shadow:inset 0 0 0 1px rgba(120,160,255,.25);
+}
 .stats-results-crumb {
   display:flex; align-items:center; flex-wrap:wrap; gap:.4rem;
   font-size:calc(.76rem + 7pt); letter-spacing:.08em; text-transform:uppercase;

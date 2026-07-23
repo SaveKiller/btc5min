@@ -313,8 +313,12 @@
                   </article>
                   <div class="stats-backtest-panel" id="statsBacktestPanel">
                     <article class="app-panel stats-table-panel">
-                      <div class="panel-head flex-shrink-0 d-flex align-items-center flex-wrap gap-2">
+                      <div class="panel-head flex-shrink-0 d-flex align-items-center justify-content-between flex-wrap gap-2">
                         <nav class="stats-results-crumb panel-title mb-0" id="statsResultsBreadcrumb" aria-label="Drill risultati"></nav>
+                        <div class="stats-results-view-toggle" role="group" aria-label="Vista risultati">
+                          <button type="button" class="stats-results-view-btn active" id="statsResultsView24h" data-view="24h">24H</button>
+                          <button type="button" class="stats-results-view-btn" id="statsResultsViewDaily" data-view="daily">DAILY</button>
+                        </div>
                       </div>
                       <div class="stats-table-scroll px-3 pb-2">
                         <table class="table table-sm mb-0 align-middle" id="statsBacktestTable">

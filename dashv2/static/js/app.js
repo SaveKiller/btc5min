@@ -19,6 +19,10 @@ const REPLAY_START_SEC_MAX = 300;
 const LEFT_TAB_KEY = "dashv2_left_tab";
 const STATS_HOUR_FILTER_KEY = "dashv2_stats_hour_filter";
 const STATS_HOUR_FILTER_24H_KEY = "dashv2_stats_hour_filter_24h";
+const STATS_RESULTS_VIEW_KEY = "dashv2_stats_results_view";
+const STATS_SIM_MONTH_KEY = "dashv2_stats_sim_month";
+const STATS_SIM_STRATEGY_KEY = "dashv2_stats_sim_strategy";
+const STATS_SIM_ID_KEY = "dashv2_stats_sim_id";
 const UI_TAB_MAP = {
     candles: { tabId: "candles-tab", paneId: "candlesPane" },
     accounts: { tabId: "accounts-tab", paneId: "accountsPane" },
@@ -47,15 +51,17 @@ const state = {
     statsDayFrom: "", statsDayTo: "",
     statsStrategyId: null, statsStrategyVersion: null, statsAnalyzeId: null,
     statsAnalyzes: [],
-    statsSimulations: [], statsSimulationId: null,
-    statsSimMonthYm: "", statsSimStrategyName: "", statsSimSearch: "",
+    statsSimulations: [], statsSimulationId: loadStoredStatsSimId(),
+    statsSimMonthYm: loadStoredStatsSimMonth(), statsSimStrategyName: loadStoredStatsSimStrategy(), statsSimSearch: "",
     statsAnalyzeSimulationIds: [],
     statsJobRunning: false, statsProgress: null,
     statsJobStartedAt: null, statsJobElapsedSec: null, statsJobWorkers: null,
     statsTable: null, statsSummary: null, statsRounds: null,
     statsHourFilter: loadStoredStatsHourFilter(),
     statsHourFilter24h: loadStoredStatsHourFilter24h(),
+    statsResultsView: loadStoredStatsResultsView(),
     statsDrill: { level: "hours", hour: null, slot: null },
+    statsDailyDrill: { level: "days", day: null, hour: null },
     statsChatMessages: [], statsChatBusy: false,
     uiTabs: Object.keys(UI_TAB_MAP),
 };
@@ -219,6 +225,57 @@ function loadStoredStatsHourFilter24h() {
 
 function persistStatsHourFilter24h(mode24h) {
     localStorage.setItem(STATS_HOUR_FILTER_24H_KEY, mode24h ? "1" : "0");
+}
+
+
+function loadStoredStatsResultsView() {
+    const raw = localStorage.getItem(STATS_RESULTS_VIEW_KEY);
+    return raw === "daily" ? "daily" : "24h";
+}
+
+
+function persistStatsResultsView(view) {
+    localStorage.setItem(STATS_RESULTS_VIEW_KEY, view);
+}
+
+
+function loadStoredStatsSimMonth() {
+    return localStorage.getItem(STATS_SIM_MONTH_KEY) || "";
+}
+
+
+function loadStoredStatsSimStrategy() {
+    return localStorage.getItem(STATS_SIM_STRATEGY_KEY) || "";
+}
+
+
+function loadStoredStatsSimId() {
+    return localStorage.getItem(STATS_SIM_ID_KEY) || null;
+}
+
+
+function persistStatsSimMonth(ym) {
+    if (ym) localStorage.setItem(STATS_SIM_MONTH_KEY, ym);
+    else localStorage.removeItem(STATS_SIM_MONTH_KEY);
+}
+
+
+function persistStatsSimStrategy(name) {
+    if (name) localStorage.setItem(STATS_SIM_STRATEGY_KEY, name);
+    else localStorage.removeItem(STATS_SIM_STRATEGY_KEY);
+}
+
+
+function persistStatsSimId(id) {
+    if (id) localStorage.setItem(STATS_SIM_ID_KEY, id);
+    else localStorage.removeItem(STATS_SIM_ID_KEY);
+}
+
+
+function persistStatsSimUi() {
+    persistStatsSimMonth(state.statsSimMonthYm);
+    persistStatsSimStrategy(state.statsSimStrategyName);
+    persistStatsSimId(state.statsSimulationId);
 }
 
 
@@ -718,6 +775,7 @@ function setStatsMode(mode) {
 
 function resetStatsDrill() {
     state.statsDrill = { level: "hours", hour: null, slot: null };
+    state.statsDailyDrill = { level: "days", day: null, hour: null };
 }
 
 
@@ -753,14 +811,16 @@ function setStatsBacktestResults({ table = null, summary = null, rounds = null }
 function refreshStatsSimulationUi() {
     const months = statsSimMonthList(state.statsSimulations);
     const strategies = statsSimStrategyList(state.statsSimulations);
-    if (state.statsSimMonthYm && !months.includes(state.statsSimMonthYm)) {
+    if (state.statsSimMonthYm && months.length && !months.includes(state.statsSimMonthYm)) {
         state.statsSimMonthYm = "";
+        persistStatsSimMonth("");
     }
-    if (state.statsSimStrategyName && !strategies.includes(state.statsSimStrategyName)) {
+    if (state.statsSimStrategyName && strategies.length && !strategies.includes(state.statsSimStrategyName)) {
         state.statsSimStrategyName = "";
+        persistStatsSimStrategy("");
     }
-    state.statsSimMonthYm = renderStatsSimPeriodSelect(months, state.statsSimMonthYm);
-    state.statsSimStrategyName = renderStatsSimStrategySelect(strategies, state.statsSimStrategyName);
+    renderStatsSimPeriodSelect(months, state.statsSimMonthYm);
+    renderStatsSimStrategySelect(strategies, state.statsSimStrategyName);
     renderStatsSimulationSelect(
         state.statsSimulations, state.statsSimulationId,
         state.statsSimMonthYm, state.statsSimStrategyName, state.statsSimSearch);
@@ -797,11 +857,13 @@ function loadStatsSimulations() {
         state.statsSimulations = res.simulations || [];
         if (state.statsSimulationId && !state.statsSimulations.some((s) => s.id === state.statsSimulationId)) {
             state.statsSimulationId = null;
+            persistStatsSimId(null);
         }
         refreshStatsSimulationUi();
         state.statsAnalyzeSimulationIds = state.statsAnalyzeSimulationIds.filter(
             (id) => state.statsSimulations.some((s) => s.id === id && s.has_orders));
         renderStatsAnalyzeSimSelect(state.statsSimulations, state.statsAnalyzeSimulationIds);
+        if (state.statsSimulationId) return loadStatsSimulation(state.statsSimulationId);
     }).catch(() => {});
 }
 
@@ -821,6 +883,7 @@ function applyLoadedSimulation(sim) {
     };
     state.statsRounds = sim.rounds || null;
     resetStatsDrill();
+    persistStatsSimUi();
     renderStatsDays(state.statsDayFrom, state.statsDayTo, state.roundIndexReady);
     renderStatsStrategySelect(state.strategies, state.statsStrategyId, state.statsStrategyVersion, state.statsJobRunning);
     refreshStatsSimulationUi();
@@ -1342,7 +1405,10 @@ socket.on("stats.job.done", (payload) => {
     if (payload.kind === "backtest") {
         state.statsTable = payload.table || null;
         state.statsRounds = payload.rounds || null;
-        if (payload.simulation_id) state.statsSimulationId = payload.simulation_id;
+        if (payload.simulation_id) {
+            state.statsSimulationId = payload.simulation_id;
+            persistStatsSimId(payload.simulation_id);
+        }
         resetStatsDrill();
         syncStatsHourFilterUi(true);
         renderStatsBacktest(state);
@@ -1419,8 +1485,10 @@ socket.on("stats.simulations", (payload) => {
             state.statsSimMonthYm = (sim.exec_at || sim.created_at_utc || "").slice(0, 7);
             state.statsSimStrategyName = sim.strategy_name || "";
         }
+        persistStatsSimUi();
     } else if (state.statsSimulationId && !state.statsSimulations.some((s) => s.id === state.statsSimulationId)) {
         state.statsSimulationId = null;
+        persistStatsSimId(null);
     }
     state.statsAnalyzeSimulationIds = state.statsAnalyzeSimulationIds.filter(
         (id) => state.statsSimulations.some((s) => s.id === id && s.has_orders));
@@ -1943,12 +2011,17 @@ document.getElementById("statsBacktestTableBody").addEventListener("click", (e) 
     const tr = e.target.closest("tr[data-drill-key]");
     if (!tr || !state.statsRounds?.length) return;
     const key = tr.getAttribute("data-drill-key");
-    if (state.statsDrill.level === "hours") {
+    if (state.statsResultsView === "daily") {
+        const drill = state.statsDailyDrill;
+        if (drill.level === "days") {
+            state.statsDailyDrill = { level: "hours", day: key, hour: null };
+        } else if (drill.level === "hours") {
+            state.statsDailyDrill = { level: "slots", day: drill.day, hour: Number(key) };
+        }
+    } else if (state.statsDrill.level === "hours") {
         state.statsDrill = { level: "slots", hour: Number(key), slot: null };
     } else if (state.statsDrill.level === "slots") {
         state.statsDrill = { level: "days", hour: state.statsDrill.hour, slot: Number(key) };
-    } else {
-        return;
     }
     renderStatsBacktest(state);
 });
@@ -1956,23 +2029,45 @@ document.getElementById("statsResultsBreadcrumb").addEventListener("click", (e) 
     const btn = e.target.closest("button[data-crumb]");
     if (!btn) return;
     const crumb = btn.getAttribute("data-crumb");
-    if (crumb === "hours") {
+    if (state.statsResultsView === "daily") {
+        if (crumb === "days") {
+            state.statsDailyDrill = { level: "days", day: null, hour: null };
+        } else if (crumb === "hours") {
+            state.statsDailyDrill = { level: "hours", day: state.statsDailyDrill.day, hour: null };
+        }
+    } else if (crumb === "hours") {
         state.statsDrill = { level: "hours", hour: null, slot: null };
     } else if (crumb === "slots") {
         state.statsDrill = { level: "slots", hour: state.statsDrill.hour, slot: null };
     }
     renderStatsBacktest(state);
 });
+document.getElementById("statsResultsView24h").addEventListener("click", () => {
+    if (state.statsResultsView === "24h") return;
+    state.statsResultsView = "24h";
+    persistStatsResultsView("24h");
+    resetStatsDrill();
+    renderStatsBacktest(state);
+});
+document.getElementById("statsResultsViewDaily").addEventListener("click", () => {
+    if (state.statsResultsView === "daily") return;
+    state.statsResultsView = "daily";
+    persistStatsResultsView("daily");
+    resetStatsDrill();
+    renderStatsBacktest(state);
+});
 document.getElementById("statsSimPeriodMenu").addEventListener("click", (e) => {
     const item = e.target.closest("[data-value]");
     if (!item) return;
     state.statsSimMonthYm = item.dataset.value;
+    persistStatsSimMonth(state.statsSimMonthYm);
     refreshStatsSimulationUi();
 });
 document.getElementById("statsSimStrategyMenu").addEventListener("click", (e) => {
     const item = e.target.closest("[data-value]");
     if (!item) return;
     state.statsSimStrategyName = item.dataset.value;
+    persistStatsSimStrategy(state.statsSimStrategyName);
     refreshStatsSimulationUi();
 });
 document.getElementById("statsSimSearch").addEventListener("input", (e) => {
@@ -1984,6 +2079,7 @@ function deleteStatsSimulation(id) {
     return emitAck("stats.simulation.delete", { simulation_id: id }).then(() => {
         if (state.statsSimulationId === id) {
             state.statsSimulationId = null;
+            persistStatsSimId(null);
             setStatsBacktestResults({});
         }
         return loadStatsSimulations();
@@ -2003,6 +2099,7 @@ document.getElementById("statsSimulationMenu").addEventListener("click", (e) => 
     if (!item) return;
     const id = item.dataset.value || null;
     state.statsSimulationId = id;
+    persistStatsSimId(id);
     refreshStatsSimulationUi();
     if (id) loadStatsSimulation(id);
 });
