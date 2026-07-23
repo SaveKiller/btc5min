@@ -20,6 +20,8 @@ REMOTE_CMD = "cd /opt/btc5min && venv/bin/python3 scripts/sync_pack.py"
 SSH_BASE = ["ssh", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"]
 DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 ROUND_SEC = 300
+# Solo BTC 5m in sync da poly; altri asset/interval restano su poly.
+SYNC_BIN_GLOB = "btc5m_*.bin"
 
 
 def build_manifest() -> str:
@@ -31,8 +33,8 @@ def build_manifest() -> str:
             bin_dir = day / "bin"
             if not bin_dir.is_dir():
                 continue
-            for f in bin_dir.iterdir():
-                if f.is_file() and f.suffix == ".bin":
+            for f in bin_dir.glob(SYNC_BIN_GLOB):
+                if f.is_file():
                     paths.add(f"{day.name}/bin/{f.name}")
     return "\n".join(sorted(paths)) + ("\n" if paths else "")
 
@@ -58,7 +60,10 @@ def read_stdout(proc: subprocess.Popen) -> bytes:
 def extract_tar(data: bytes) -> list[Path]:
     downloaded: list[Path] = []
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
-        members = [m for m in tar.getmembers() if m.name.endswith(".bin")]
+        members = [
+            m for m in tar.getmembers()
+            if m.name.endswith(".bin") and Path(m.name).name.startswith("btc5m_")
+        ]
         n = len(members)
         print(f"Estrazione {n} file .bin in data/ ...", flush=True)
         for i, member in enumerate(members, 1):
@@ -115,7 +120,7 @@ def trim_downloaded_nan_tail(downloaded: list[Path]) -> list[Path]:
 
 
 def main() -> None:
-    print(f"Sync {HOST}:/opt/btc5min/data -> data/ (solo .bin mancanti)", flush=True)
+    print(f"Sync {HOST}:/opt/btc5min/data -> data/ (solo {SYNC_BIN_GLOB} mancanti)", flush=True)
 
     print("Scansione file locali ...", flush=True)
     manifest = build_manifest()

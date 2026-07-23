@@ -20,7 +20,7 @@ ssh ticksaver systemctl stop btc5min
 ssh ticksaver rm -f /opt/btc5min/data/*
 ssh ticksaver systemctl start btc5min
 
-# sync poly → locale (solo file mancanti, tar via scripts/sync_pack.py su poly)
+# sync poly → locale (solo btc5m_*.bin mancanti, tar via scripts/sync_pack.py su poly)
 # preferire sync.bat oppure: python sync.py
-# prima deploy dello script server dopo modifica:
+# dopo modifica a sync_pack.py, deploy su poly:
 scp scripts/sync_pack.py ticksaver:/opt/btc5min/scripts/

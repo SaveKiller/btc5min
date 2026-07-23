@@ -116,8 +116,15 @@ def convert_all_round_bins(data_dir: Path) -> None:
     print(f"Convertiti {total} file in {len(day_dirs)} giornate.")
 
 
+def iter_sync_bin_paths(data_dir: Path) -> list[Path]:
+    paths: list[Path] = []
+    for day_dir in iter_day_dirs(data_dir):
+        paths.extend(sorted((day_dir / "bin").glob("btc5m_*.bin")))
+    return paths
+
+
 def convert_sync_bins(data_dir: Path) -> None:
-    bin_paths = iter_round_bin_paths(data_dir)
+    bin_paths = iter_sync_bin_paths(data_dir)
     converted = 0
     for bin_path in bin_paths:
         bp = str(bin_path)

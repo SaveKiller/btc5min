@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Server: stdin = path .bin già presenti in locale; stdout = tar dei .bin mancanti."""
+"""Server: stdin = path .bin già presenti in locale; stdout = tar dei .bin mancanti (solo btc5m)."""
 import re
 import sys
 import tarfile
@@ -7,6 +7,8 @@ from pathlib import Path
 
 DATA = Path("/opt/btc5min/data")
 DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# Solo BTC 5m in sync verso dev; altri asset/interval restano su poly.
+SYNC_BIN_GLOB = "btc5m_*.bin"
 
 
 def main() -> None:
@@ -22,8 +24,8 @@ def main() -> None:
         bin_dir = day / "bin"
         if not bin_dir.is_dir():
             continue
-        for f in sorted(bin_dir.iterdir()):
-            if not f.is_file() or f.suffix != ".bin":
+        for f in sorted(bin_dir.glob(SYNC_BIN_GLOB)):
+            if not f.is_file():
                 continue
             rel = f"{day.name}/bin/{f.name}"
             if rel not in have:
