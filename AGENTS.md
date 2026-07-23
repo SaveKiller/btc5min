@@ -44,8 +44,9 @@ Ogni volta che, per qualsiasi motivo (deploy, restart, bug, gap su disco, proced
 
 In questo progetto le direttive Git **differiscono** da quelle generali degli altri repository.
 
-- L'agente **può e deve** fare commit sul repo delle modifiche effettuate quando lo ritiene opportuno, in particolare al termine di una feature, di una modifica o di un bug fix.
+- L'agente **può e deve** fare commit sul repo delle modifiche effettuate alla fine dell'intevento, anche se non ha avuto conferma da parte dell'utente, in particolare al termine di una feature, di una modifica o di un bug fix.
 - Il messaggio di commit può essere **sintetico** (basta che descriva in breve il contenuto del cambiamento).
+- **Non** deve fare commit se l'utente lo chiede esplicitamente in chat per quella modifica.
 - L'agente **non** deve fare push: lo farà l'utente.
 
 ---
