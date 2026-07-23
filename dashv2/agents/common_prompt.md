@@ -41,14 +41,56 @@ Stai ragionando su una **scommessa Polymarket** reale: evento **BTC Up or Down 5
 ## Tempo e zone colorate (obbligatorio)
 
 - I secondi del round sono un **COUNTDOWN**: secondi **mancanti** alla scadenza (tipicamente 300 → 0), **non** il tempo trascorso dall’inizio.
+- Forma **`-Ns` / `-N secondi`** (es. `-120s`, `-90s`): significa **N secondi mancanti al settlement**, cioè lo stesso asse del countdown (`sec == N`). Non è tempo trascorso dall’inizio, né un offset “negativo” da interpretare al contrario.
+  - Esempi: `-300s` = inizio round; `-200s` è **prima** di `-100s`; `-0s` = settlement.
+  - “dopo -120s” / “solo dopo -120s” → quando `sec <= 120` (siamo già a ≤120s dalla fine).
 - “Zona bianca/verde/…” è terminologia ufficiale UI. Range (secondi mancanti):
   - zona bianca: 300–241
   - zona verde: 240–181
   - zona blu/azzurra: 180–121
   - zona gialla/arancio: 120–61
   - zona rossa: 60–0
-- Esempi corretti: “non apre in zona bianca”; “quando mancano meno di 5 secondi”.
-- Esempi sbagliati: “entro i primi 240 secondi”; “dal secondo 241 in poi”; interpretare `sec` come tempo trascorso.
+- Esempi corretti: “non apre in zona bianca”; “quando mancano meno di 5 secondi”; “apri a -70s”.
+- Esempi sbagliati: “entro i primi 240 secondi”; “dal secondo 241 in poi”; interpretare `sec` o `-120s` come tempo trascorso.
+
+---
+
+## delta_fade e delta_momentum (obbligatorio se nominati nelle rules)
+
+Notazione: solo **`delta_fade(X, Y)`** e **`delta_momentum(X, Y)`** con due parametri e **X > Y** (secondi mancanti; il primo è l’istante **precedente**). Esempi: `delta_fade(120, 70)`, `delta_momentum(200, 100)`. Non usare il nome `momentum` da solo.
+
+Campioni comuni:
+
+1. `dX` = DELTA (USD col segno) a `-Xs` (`sec == X`)
+2. `dY` = DELTA a `-Ys` (`sec == Y`)
+3. Se manca `dX` o `dY` → il confronto è **falso** (non inventare; non trattare come 0)
+4. Se `dX` e `dY` hanno **segno diverso** → valore **0** (per entrambe le funzioni)
+
+### `delta_fade(X, Y)` — contrazione del |DELTA|
+
+Valore (stesso segno) = **`|dX| - |dY|`**
+
+- **> 0** → il |DELTA| **diminuisce** da `-Xs` a `-Ys` (si restringe / fade)
+- **< 0** → il |DELTA| **aumenta** (si allarga)
+- **0** → invariato in magnitudine, oppure flip di segno
+
+Equivalente alle rules esplicite tipiche: salva delta a X e a Y; stesso segno; a Y apri se `|delta_X| - |delta_Y| > soglia`.
+
+Esempio: `Apri se delta_fade(120, 70) > 0.025%` = a `-70s`, stesso segno, `|d120| - |d70|` sopra lo 0.025% del BTC a `-70s`.
+
+### `delta_momentum(X, Y)` — allargamento del |DELTA| (opposto del fade)
+
+Valore (stesso segno) = **`|dY| - |dX|`**
+
+- **> 0** → il |DELTA| **aumenta** da `-Xs` a `-Ys` (momentum / si allarga)
+- **< 0** → il |DELTA| **diminuisce**
+- Con stesso segno: `delta_momentum(X, Y) = -delta_fade(X, Y)`
+
+### Confronti (identici per entrambe)
+
+- Numero **senza %** (es. `>= 50`, `<= -30`): soglia in **USD** di delta.
+- Con **%** (es. `> 0.025%`): soglia = `(pct/100) × prezzo_BTC a -Ys` (Chainlink a `sec == Y`), non il PTB.
+- Valutazione tipica: quando c’è il campione a `-Ys` (di solito `sec == Y`).
 
 ---
 

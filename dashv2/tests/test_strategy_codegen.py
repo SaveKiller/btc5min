@@ -90,6 +90,9 @@ class TestCodegenParse(unittest.TestCase):
         self.assertIn("zona bianca", text)
         self.assertIn("Up_ask + Down_ask", text)
         self.assertIn("mark-to-market", text)
+        self.assertIn("-Ns", text)
+        self.assertIn("delta_fade", text)
+        self.assertIn("delta_momentum", text)
 
     def test_common_prompt_shared(self):
         common = reload_common_prompt()

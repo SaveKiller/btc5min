@@ -8,10 +8,11 @@ Accortezze sul contesto runtime (`ctx`). Le rules sono scritte dall'utente che g
 
 Sinonimi tipici → campo reale:
 
-- SEC TO END / secondi mancanti / countdown → `sec` (COUNTDOWN 300→0, NON tempo trascorso; zone = vedi COMMON)
+- SEC TO END / secondi mancanti / countdown / forma `-Ns` (es. `-120s`) → `sec` (COUNTDOWN 300→0, NON tempo trascorso; `-120s` = `sec == 120`; zone = vedi COMMON)
 - BTC/USD / prezzo BTC → `chainlink_btc`
 - PTB → `ptb_chainlink`
 - DELTA / delta / scostamento → `delta_usd` (int USD col segno)
+- `delta_fade(X, Y)` / `delta_momentum(X, Y)` con X>Y → vedi sezione sotto (non sono campi di `ctx`)
 - quota UP/DOWN / ask / centesimi sui pulsantoni → `up_ask_c` / `down_ask_c`
 - bid → `up_bid_c` / `down_bid_c` (solo se chiesto esplicitamente)
 - quota maggioritaria / lato favorito / majority → ask di `majority_side`
@@ -23,6 +24,11 @@ Sinonimi tipici → campo reale:
 - Size → `size_usd` su ogni `order.place`; size già aperte in `open_orders[].size_usd`
 - PnL / gain / profitto / perdita / stop loss / take profit → `open_orders[].mtm_usd` (verso utente: **PnL**, mai MTM — vedi COMMON)
 - Open orders / ordini aperti → `open_orders` (filtra per `strategy_id`)
+
+Candele 5m BTC/USD (chart CANDLES):
+- `candles_5m` → lista OHLC `{time, open, high, low, close}`; `time` = inizio finestra 5m (unix, multiplo implicito di 300s tra round consecutivi)
+- Tutti i round **chiusi** prima del corrente + **ultimo** elemento = candela del round in replay (parziale, causale al `sec`)
+- Per pattern su chiusure precedenti: `candles_5m[-2]["close"]`, medie su `c[-1]["close"]`, ecc.; non usare tick futuri oltre `sec`
 
 `vol` (V30/V60/…) è in ctx ma **non** in UI oggi: usalo solo se le rules lo nominano esplicitamente.
 OUTCOME: anti-spoiler — non usarlo durante il round.
@@ -59,6 +65,62 @@ Esempio: "Model A >= 75% o Model B >= 75%" in ingresso sul majority:
 `a = dwin_pct_for_side(ctx, majority_side, "a"); b = dwin_pct_for_side(ctx, majority_side, "b"); ok = (a is not None and a >= 75) or (b is not None and b >= 75)`.
 
 Zone → confronti su `sec` (range nel COMMON): es. "non aprire in zona bianca" → non place se `sec >= 241`; "ordine positivo in zona rossa, non chiudere" → positivo e `sec < 61`.
+Forma `-Ns`: confronta sempre su `sec` (es. "a -70s" → quando `sec == 70`; "dopo -120s" → `sec <= 120`).
+
+---
+
+## delta_fade / delta_momentum → implementazione
+
+Definizione nel COMMON:
+
+- `delta_fade(X, Y)` = `|dX| - |dY|` (stesso segno; altrimenti 0) — **contrazione**
+- `delta_momentum(X, Y)` = `|dY| - |dX|` (stesso segno; altrimenti 0) — **allargamento**
+- % vs prezzo BTC a `-Ys`; campione mancante → condizione falsa
+
+In `ctx` c’è solo DELTA/prezzo del **tick corrente**. Serve stato a **modulo**:
+
+1. A ogni `on_tick` utile, se non `None`, registra `delta_by_sec[sec]` e `btc_by_sec[sec]`.
+2. Reset in `on_round_start`.
+3. Helper canonici (copiali/adattali):
+
+```python
+def delta_fade(delta_by_sec, x, y):
+    dx = delta_by_sec.get(x)
+    dy = delta_by_sec.get(y)
+    if dx is None or dy is None:
+        return None
+    if dx * dy < 0:
+        return 0
+    return abs(dx) - abs(dy)
+
+def delta_momentum(delta_by_sec, x, y):
+    dx = delta_by_sec.get(x)
+    dy = delta_by_sec.get(y)
+    if dx is None or dy is None:
+        return None
+    if dx * dy < 0:
+        return 0
+    return abs(dy) - abs(dx)
+```
+
+4. Con `%`: `threshold = (pct / 100.0) * btc_by_sec[y]`.
+
+Esempio: **"Apri se delta_fade(120, 70) > 0.025%"**
+
+- A `sec == 70`, `tradable`, lato = `majority_side` se non indicato, size default 10$.
+- `v = delta_fade(delta_by_sec, 120, 70)`; `thr = 0.00025 * btc_by_sec[70]`; apri se `v is not None and v > thr`.
+
+```python
+if ctx["sec"] == 70 and ctx.get("tradable"):
+    v = delta_fade(delta_by_sec, 120, 70)
+    btc_y = btc_by_sec.get(70)
+    if v is not None and btc_y is not None and v > 0.00025 * btc_y:
+        side = ctx["majority_side"]
+        if side:
+            return [{"cmd": "order.place", "side": side, "size_usd": 10.0,
+                     "reason": "delta_fade(120,70)>0.025%"}]
+return []
+```
 
 ---
 

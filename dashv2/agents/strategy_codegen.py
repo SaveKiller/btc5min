@@ -46,7 +46,10 @@ ctx (input tipico su ogni tick):
   dwin_a: {"p_win_pct": int|None, "n": int|None} | None,
   dwin_b: {"p_win_pct": int|None} | None,
   risk: {"Up": {"rq": int|None, "rs": int|None}, "Down": {"rq": int|None, "rs": int|None}},
-  open_orders (list of order dicts), strategy_id (str), bot_active (bool)
+  open_orders (list of order dicts), strategy_id (str), bot_active (bool),
+  candles_5m: list[{"time": int, "open": float, "high": float, "low": float, "close": float}]
+    Serie OHLC BTC/USD a 5 minuti: time = unix timestamp inizio finestra (market_start_ts del round, step 300s).
+    Elementi prima dell'ultimo = round chiusi; ultimo = candela parziale del round corrente (causale al sec).
 
 MAPPING UI (obbligatorio):
   - Model A / indicatore A / DWinA / percentuale A → dwin_a (MAI float(dwin_a))
