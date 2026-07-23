@@ -590,7 +590,7 @@
       <div class="modal-body">
         <input type="hidden" id="strategyModalMode" value="create">
         <input type="hidden" id="strategyModalId" value="">
-        <div class="row g-3 mb-3 strategy-modal-meta align-items-end">
+        <div class="row g-3 mb-3 strategy-modal-meta">
           <div class="col-md-4">
             <label class="form-label" for="strategyModalName">Name</label>
             <input class="form-control" id="strategyModalName" placeholder="Name of strategy" type="text">
@@ -598,7 +598,7 @@
           <div class="col-md-2">
             <label class="form-label" for="strategyModalVersionBtn">Version</label>
             <div class="dropdown strategy-modal-version-dropdown">
-              <button class="form-select form-select-sm strategy-modal-version-select text-start" type="button"
+              <button class="form-select strategy-modal-version-select text-start" type="button"
                 id="strategyModalVersionBtn" data-bs-toggle="dropdown" data-bs-auto-close="true"
                 aria-expanded="false" aria-label="Strategy version">1</button>
               <ul class="dropdown-menu stats-bs-select-menu stats-bs-select-menu-sm" id="strategyModalVersionMenu"></ul>
@@ -635,8 +635,8 @@
           <div class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></div>
           <span id="strategyModalProgressText">creazione/modifica strategia...</span>
         </div>
-        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" id="strategyModalCancelBtn">Cancel</button>
-        <button type="button" class="btn btn-primary" id="strategyModalSaveBtn">Save</button>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" id="strategyModalCloseFooterBtn">Close</button>
+        <button type="button" class="btn btn-primary" id="strategyModalGenerateBtn">Generate</button>
       </div>
     </div>
   </div>

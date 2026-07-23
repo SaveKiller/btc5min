@@ -1174,8 +1174,8 @@ function appendStrategyGenerateLog(text) {
 
 function setStrategyModalBusy(busy, text = "") {
     const prog = document.getElementById("strategyModalProgress");
-    const saveBtn = document.getElementById("strategyModalSaveBtn");
-    const cancelBtn = document.getElementById("strategyModalCancelBtn");
+    const generateBtn = document.getElementById("strategyModalGenerateBtn");
+    const closeFooterBtn = document.getElementById("strategyModalCloseFooterBtn");
     const closeBtn = document.getElementById("strategyModalCloseBtn");
     prog.classList.toggle("d-none", !busy);
     prog.classList.toggle("d-flex", busy);
@@ -1183,8 +1183,8 @@ function setStrategyModalBusy(busy, text = "") {
         document.getElementById("strategyModalProgressText").textContent = busy ? "In corso…" : text;
         if (busy) appendStrategyGenerateLog(text);
     }
-    saveBtn.disabled = busy;
-    cancelBtn.disabled = busy;
+    generateBtn.disabled = busy;
+    closeFooterBtn.disabled = busy;
     closeBtn.disabled = busy;
 }
 
@@ -1195,13 +1195,13 @@ function refreshStrategyModalFromStrategy(s, name, description, rules, mode = "e
     document.getElementById("strategyModalName").dataset.original = s.name || name;
     document.getElementById("strategyModalDescription").value = s.description ?? description;
     document.getElementById("strategyModalTitle").textContent = strategyModalTitle(mode);
-    const ver = Number(document.getElementById("strategyModalVersion").value) || s.version;
+    const ver = s.version;
     fillStrategyModalVersions(s, ver);
     setStrategyModalVersionLocked(mode === "fix");
     applyStrategyVersionBase(s, ver);
 }
 
-function saveStrategyModal() {
+function generateStrategyModal() {
     const mode = document.getElementById("strategyModalMode").value;
     const name = document.getElementById("strategyModalName").value.trim();
     const description = document.getElementById("strategyModalDescription").value;
@@ -1745,7 +1745,7 @@ document.getElementById("strategyDeleteBtn").addEventListener("click", () => {
     }).catch(handleUiError);
 });
 
-document.getElementById("strategyModalSaveBtn").addEventListener("click", saveStrategyModal);
+document.getElementById("strategyModalGenerateBtn").addEventListener("click", generateStrategyModal);
 
 document.getElementById("strategyCatalogList").addEventListener("click", (e) => {
     const actionBtn = e.target.closest("[data-action]");

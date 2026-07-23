@@ -235,7 +235,11 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
   width: 100%;
 }
 .strategy-modal-version-dropdown { width:100%; }
-.strategy-modal-version-dropdown .strategy-modal-version-select { width:100%; }
+.strategy-modal-version-dropdown .strategy-modal-version-select {
+  width:100%;
+  cursor:pointer;
+  font-size:calc(1rem + 2pt);
+}
 .account-summary-grid { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:.65rem; }
 .account-stat-label { font-size:.68rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
 .account-stat-value { font-size:1.05rem; font-weight:700; color:#dbe4f5; }
