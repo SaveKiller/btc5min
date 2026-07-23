@@ -2081,9 +2081,83 @@ export function renderStatsChat(messages, { thinking = false } = {}) {
 }
 
 
+function isMarkdownTableLine(line) {
+    return /^\s*\|.*\|\s*$/.test(line);
+}
+
+function isMarkdownTableSeparatorRow(cells) {
+    return cells.length > 0 && cells.every((c) => /^:?-{3,}:?$/.test(c));
+}
+
+function parseMarkdownTableCells(line) {
+    const inner = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+    const raw = inner.split("|").map((c) => c.trim());
+    const cells = [];
+    for (let i = 0; i < raw.length; i++) {
+        const next = raw[i + 1];
+        const after = raw[i + 2];
+        if (raw[i] === "" && next && after === "" && /^[A-Za-z_][\w.]*$/.test(next)) {
+            cells.push(`|${next}|`);
+            i += 2;
+            continue;
+        }
+        cells.push(raw[i]);
+    }
+    return cells;
+}
+
+function escapeMarkdownTableCell(cell) {
+    return String(cell).replace(/\|/g, "\\|");
+}
+
+function formatMarkdownTableRow(cells) {
+    return `| ${cells.map(escapeMarkdownTableCell).join(" | ")} |`;
+}
+
+function markdownTableSeparatorRow(cols) {
+    return formatMarkdownTableRow(Array.from({ length: cols }, () => "---"));
+}
+
+function repairMarkdownTables(text) {
+    const lines = String(text).split("\n");
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+        if (!isMarkdownTableLine(lines[i])) {
+            out.push(lines[i]);
+            i++;
+            continue;
+        }
+        const block = [];
+        while (i < lines.length && isMarkdownTableLine(lines[i])) {
+            block.push(lines[i]);
+            i++;
+        }
+        const parsed = block.map(parseMarkdownTableCells);
+        const cols = Math.max(...parsed.map((r) => r.length));
+        if (cols < 2) {
+            out.push(...block);
+            continue;
+        }
+        const normalized = parsed.map((row) => {
+            const cells = [...row];
+            while (cells.length < cols) cells.push("");
+            return cells.slice(0, cols);
+        });
+        let sepIdx = normalized.findIndex((r) => isMarkdownTableSeparatorRow(r));
+        if (sepIdx < 0 && normalized.length >= 2) sepIdx = 1;
+        for (let r = 0; r < normalized.length; r++) {
+            if (r === sepIdx) out.push(markdownTableSeparatorRow(cols));
+            else out.push(formatMarkdownTableRow(normalized[r]));
+        }
+    }
+    return out.join("\n");
+}
+
 function renderAgentMarkdown(text) {
-    // marked è globale (vendor); breaks=true → newline → <br>
-    return marked.parse(String(text), { breaks: true, async: false });
+    const repaired = repairMarkdownTables(text);
+    // breaks=false: breaks=true impedisce il parsing GFM delle tabelle in marked
+    return marked.parse(repaired, { breaks: false, gfm: true, async: false });
 }
 
 
