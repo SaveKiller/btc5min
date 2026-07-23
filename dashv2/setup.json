@@ -39,5 +39,5 @@
         "backtest_analysis",
         "round_chat"
     ],
-    "hide_tabs": []
+    "hide_tabs": ["round_chat"]
 }
