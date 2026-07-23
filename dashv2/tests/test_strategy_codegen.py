@@ -10,7 +10,7 @@ from pathlib import Path
 from dashv2.bots.runner import StrategyRunner
 from dashv2.config import reload_common_prompt, reload_strategy_codegen_system_prompt
 from dashv2.strategies import (
-    clone_strategy, create_strategy, delete_strategy,
+    clone_strategy, create_strategy, delete_strategy, fix_strategy,
     load_strategy, module_path, strategies_dir, update_strategy, write_module,
 )
 from dashv2.agents.strategy_codegen import (
@@ -287,6 +287,28 @@ class TestStrategyVersioning(unittest.TestCase):
             self.assertEqual(updated["versions"][2]["rules"], "r1-edited")
             self.assertTrue(module_path(root, sid, 1).is_file())
             self.assertTrue(module_path(root, sid, 2).is_file())
+
+    def test_fix_overwrites_version_without_bump(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = strategies_dir(Path(td))
+            sid = "abc123def456"
+            mf1 = write_module(root, sid, _STUB, 1)
+            create_strategy(
+                root, "Stub", "deterministic", "d", rules="r1",
+                coded_rules="", module_file=mf1, strategy_id=sid)
+            mf2 = write_module(root, sid, _STUB, 2)
+            update_strategy(
+                root, sid, "Stub", "d", module_rebuilt=True,
+                rules="r2", module_file=mf2, coded_rules="")
+            mf1_fixed = write_module(root, sid, _STUB2, 1)
+            fixed = fix_strategy(
+                root, sid, 1, "Stub", "d", module_rebuilt=True,
+                rules="r1-fixed", module_file=mf1_fixed, coded_rules="c1")
+            self.assertEqual(fixed["version"], 2)
+            self.assertEqual(len(fixed["versions"]), 2)
+            self.assertEqual(fixed["versions"][0]["rules"], "r1-fixed")
+            self.assertEqual(fixed["versions"][1]["rules"], "r2")
+            self.assertEqual(module_path(root, sid, 1).read_text(encoding="utf-8"), _STUB2)
 
 
 class TestStrategyRunner(unittest.TestCase):

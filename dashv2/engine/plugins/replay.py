@@ -19,7 +19,7 @@ from dashv2.sessions import create_session, delete_sessions_for_account
 from dashv2.orders import OrderEngine
 from dashv2.rounds import LoadedRound, RoundRepository
 from dashv2.strategies import (
-    clone_strategy, create_strategy, delete_strategy, list_strategies,
+    clone_strategy, create_strategy, delete_strategy, fix_strategy, list_strategies,
     load_active, load_strategy, save_active, strategies_dir, strategy_summary,
     update_strategy, version_snapshot,
 )
@@ -189,6 +189,7 @@ class ReplayEngine:
             elif cmd == "strategy.list": result = self._cmd_strategy_list(payload)
             elif cmd == "strategy.create": result = self._cmd_strategy_create(payload)
             elif cmd == "strategy.update": result = self._cmd_strategy_update(payload)
+            elif cmd == "strategy.fix": result = self._cmd_strategy_fix(payload)
             elif cmd == "strategy.clone": result = self._cmd_strategy_clone(payload)
             elif cmd == "strategy.delete": result = self._cmd_strategy_delete(payload)
             elif cmd == "strategy.load": result = self._cmd_strategy_load(payload)
@@ -652,6 +653,19 @@ class ReplayEngine:
     def _cmd_strategy_update(self, payload: dict) -> dict:
         data = update_strategy(
             self.strategies_root, payload["strategy_id"], payload["name"], payload["description"],
+            module_rebuilt=bool(payload.get("module_rebuilt")),
+            rules=payload.get("rules"),
+            module_file=payload.get("module_file"),
+            coded_rules=payload.get("coded_rules"),
+        )
+        self._emit_strategies()
+        self._emit_bot_status()
+        return {"ok": True, "strategy": strategy_summary(data)}
+
+    def _cmd_strategy_fix(self, payload: dict) -> dict:
+        data = fix_strategy(
+            self.strategies_root, payload["strategy_id"], int(payload["version"]),
+            payload["name"], payload["description"],
             module_rebuilt=bool(payload.get("module_rebuilt")),
             rules=payload.get("rules"),
             module_file=payload.get("module_file"),

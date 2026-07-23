@@ -990,6 +990,13 @@ function openStatsStrategyEditModal() {
     openStrategyModal("edit", s, statsStrategyVersionForModal(s));
 }
 
+function openStatsStrategyFixModal() {
+    const sid = state.statsStrategyId;
+    const s = (state.strategies || []).find((x) => x.id === sid);
+    if (!s) return;
+    openStrategyModal("fix", s, statsStrategyVersionForModal(s));
+}
+
 
 function startStatsBacktest() {
     const { day_from, day_to } = readStatsDays();
@@ -1115,19 +1122,31 @@ function catalogVersionFor(strategy) {
 }
 
 
+function setStrategyModalVersionLocked(locked) {
+    const btn = document.getElementById("strategyModalVersionBtn");
+    btn.disabled = locked;
+}
+
+function strategyModalTitle(mode) {
+    if (mode === "create") return "New Strategy";
+    if (mode === "fix") return "Fix Strategy";
+    return "Edit Strategy";
+}
+
 function openStrategyModal(mode, strategy = null, version = null) {
     document.getElementById("strategyModalMode").value = mode;
     document.getElementById("strategyModalId").value = strategy?.id || "";
     document.getElementById("strategyModalName").value = strategy?.name || "";
     document.getElementById("strategyModalName").dataset.original = strategy?.name || "";
     document.getElementById("strategyModalDescription").value = strategy?.description || "";
-    document.getElementById("strategyModalTitle").textContent = mode === "create" ? "New strategy" : "Edit strategy";
+    document.getElementById("strategyModalTitle").textContent = strategyModalTitle(mode);
     const showRules = state.strategyType === "deterministic" || strategy?.type === "deterministic";
     document.getElementById("strategyModalRulesWrap").classList.toggle("d-none", !showRules);
     const openVer = version != null
         ? version
         : (strategy ? catalogVersionFor(strategy) : 1);
     fillStrategyModalVersions(strategy, openVer);
+    setStrategyModalVersionLocked(mode === "fix");
     if (strategy) applyStrategyVersionBase(strategy, openVer);
     else {
         document.getElementById("strategyModalRules").value = "";
@@ -1169,15 +1188,17 @@ function setStrategyModalBusy(busy, text = "") {
     closeBtn.disabled = busy;
 }
 
-function refreshStrategyModalFromStrategy(s, name, description, rules) {
-    document.getElementById("strategyModalMode").value = "edit";
+function refreshStrategyModalFromStrategy(s, name, description, rules, mode = "edit") {
+    document.getElementById("strategyModalMode").value = mode;
     document.getElementById("strategyModalId").value = s.id;
     document.getElementById("strategyModalName").value = s.name || name;
     document.getElementById("strategyModalName").dataset.original = s.name || name;
     document.getElementById("strategyModalDescription").value = s.description ?? description;
-    document.getElementById("strategyModalTitle").textContent = "Edit strategy";
-    fillStrategyModalVersions(s, s.version);
-    applyStrategyVersionBase(s, s.version);
+    document.getElementById("strategyModalTitle").textContent = strategyModalTitle(mode);
+    const ver = Number(document.getElementById("strategyModalVersion").value) || s.version;
+    fillStrategyModalVersions(s, ver);
+    setStrategyModalVersionLocked(mode === "fix");
+    applyStrategyVersionBase(s, ver);
 }
 
 function saveStrategyModal() {
@@ -1189,7 +1210,7 @@ function saveStrategyModal() {
     const baseVersion = Number(document.getElementById("strategyModalVersion").value) || 1;
     if (!name) return showAlert("Name required");
     const isDet = state.strategyType === "deterministic" || (
-        mode === "edit" && state.strategies.find((s) => s.id === strategyId)?.type === "deterministic"
+        (mode === "edit" || mode === "fix") && state.strategies.find((s) => s.id === strategyId)?.type === "deterministic"
     );
     if (isDet && !rules.trim()) return showAlert("Rules required for deterministic strategy");
     const original = document.getElementById("strategyModalRules").dataset.original || "";
@@ -1199,6 +1220,13 @@ function saveStrategyModal() {
         clearStrategyGenerateLog();
         setStrategyModalBusy(true, isDet ? "Generazione modulo Python…" : "Salvataggio…");
         req = emitAck("strategy.create", { name, type: state.strategyType, description, rules });
+    } else if (mode === "fix") {
+        if (rulesChanged) clearStrategyGenerateLog();
+        setStrategyModalBusy(true, rulesChanged ? "Rigenerazione modulo Python…" : "Salvataggio…");
+        req = emitAck("strategy.fix", {
+            strategy_id: strategyId, name, description, rules,
+            rules_changed: rulesChanged, version: baseVersion,
+        });
     } else {
         if (rulesChanged) clearStrategyGenerateLog();
         setStrategyModalBusy(true, rulesChanged ? "Rigenerazione modulo Python…" : "Salvataggio…");
@@ -1214,13 +1242,13 @@ function saveStrategyModal() {
             const idx = state.strategies.findIndex((x) => x.id === s.id);
             if (idx >= 0) state.strategies[idx] = { ...state.strategies[idx], ...s };
             else state.strategies = [s, ...state.strategies];
-            // Versione catalogo = tip se regole rigenerate, altrimenti quella scelta nel modal.
-            state.strategyCatalogVersions[s.id] = (isDet && rulesChanged) ? s.version : baseVersion;
+            if (mode === "fix") state.strategyCatalogVersions[s.id] = baseVersion;
+            else state.strategyCatalogVersions[s.id] = (isDet && rulesChanged) ? s.version : baseVersion;
         }
         setStrategyModalBusy(false);
         renderBotPanel(state);
         if (isDet && rulesChanged && s) {
-            refreshStrategyModalFromStrategy(s, name, description, rules);
+            refreshStrategyModalFromStrategy(s, name, description, rules, mode);
             showStrategyModalTab("strategyCodedRulesTab");
             return;
         }
@@ -1686,6 +1714,14 @@ document.getElementById("strategyEditBtn").addEventListener("click", () => {
     openStrategyModal("edit", cur);
 });
 
+document.getElementById("strategyFixBtn").addEventListener("click", () => {
+    const id = state.selectedStrategyId;
+    if (!id) return;
+    const cur = state.strategies.find((s) => s.id === id);
+    if (!cur) return;
+    openStrategyModal("fix", cur, catalogVersionFor(cur));
+});
+
 document.getElementById("strategyCloneBtn").addEventListener("click", () => {
     const id = state.selectedStrategyId;
     if (!id) return;
@@ -1943,6 +1979,7 @@ document.getElementById("statsStrategyVersionMenu").addEventListener("click", (e
         state.strategies, state.statsStrategyId, state.statsStrategyVersion, state.statsJobRunning);
 });
 document.getElementById("strategyModalVersionMenu").addEventListener("click", (e) => {
+    if (document.getElementById("strategyModalMode").value === "fix") return;
     const item = e.target.closest("[data-value]");
     if (!item) return;
     const ver = Number(item.dataset.value);
@@ -1991,6 +2028,7 @@ document.getElementById("statsAnalyzeSimMenu").addEventListener("change", (e) =>
 document.getElementById("statsBacktestRunBtn").addEventListener("click", startStatsBacktest);
 document.getElementById("statsStrategyShowBtn").addEventListener("click", openStatsStrategyRulesModal);
 document.getElementById("statsStrategyEditBtn").addEventListener("click", openStatsStrategyEditModal);
+document.getElementById("statsStrategyFixBtn").addEventListener("click", openStatsStrategyFixModal);
 document.getElementById("statsRulesModalVersionMenu").addEventListener("click", (e) => {
     const item = e.target.closest("[data-value]");
     if (!item) return;

@@ -696,6 +696,7 @@ export function renderBotPanel(state) {
     }
     const hasSel = !!selectedId && catalog.some((s) => s.id === selectedId);
     $("strategyEditBtn").disabled = !hasSel;
+    $("strategyFixBtn").disabled = !hasSel;
     $("strategyCloneBtn").disabled = !hasSel;
     $("strategyDeleteBtn").disabled = !hasSel;
 }
@@ -710,6 +711,7 @@ export function markStrategySelected(state, strategyId) {
     });
     const hasSel = !!strategyId && !!catalogList.querySelector(`.strategy-catalog-item[data-id="${strategyId}"]`);
     $("strategyEditBtn").disabled = !hasSel;
+    $("strategyFixBtn").disabled = !hasSel;
     $("strategyCloneBtn").disabled = !hasSel;
     $("strategyDeleteBtn").disabled = !hasSel;
 }
@@ -1074,6 +1076,7 @@ export function renderStatsStrategySelect(strategies, selectedId, selectedVersio
     $("statsBacktestRunBtn").disabled = !!jobRunning || !selected;
     $("statsStrategyShowBtn").disabled = !selected;
     $("statsStrategyEditBtn").disabled = !selected;
+    $("statsStrategyFixBtn").disabled = !selected;
 }
 
 
@@ -1442,6 +1445,7 @@ export function renderStatsJobUi(state) {
     $("statsBacktestRunBtn").disabled = running || !hasStrategy;
     $("statsStrategyShowBtn").disabled = !hasStrategy;
     $("statsStrategyEditBtn").disabled = !hasStrategy;
+    $("statsStrategyFixBtn").disabled = !hasStrategy;
     $("statsStrategyBtn").disabled = running;
     $("statsStrategyVersionBtn").disabled = running || !hasStrategy;
     $("statsJobCancelBtn").disabled = !running;

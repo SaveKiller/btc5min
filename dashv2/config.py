@@ -22,7 +22,7 @@ UI_TAB_KEYS = (
 _CMD_UI_TAB: dict[str, str] = {}
 for _cmd in (
     "bot.list", "bot.set_active",
-    "strategy.list", "strategy.create", "strategy.update", "strategy.clone",
+    "strategy.list", "strategy.create", "strategy.update", "strategy.fix", "strategy.clone",
     "strategy.delete", "strategy.load", "strategy.unload",
 ):
     _CMD_UI_TAB[_cmd] = "strategy"

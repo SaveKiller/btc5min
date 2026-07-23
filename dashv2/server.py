@@ -49,7 +49,7 @@ _HUMAN_CMDS = frozenset({
     "replay.seek", "replay.preview", "order.size", "order.preview", "order.place",
     "order.close", "order.cancel", "account.list", "account.select", "account.create",
     "account.rename", "account.update", "account.delete", "bot.list", "bot.set_active",
-    "strategy.list", "strategy.create", "strategy.update", "strategy.clone", "strategy.delete",
+    "strategy.list", "strategy.create", "strategy.update", "strategy.fix", "strategy.clone", "strategy.delete",
     "strategy.load", "strategy.unload", "session.sync", "consult.send",
     "agent.chat.send", "agent.chat.history", "agent.rules.apply",
     "agent.executions.list", "agent.session.select", "agent.session.delete",
@@ -58,7 +58,7 @@ _HUMAN_CMDS = frozenset({
     "stats.analyze.list", "stats.analyze.delete",
     "stats.simulation.list", "stats.simulation.load", "stats.simulation.delete",
 })
-_STRATEGY_GEN_CMDS = frozenset({"strategy.create", "strategy.update"})
+_STRATEGY_GEN_CMDS = frozenset({"strategy.create", "strategy.update", "strategy.fix"})
 _AGENT_CMDS = frozenset({
     "agent.chat.send", "agent.chat.history", "agent.rules.apply",
     "agent.executions.list", "agent.session.select", "agent.session.delete",
@@ -229,6 +229,7 @@ class ServerBridge:
             self._bind_command(evt)
         self._bind_strategy_create()
         self._bind_strategy_update()
+        self._bind_strategy_fix()
         self._bind_agent_chat()
         self._bind_stats()
 
@@ -285,6 +286,20 @@ class ServerBridge:
                 return {"error": "tab disabled"}
             try:
                 return self._strategy_update_with_codegen(payload or {})
+            except Exception as e:
+                self._emit_generate("error", str(e))
+                return {"error": str(e)}
+
+    def _bind_strategy_fix(self) -> None:
+        @self.socketio.on("strategy.fix")
+        def handler(payload):
+            from flask import request
+            if self._role_for_sid(request.sid) != "human":
+                return {"error": "not allowed"}
+            if not self._ui_cmd_allowed("strategy.fix"):
+                return {"error": "tab disabled"}
+            try:
+                return self._strategy_fix_with_codegen(payload or {})
             except Exception as e:
                 self._emit_generate("error", str(e))
                 return {"error": str(e)}
@@ -960,6 +975,33 @@ class ServerBridge:
         }
         result = self._request_to_data("strategy.update", ipc_payload, actor="user")
         self._emit_generate("done", "Strategia aggiornata", sid)
+        return result
+
+    def _strategy_fix_with_codegen(self, body: dict) -> dict:
+        sid = body["strategy_id"]
+        version = int(body["version"])
+        data = load_strategy(self.strategies_root, sid)
+        name = body["name"].strip()
+        description = body.get("description") or ""
+        rules = body.get("rules")
+        rules_changed = bool(body.get("rules_changed") and rules is not None)
+        module_file = None
+        coded_rules = None
+        module_rebuilt = False
+        if rules_changed and data["type"] == "deterministic":
+            source = self._codegen_source(rules)
+            coded_rules = self._codegen_coded_rules(source)
+            self._emit_generate("saving", "Salvataggio strategia…", sid)
+            module_file = write_module(self.strategies_root, sid, source, version)
+            module_rebuilt = True
+        ipc_payload = {
+            "strategy_id": sid, "version": version, "name": name, "description": description,
+            "module_rebuilt": module_rebuilt,
+            "rules": rules if module_rebuilt or data["type"] != "deterministic" else None,
+            "module_file": module_file, "coded_rules": coded_rules,
+        }
+        result = self._request_to_data("strategy.fix", ipc_payload, actor="user")
+        self._emit_generate("done", "Strategia corretta", sid)
         return result
 
     def _round_load_async(self, payload: dict, actor: str) -> None:

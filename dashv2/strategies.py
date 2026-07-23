@@ -153,6 +153,53 @@ def create_strategy(
     return payload
 
 
+def fix_strategy(
+    root: Path, strategy_id: str, version: int,
+    name: str, description: str,
+    module_rebuilt: bool,
+    rules: str | None = None, module_file: str | None = None,
+    coded_rules: str | None = None,
+) -> dict:
+    """Sovrascrive snapshot e modulo della versione N (senza bump tip)."""
+    name = name.strip()
+    if not name:
+        raise Exception("strategy name required")
+    data = load_strategy(root, strategy_id)
+    version_snapshot(data, version)
+    data["name"] = name
+    data["description"] = description.strip()
+    if module_rebuilt:
+        if rules is None or module_file is None:
+            raise Exception("module_rebuilt requires rules and module_file")
+        if data["type"] == "deterministic" and not rules.strip():
+            raise Exception("deterministic strategy requires rules")
+        cr = coded_rules if coded_rules is not None else ""
+        for entry in data["versions"]:
+            if entry["version"] == version:
+                entry["rules"] = rules
+                entry["coded_rules"] = cr
+                entry["module_file"] = module_file
+                break
+        if version == data["version"]:
+            data["rules"] = rules
+            data["coded_rules"] = cr
+            data["module_file"] = module_file
+    elif rules is not None:
+        for entry in data["versions"]:
+            if entry["version"] == version:
+                entry["rules"] = rules
+                if coded_rules is not None:
+                    entry["coded_rules"] = coded_rules
+                break
+        if version == data["version"]:
+            data["rules"] = rules
+            if coded_rules is not None:
+                data["coded_rules"] = coded_rules
+    data["updated_at_utc"] = _utc_now_iso()
+    _atomic_write(_strategy_path(root, strategy_id), data)
+    return data
+
+
 def update_strategy(
     root: Path, strategy_id: str, name: str, description: str,
     module_rebuilt: bool,

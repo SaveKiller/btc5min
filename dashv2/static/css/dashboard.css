@@ -861,7 +861,8 @@ body { background:var(--canvas); min-width:320px; font-family:Inter,ui-sans-seri
 #statsBacktestRunBtn,
 #statsJobCancelBtn,
 #statsStrategyShowBtn,
-#statsStrategyEditBtn {
+#statsStrategyEditBtn,
+#statsStrategyFixBtn {
   font-size:calc(.875rem + 2pt);
 }
 #statsRulesModalText.stats-rules-view,
