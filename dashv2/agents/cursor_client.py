@@ -5,7 +5,6 @@ from __future__ import annotations
 import codecs
 import os
 import sys
-import threading
 import time
 from collections.abc import Callable
 from typing import Any, Mapping
@@ -84,7 +83,6 @@ from cursor_sdk import (  # noqa: E402
 
 _RETRIES = 3
 _RETRY_DELAY_SEC = 15
-_WAIT_TICK_SEC = 2.0
 
 _META_MARKERS = (
     "ho salvato", "file salvato", "salvato in `", "I saved", "I've created",
@@ -134,25 +132,8 @@ def call_model(
                     f"Prompt inviato a {label} — attesa risposta ({task_label})…",
                 )
                 run = agent.send(prompt)
-                stop = threading.Event()
                 t0 = time.monotonic()
-
-                def _wait_ticks() -> None:
-                    while not stop.wait(_WAIT_TICK_SEC):
-                        sec = int(time.monotonic() - t0)
-                        _emit(
-                            on_progress, "cursor_wait",
-                            f"In attesa di {label} ({task_label})… {sec}s — "
-                            f"il modello sta generando la risposta",
-                        )
-
-                ticker = threading.Thread(target=_wait_ticks, daemon=True, name="cursor-wait-tick")
-                ticker.start()
-                try:
-                    result = run.wait()
-                finally:
-                    stop.set()
-                    ticker.join(timeout=1.0)
+                result = run.wait()
         except CursorAgentError as e:
             raise RuntimeError(f"Cursor startup failed: {e.message}") from e
         if result.status == "finished" and result.result and result.result.strip():
