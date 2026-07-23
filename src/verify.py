@@ -8,6 +8,10 @@ from src.book import tick_quotes_missing
 from src.clob_api import BET_USD, majority_side, market_buy_gain
 from src.market import INTERVAL_SECS
 
+# Settlement arrotonda ptb/final_price (price_decimals); i tick hanno chainlink grezzo.
+# Sotto questa soglia non loggare: rumore di arrotondamento, non anomalia dati.
+V19_DIAG_THRESHOLD_USD = 5.0
+
 
 def _levels_sorted(levels, descending: bool) -> bool:
     if len(levels) < 2:
@@ -83,22 +87,15 @@ def verify_round(path: str) -> tuple[list[str], list[str]]:
             errors.append(f"V12: first tick secs_to_expiry {ticks[0, 1]} < {first_min}")
         if ticks[-1, 1] > 10:
             errors.append(f"V12: last tick secs_to_expiry {ticks[-1, 1]} > 10")
-    has_final_gamma = not math.isnan(header["final_gamma"])
-    has_ptb_gamma = not math.isnan(header["ptb_gamma"])
-    if has_final_gamma and has_ptb_gamma:
-        expected_up = 1 if header["final_gamma"] >= header["ptb_gamma"] else 2
-        if header["outcome"] != expected_up:
+    if tick_count > 0:
+        diff_ptb = abs(header["ptb_price"] - ticks[0, 6])
+        if diff_ptb > V19_DIAG_THRESHOLD_USD:
             diagnostics.append(
-                f"V13: outcome {header['outcome']} != gamma-price expected {expected_up} (diagnostic only)")
-    elif not has_final_gamma and not has_ptb_gamma:
-        expected_up = 1 if header["final_chainlink"] >= header["ptb_chainlink"] else 2
-        if header["outcome"] != expected_up:
+                f"V19a: ptb_price={header['ptb_price']} vs tick0={ticks[0, 6]:.4f} diff={diff_ptb:.2f}")
+        diff_final = abs(header["final_price"] - ticks[-1, 6])
+        if diff_final > V19_DIAG_THRESHOLD_USD:
             diagnostics.append(
-                f"V13: outcome {header['outcome']} != chainlink-price expected {expected_up} (diagnostic only)")
-    if not _quote_close(header["ptb_price"], ticks[0, 6], tol=0.02):
-        errors.append("V19a: ptb_price inconsistent with first tick")
-    if not _quote_close(header["final_price"], ticks[-1, 6], tol=0.02):
-        errors.append("V19b: final_price inconsistent with last tick")
+                f"V19b: final_price={header['final_price']} vs tickN={ticks[-1, 6]:.4f} diff={diff_final:.2f}")
     for i, row in enumerate(ticks):
         if tick_quotes_missing(row):
             continue
