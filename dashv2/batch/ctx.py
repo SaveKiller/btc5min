@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+from dashv2.rounds import LoadedRound, round_candle_ohlc
+
+
+def build_candles_5m(prev_candles: list[dict], loaded: LoadedRound | None, sec: int) -> list[dict]:
+    """Candele OHLC 5m disponibili: round chiusi prima del corrente + candela parziale del round."""
+    if loaded is None:
+        return list(prev_candles)
+    return list(prev_candles) + [round_candle_ohlc(loaded, sec)]
+
 
 def build_strategy_ctx(
     tick_public: dict,
@@ -32,4 +41,5 @@ def build_strategy_ctx(
         "dwin_b": tick_public.get("dwin_b"),
         "open_orders": list(open_orders),
         "bot_active": bot_active,
+        "candles_5m": list(tick_public["candles_5m"]),
     }

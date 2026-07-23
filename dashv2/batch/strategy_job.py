@@ -7,7 +7,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from dashv2.batch.ctx import build_strategy_ctx
+from dashv2.batch.ctx import build_candles_5m, build_strategy_ctx
 from dashv2.engine.plugins.replay import _public_tick
 from dashv2.orders import OrderEngine
 from dashv2.rounds import LoadedRound
@@ -56,6 +56,7 @@ def run_strategy_round(
     strategy_id: str,
     size_up: float,
     size_down: float,
+    prev_candles: list[dict] | None = None,
 ) -> dict:
     """Esegue backtest headless di un round; non scrive history/accounts."""
     hour_utc = datetime.fromtimestamp(loaded.market_start_ts, timezone.utc).hour
@@ -80,6 +81,7 @@ def run_strategy_round(
         action_errors: list[str] = []
         last_public: dict | None = None
         seq = 0
+        closed_candles = list(prev_candles or [])
 
         for sec in range(300, 0, -1):
             seq += 1
@@ -87,6 +89,7 @@ def run_strategy_round(
             gap = tick is None or tick.get("gap", False)
             book = None if gap else loaded.books_by_sec.get(sec)
             public = _public_tick(tick, sec, seq, gap, book)
+            public["candles_5m"] = build_candles_5m(closed_candles, loaded, sec)
             last_public = public
             if not gap and tick is not None and book is not None:
                 engine.revalue_mtm(sec, tick, book, loaded.fee_rate)
@@ -101,7 +104,10 @@ def run_strategy_round(
             loaded.ticks_by_sec.get(0), loaded.ptb_chainlink,
         )
         end_ctx = build_strategy_ctx(
-            last_public if last_public is not None else _public_tick(None, 0, seq + 1, True, None),
+            {
+                **(last_public if last_public is not None else _public_tick(None, 0, seq + 1, True, None)),
+                "candles_5m": build_candles_5m(closed_candles, loaded, 0),
+            },
             session,
             engine.open_orders,
             bot_active=True,

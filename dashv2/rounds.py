@@ -166,18 +166,23 @@ class RoundRepository:
 
     def current_candle(self, loaded: LoadedRound, sec: int) -> dict:
         """Candela del round corrente solo con tick già raggiunti (sec >= replay sec)."""
-        prices = [
-            t["chainlink_btc"] for s, t in loaded.ticks_by_sec.items()
-            if s >= sec and t["chainlink_btc"] is not None and not t["chainlink_stale"]
-        ]
-        if not prices:
-            open_p = loaded.ptb_chainlink
-            return {"time": loaded.market_start_ts, "open": open_p, "high": open_p, "low": open_p, "close": open_p}
-        return {
-            "time": loaded.market_start_ts, "open": loaded.ptb_chainlink,
-            "high": max(prices + [loaded.ptb_chainlink]), "low": min(prices + [loaded.ptb_chainlink]),
-            "close": prices[-1],
-        }
+        return round_candle_ohlc(loaded, sec)
+
+
+def round_candle_ohlc(loaded: LoadedRound, sec: int) -> dict:
+    """OHLC 5m del round caricato, causale rispetto al sec di replay."""
+    prices = [
+        t["chainlink_btc"] for s, t in loaded.ticks_by_sec.items()
+        if s >= sec and t["chainlink_btc"] is not None and not t["chainlink_stale"]
+    ]
+    if not prices:
+        open_p = loaded.ptb_chainlink
+        return {"time": loaded.market_start_ts, "open": open_p, "high": open_p, "low": open_p, "close": open_p}
+    return {
+        "time": loaded.market_start_ts, "open": loaded.ptb_chainlink,
+        "high": max(prices + [loaded.ptb_chainlink]), "low": min(prices + [loaded.ptb_chainlink]),
+        "close": prices[-1],
+    }
 
 
 def load_bin(bin_path: Path | str, stall_reconnect_sec: float) -> LoadedRound:

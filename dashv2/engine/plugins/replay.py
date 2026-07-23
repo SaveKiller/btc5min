@@ -249,7 +249,7 @@ class ReplayEngine:
         self.orders.reset(self.cfg["default_order_size_usd"], self.cfg["default_order_size_usd"])
         self._emit_session()
         self._emit_idle_chart()
-        self._emit_event("tick", _public_tick(None, self.sec, self.seq, True))
+        self._emit_event("tick", {**_public_tick(None, self.sec, self.seq, True), "candles_5m": self._candles_5m(self.sec)})
         self._emit_orders()
         self._emit_history()
         self._emit_accounts()
@@ -345,7 +345,7 @@ class ReplayEngine:
         book = None if gap else self.loaded.books_by_sec.get(sec)
         public = _public_tick(tick, sec, self.seq, gap, book)
         previews = self._previews_at(sec) if not gap and public.get("tradable") else {}
-        self._emit_event("tick", {**public, "previews": previews, "preview": True})
+        self._emit_event("tick", {**public, "previews": previews, "preview": True, "candles_5m": self._candles_5m(sec)})
         current = self.repo.current_candle(self.loaded, sec)
         self._emit_event("chart", {"current": current, "full_reset": False, "preview": True})
         if not gap and tick:
@@ -792,6 +792,11 @@ class ReplayEngine:
         if tick.get("gap") or tick.get("partial"): raise Exception(f"tick not tradable sec={self.sec}")
         return tick, book
 
+    def _candles_5m(self, sec: int) -> list[dict]:
+        if self.loaded is None:
+            return list(self._prev_candles)
+        return list(self._prev_candles) + [self.repo.current_candle(self.loaded, sec)]
+
     def _emit_tick_at(self, sec: int) -> None:
         if not self.loaded: return
         self.seq += 1
@@ -805,7 +810,7 @@ class ReplayEngine:
             self.orders.revalue_mtm(sec, tick, book, self.loaded.fee_rate)
             self._emit_orders()
         previews = self._previews() if not gap and public.get("tradable") else {}
-        self._emit_event("tick", {**public, "previews": previews})
+        self._emit_event("tick", {**public, "previews": previews, "candles_5m": self._candles_5m(sec)})
 
     def _previews(self) -> dict:
         return self._previews_at(self.sec)

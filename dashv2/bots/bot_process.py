@@ -65,6 +65,7 @@ def _run_bot(cfg: dict) -> None:
             "dwin_a": tick.get("dwin_a"), "dwin_b": tick.get("dwin_b"),
             "open_orders": list(orders.get("open") or []),
             "bot_active": active,
+            "candles_5m": list(tick["candles_5m"]),
         }
 
     @sio.event
